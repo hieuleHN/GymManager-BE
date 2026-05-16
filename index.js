@@ -1,23 +1,19 @@
 import express from 'express';
-import bodyParser from 'body-parser';
 import db from './config/db.js';
 import dotenv from 'dotenv';
 import memberRoutes from './routes/members.js';
-import trainerRoutes from './routes/trainers.js';
-import classRoutes from './routes/classes.js';
-import paymentRoutes from './routes/payments.js';
+import authRoutes from './routes/authRoutes.js';
 
 dotenv.config();
 
 const app = express();
-app.use(bodyParser.json());
+app.use(express.json());
 
 // Routes
 app.use('/members', memberRoutes);
-app.use('/trainers', trainerRoutes);
-app.use('/classes', classRoutes);
-app.use('/payments', paymentRoutes);
+app.use('/auth', authRoutes);
 
-app.listen(3000, () => {
-  console.log('Server running on port 3000');
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => {
+  console.log(`🚀 Server đang chạy mượt mà tại cổng http://localhost:${PORT}`);
 });
