@@ -1,39 +1,50 @@
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import { checkExistingUser, createUser, findUserByEmail } from '../models/userModel.js';
+import { checkExistingUser, createUser, findUserByUsername } from '../models/userModel.js';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'Phong_Gym_Master_Key_2026';
 
 // 1. Logic Đăng ký tài khoản (Dành cho khách vãng lai)
 export const register = (req, res) => {
-  const { username, email, phone, password } = req.body;
+  // Lấy thêm location_id và service_id từ body do khách chọn lúc đăng ký
+  const { username, email, phone, password, role_id, location_id, service_id } = req.body;
 
-  if (!username || !email || !phone || !password) {
-    return res.status(400).json({ error: 'Vui lòng điền đầy đủ thông tin!' });
+  // Kiểm tra validate đầu vào dữ liệu đầu vào
+  if (!username || !email || !phone || !password || !role_id || !location_id || !service_id) {
+    return res.status(400).json({ error: 'Vui lòng điền đầy đủ thông tin đăng ký và chọn cơ sở/dịch vụ!' });
   }
 
-  // Bước 1: Kiểm tra xem tài khoản đã tồn tại chưa
+  // Check trùng email/sđt trước
   checkExistingUser(email, phone, (err, results) => {
     if (err) return res.status(500).json({ error: err.message });
-    
     if (results.length > 0) {
-      return res.status(400).json({ error: 'Email hoặc Số điện thoại đã được đăng ký!' });
+      return res.status(400).json({ error: 'Email hoặc Số điện thoại này đã được sử dụng!' });
     }
 
-    // Bước 2: Mã hóa mật khẩu bảo mật bằng bcryptjs
+    // Mã hóa mật khẩu bảo mật
     bcrypt.genSalt(10, (err, salt) => {
       if (err) return res.status(500).json({ error: err.message });
-
       bcrypt.hash(password, salt, (err, hashedPassword) => {
         if (err) return res.status(500).json({ error: err.message });
 
-        // Bước 3: Lưu vào database với role mặc định là 'Member'
-        const newUser = { username, email, phone, password: hashedPassword, role: 'Member' };
+        // Đóng gói data để chuyển xuống Model xử lý Transaction
+        const newUserPayload = {
+          username,
+          email,
+          phone,
+          password: hashedPassword,
+          role_id, 
+          location_id,
+          service_id
+        };
 
-        createUser(newUser, (err, createResult) => {
-          if (err) return res.status(500).json({ error: err.message });
+        createUser(newUserPayload, (err, result) => {
+          if (err) return res.status(500).json({ error: 'Lỗi hệ thống khi lưu thông tin: ' + err.message });
           
-          res.status(201).json({ message: 'Đăng ký tài khoản Hội viên thành công!' });
+          res.status(201).json({ 
+            message: 'Đăng ký tài khoản và chọn cơ sở tập thành công!',
+            userId: result.userId
+          });
         });
       });
     });
@@ -42,18 +53,18 @@ export const register = (req, res) => {
 
 // 2. Logic Đăng nhập (Trả về Token JWT)
 export const login = (req, res) => {
-  const { email, password } = req.body;
+  const { username, password } = req.body;
 
-  if (!email || !password) {
-    return res.status(400).json({ error: 'Vui lòng nhập Email và Mật khẩu!' });
+  if (!username || !password) {
+    return res.status(400).json({ error: 'Vui lòng nhập Tên đăng nhập và Mật khẩu!' });
   }
 
-  // Bước 1: Tìm user dựa vào Email
-  findUserByEmail(email, (err, results) => {
+  // Bước 1: Tìm user dựa vào Tên đăng nhập
+  findUserByUsername(username, (err, results) => {
     if (err) return res.status(500).json({ error: err.message });
 
     if (results.length === 0) {
-      return res.status(400).json({ error: 'Email hoặc mật khẩu không chính xác!' });
+      return res.status(400).json({ error: 'Tên đăng nhập hoặc mật khẩu không chính xác!' });
     }
 
     const user = results[0];
@@ -63,7 +74,7 @@ export const login = (req, res) => {
       if (err) return res.status(500).json({ error: err.message });
       
       if (!isMatch) {
-        return res.status(400).json({ error: 'Email hoặc mật khẩu không chính xác!' });
+        return res.status(400).json({ error: 'Tên đăng nhập hoặc mật khẩu không chính xác!' });
       }
 
       // Lấy ra tên cột Khóa chính của bạn (id hoặc user_id tùy theo bảng bạn tạo)
