@@ -32,52 +32,75 @@ export const getServiceById = (req, res) => {
 };
 
 export const createService = (req, res) => {
-  // 🎯 KIỂM TRA LỖI ĐỊNH DẠNG ẢNH NGAY TẠI ĐÂY (Giống hệt logic Auth)
   if (req.fileValidationError) {
     return res.status(400).json({ error: req.fileValidationError });
   }
-  const { name, description } = req.body;
+  const { name, location_id } = req.body;
   if (!name) return res.status(400).json({ error: 'Tên dịch vụ là bắt buộc!' });
+  if (!location_id) return res.status(400).json({ error: 'ID địa điểm là bắt buộc!' });
 
-  let imageUrls = [];
-  if (req.files && req.files.length > 0) {
-    imageUrls = req.files.map(file => file.filename);
+  // 1. Chuẩn hóa mảng mô tả
+  let descArray = [];
+  const rawDescriptions = req.body.descriptions || req.body.description;
+  if (rawDescriptions) {
+    descArray = Array.isArray(rawDescriptions) ? rawDescriptions : [rawDescriptions];
   }
 
-  ServiceModel.createWithImages({ name, description }, imageUrls, (err, result) => {
+  // 2. Gom URL ảnh và mô tả thành mảng Object
+  let imagesData = [];
+  if (req.files && req.files.length > 0) {
+    imagesData = req.files.map((file, index) => ({
+      url: file.filename,
+      description: descArray[index] || null
+    }));
+  }
+
+  ServiceModel.createWithImages({ name, location_id }, imagesData, (err, result) => {
     if (err) {
-      deletePhysicalFiles(imageUrls);
+      // Lấy danh sách tên file để xoá nếu lỗi DB
+      const fileNamesToXoa = req.files ? req.files.map(f => f.filename) : [];
+      deletePhysicalFiles(fileNamesToXoa);
       return res.status(500).json({ error: err.message });
     }
     res.status(201).json({ 
-      message: 'Thêm dịch vụ thành công!', 
+      message: 'Thêm dịch vụ kèm ảnh thành công!', 
       service_id: result.insertId,
-      images: imageUrls
+      images: imagesData
     });
   });
 };
 
-// --- HÀM CẬP NHẬT ĐƯỢC ĐỔI MỚI Ở ĐÂY ---
 export const updateService = (req, res) => {
-  // 🎯 KIỂM TRA LỖI ĐỊNH DẠNG ẢNH NGAY TẠI ĐÂY (Giống hệt logic Auth)
   if (req.fileValidationError) {
     return res.status(400).json({ error: req.fileValidationError });
   }
-  const { name, description } = req.body;
+  const { name, location_id } = req.body;
   if (!name) return res.status(400).json({ error: 'Tên dịch vụ là bắt buộc!' });
+  if (!location_id) return res.status(400).json({ error: 'ID địa điểm là bắt buộc!' });
 
   const id = req.params.id;
 
-  // Thu thập mảng ảnh mới (nếu có) do Multer xử lý
-  let newImageUrls = [];
-  if (req.files && req.files.length > 0) {
-    newImageUrls = req.files.map(file => file.filename);
+  // 1. Chuẩn hóa mảng mô tả
+  let descArray = [];
+  const rawDescriptions = req.body.descriptions || req.body.description;
+  if (rawDescriptions) {
+    descArray = Array.isArray(rawDescriptions) ? rawDescriptions : [rawDescriptions];
   }
 
-  ServiceModel.updateWithImages(id, { name, description }, newImageUrls, (err, data) => {
+  // 2. Gom dữ liệu ảnh và mô tả
+  let newImagesData = [];
+  if (req.files && req.files.length > 0) {
+    newImagesData = req.files.map((file, index) => ({
+      url: file.filename,
+      description: descArray[index] || null
+    }));
+  }
+
+  ServiceModel.updateWithImages(id, { name, location_id }, newImagesData, (err, data) => {
     if (err) {
-      // Nếu lưu DB thất bại, xoá luôn các file mới vừa được upload lên để tránh rác
-      deletePhysicalFiles(newImageUrls);
+      // Nếu lỗi thì xoá file tạm vừa up lên
+      const fileNamesToXoa = req.files ? req.files.map(f => f.filename) : [];
+      deletePhysicalFiles(fileNamesToXoa);
       
       if (err.message === 'NOT_FOUND') {
         return res.status(404).json({ error: 'Không tìm thấy dịch vụ để cập nhật!' });
@@ -85,18 +108,17 @@ export const updateService = (req, res) => {
       return res.status(500).json({ error: 'Lỗi hệ thống khi cập nhật dịch vụ!', details: err.message });
     }
 
-    // Nếu cập nhật DB thành công và thực sự có ảnh mới thay thế ảnh cũ
+    // Nếu thay ảnh thành công, xoá ảnh cũ
     if (data.oldFilesToDelete && data.oldFilesToDelete.length > 0) {
       deletePhysicalFiles(data.oldFilesToDelete);
     }
 
     res.json({ 
       message: 'Cập nhật dịch vụ thành công!',
-      updated_images: newImageUrls.length > 0 ? newImageUrls : 'Giữ nguyên ảnh cũ'
+      updated_images: newImagesData.length > 0 ? newImagesData : 'Giữ nguyên ảnh cũ'
     });
   });
 };
-
 export const deleteService = (req, res) => {
   ServiceModel.removeCascade(req.params.id, (err, data) => {
     if (err) {
