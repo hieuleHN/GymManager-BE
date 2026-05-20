@@ -7,7 +7,6 @@ import { getAll as getAllRoles } from '../models/roleModel.js';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'Phong_Gym_Master_Key_2026';
 
-// 💡 HÀM HELPER: Dọn dẹp ảnh vật lý (Nhận vào 1 tên file string)
 const deletePhysicalFile = (fileName) => {
   if (!fileName) return;
   const filePath = path.join(process.cwd(), 'uploads', 'users', fileName);
@@ -20,50 +19,41 @@ const deletePhysicalFile = (fileName) => {
   });
 };
 
-// 1. Logic Đăng ký tài khoản (Tự động tìm kiếm role "Hội viên")
 export const register = (req, res) => {
-  const { username, email, phone, password, location_id, service_id } = req.body;
+  // ĐÓN THÊM package_id TỪ CLIENT
+  const { username, email, phone, password, location_id, service_id, package_id } = req.body;
 
   if (!username || !email || !phone || !password || !location_id || !service_id) {
     return res.status(400).json({ error: 'Vui lòng điền đầy đủ thông tin đăng ký và chọn cơ sở/dịch vụ!' });
   }
 
-  // Bước 1: Check trùng email/sđt trước
   checkExistingUser(email, phone, (err, results) => {
     if (err) return res.status(500).json({ error: err.message });
     if (results.length > 0) {
       return res.status(400).json({ error: 'Email hoặc Số điện thoại này đã được sử dụng!' });
     }
 
-    // Bước 2: Gọi roleModel để lấy ID của quyền "Hội viên" một cách linh động
     getAllRoles((err, roles) => {
       if (err) return res.status(500).json({ error: 'Lỗi hệ thống khi kiểm tra phân quyền: ' + err.message });
 
-      // Tìm role có name là "Hội viên"
       const memberRole = roles.find(role => role.name === 'Hội viên');
       
       if (!memberRole) {
         return res.status(500).json({ error: 'Hệ thống chưa cấu hình nhóm quyền "Hội viên" trong database!' });
       }
 
-      // Lấy id (hoặc role_id tùy theo tên cột trong bảng role của bạn)
       const role_id = memberRole.role_id || memberRole.id;
 
-      // Bước 3: Mã hóa mật khẩu bảo mật
       bcrypt.genSalt(10, (err, salt) => {
         if (err) return res.status(500).json({ error: err.message });
         bcrypt.hash(password, salt, (err, hashedPassword) => {
           if (err) return res.status(500).json({ error: err.message });
 
-          // Bước 4: Đóng gói data chuyển xuống Model xử lý
+          // Gắn thêm package_id vào Payload
           const newUserPayload = {
-            username,
-            email,
-            phone,
-            password: hashedPassword,
-            role_id, // Sử dụng role_id vừa tìm được tự động từ DB
-            location_id,
-            service_id
+            username, email, phone, 
+            password: hashedPassword, 
+            role_id, location_id, service_id, package_id
           };
 
           createUser(newUserPayload, (err, result) => {
@@ -80,15 +70,14 @@ export const register = (req, res) => {
   });
 };
 
-// 2. Logic Đăng nhập (Trả về Token JWT)
 export const login = (req, res) => {
+  // [Giữ nguyên logic của bạn]
   const { username, password } = req.body;
 
   if (!username || !password) {
     return res.status(400).json({ error: 'Vui lòng nhập Tên đăng nhập và Mật khẩu!' });
   }
 
-  // Bước 1: Tìm user dựa vào Tên đăng nhập
   findUserByUsername(username, (err, results) => {
     if (err) return res.status(500).json({ error: err.message });
 
@@ -98,7 +87,6 @@ export const login = (req, res) => {
 
     const user = results[0];
 
-    // Bước 2: So sánh mật khẩu người dùng nhập với mật khẩu băm trong DB
     bcrypt.compare(password, user.password, (err, isMatch) => {
       if (err) return res.status(500).json({ error: err.message });
       
@@ -106,17 +94,14 @@ export const login = (req, res) => {
         return res.status(400).json({ error: 'Tên đăng nhập hoặc mật khẩu không chính xác!' });
       }
 
-      // Lấy ra tên cột Khóa chính của bạn (id hoặc user_id tùy theo bảng bạn tạo)
       const userId = user.id || user.user_id;
 
-      // Bước 3: Đăng nhập đúng -> Tiến hành ký mã Token JWT làm "Hộ chiếu"
       const token = jwt.sign(
         { id: userId, role: user.role, username: user.username },
         JWT_SECRET,
-        { expiresIn: '3d' } // Token sống trong 3 ngày
+        { expiresIn: '3d' } 
       );
 
-      // Trả dữ liệu thành công về cho Frontend
       res.json({
         message: 'Đăng nhập thành công!',
         token: token,
@@ -126,7 +111,6 @@ export const login = (req, res) => {
   });
 };
 
-// 3. CHỨC NĂNG: Lấy toàn bộ danh sách users (MỚI BỔ SUNG)
 export const listUsers = (req, res) => {
   getAllUsers((err, users) => {
     if (err) return res.status(500).json({ error: 'Lỗi khi lấy danh sách: ' + err.message });
@@ -134,10 +118,7 @@ export const listUsers = (req, res) => {
   });
 };
 
-// CHỨC NĂNG: Xem hồ sơ chi tiết người dùng
 export const getUserDetail = (req, res) => {
-  // Có thể xem chi tiết của bất kỳ ai qua ID trên URL: /auth/users/5
-  // Hoặc tự xem hồ sơ của chính mình nếu không truyền id (lấy từ mã Token đã đăng nhập)
   const userId = req.params.id || req.user.id; 
 
   getUserById(userId, (err, user) => {
@@ -148,7 +129,6 @@ export const getUserDetail = (req, res) => {
   });
 };
 
-// CHỨC NĂNG: Xóa user
 export const deleteUser = (req, res) => {
   const userId = req.params.id;
   if (!userId) {
@@ -162,48 +142,41 @@ export const deleteUser = (req, res) => {
       return res.status(404).json({ error: 'Không tìm thấy người dùng này hoặc người dùng đã bị xóa trước đó!' });
     }
 
-    // 💡 Nếu xóa DB thành công, tiến hành xóa sạch ảnh đại diện của user này trên ổ đĩa
     deletePhysicalFile(data.avatarToDelete);
-
-    res.status(200).json({ message: 'Xóa người dùng và dọn dẹp file ảnh thành công!' });
+    res.status(200).json({ message: 'Xóa người dùng (bao gồm 3 bảng phụ) và dọn dẹp file ảnh thành công!' });
   });
 };
 
-// CHỨC NĂNG: Cập nhật thông tin hồ sơ
 export const updateUser = (req, res) => {
-  // 💡 Bắt lỗi định dạng ảnh từ req (Nếu fileFilter báo lỗi)
   if (req.fileValidationError) {
     return res.status(400).json({ error: req.fileValidationError });
   }
 
   const userId = req.params.id; 
-  const { username, email, phone, first_name, last_name, role_id, location_id, service_id } = req.body;
+  // ĐÓN THÊM package_id
+  const { username, email, phone, first_name, last_name, role_id, location_id, service_id, package_id } = req.body;
 
   if (!username || !email || !phone || !location_id || !service_id) {
     return res.status(400).json({ error: 'Vui lòng điền đầy đủ thông tin: Tài khoản, Email, SĐT, Cơ sở và Dịch vụ!' });
   }
 
-  // 💡 Hứng tên file ảnh mới (nếu client có gửi)
   const newAvatar = req.file ? req.file.filename : null;
-
   const updaterRoleName = req.user.role ? req.user.role.toLowerCase() : '';
   const allowedRolesToChangePermission = ['admin', 'manager', 'quản lý', 'lễ tân'];
   const hasRolePermission = allowedRolesToChangePermission.includes(updaterRoleName);
 
   const updatePayload = {
     username, email, phone, first_name, last_name,
-    avatar: newAvatar, // Truyền tên file ảnh mới (nếu có)
-    role_id, location_id, service_id
+    avatar: newAvatar, 
+    role_id, location_id, service_id, package_id
   };
 
   updateUserById(userId, updatePayload, hasRolePermission, (err, result) => {
     if (err) {
-      // 💡 Bẫy rác: Update DB thất bại -> Xoá ngay ảnh mới vừa upload để tránh file mồ côi
       deletePhysicalFile(newAvatar);
       return res.status(500).json({ error: 'Lỗi hệ thống khi cập nhật: ' + err.message });
     }
     
-    // 💡 Update DB thành công -> Model sẽ trả về ảnh cũ (nếu có cập nhật ảnh mới), gọi hàm xóa ảnh cũ đi!
     if (result.avatarToDelete) {
       deletePhysicalFile(result.avatarToDelete);
     }

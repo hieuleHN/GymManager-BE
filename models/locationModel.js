@@ -1,28 +1,38 @@
 import db from '../config/db.js';
 
-// 1. Lấy tất cả cơ sở (Gom cụm danh sách ảnh thành một mảng chuỗi)
+// 1. Lấy tất cả cơ sở kèm danh sách ảnh và mô tả chi tiết
 export const getAll = (callback) => {
   const sql = `
-    SELECT l.*, GROUP_CONCAT(li.image) AS images
+    SELECT l.*, 
+           IF(COUNT(li.id) > 0, 
+              CONCAT('[', GROUP_CONCAT(JSON_OBJECT('url', li.image, 'description', li.description)), ']'), 
+              '[]') AS images_json
     FROM location l
     LEFT JOIN location_images li ON l.id = li.location_id
     GROUP BY l.id
   `;
   db.query(sql, (err, results) => {
     if (err) return callback(err);
-    // Biến chuỗi "anh1.jpg,anh2.jpg" thành mảng ['anh1.jpg', 'anh2.jpg']
-    const formattedResults = results.map(row => ({
-      ...row,
-      images: row.images ? row.images.split(',') : []
-    }));
+
+    const formattedResults = results.map(row => {
+      const formattedRow = { ...row };
+      // Chuyển chuỗi JSON thành mảng Object cho Frontend dễ dùng
+      formattedRow.images = JSON.parse(row.images_json || '[]');
+      delete formattedRow.images_json; // Xóa bỏ cột tạm
+      return formattedRow;
+    });
+
     callback(null, formattedResults);
   });
 };
 
-// 2. Lấy chi tiết một cơ sở kèm mảng ảnh
+// 2. Lấy chi tiết một cơ sở kèm mảng ảnh + mô tả
 export const getById = (id, callback) => {
   const sql = `
-    SELECT l.*, GROUP_CONCAT(li.image) AS images
+    SELECT l.*, 
+           IF(COUNT(li.id) > 0, 
+              CONCAT('[', GROUP_CONCAT(JSON_OBJECT('url', li.image, 'description', li.description)), ']'), 
+              '[]') AS images_json
     FROM location l
     LEFT JOIN location_images li ON l.id = li.location_id
     WHERE l.id = ?
@@ -33,13 +43,16 @@ export const getById = (id, callback) => {
     if (results.length === 0) return callback(null, []);
     
     const row = results[0];
-    row.images = row.images ? row.images.split(',') : [];
+    row.images = JSON.parse(row.images_json || '[]');
+    delete row.images_json;
+
     callback(null, [row]);
   });
 };
 
-// 3. Tạo cơ sở mới ĐỒNG THỜI lưu một loạt ảnh (Dùng Transaction)
-export const createWithImages = (locationData, imageUrls, callback) => {
+// 3. Tạo cơ sở mới ĐỒNG THỜI lưu một loạt ảnh + mô tả (Dùng Transaction)
+// Mẹo: imageDataArrays sẽ là mảng các object: [{ url: 'ten_anh.jpg', description: 'Mô tả' }]
+export const createWithImages = (locationData, imageDataArrays, callback) => {
   const { address, phone } = locationData;
 
   db.beginTransaction((err) => {
@@ -51,17 +64,17 @@ export const createWithImages = (locationData, imageUrls, callback) => {
 
       const locationId = result.insertId;
 
-      // Nếu người dùng không upload ảnh nào, commit luôn thông tin cơ bản
-      if (!imageUrls || imageUrls.length === 0) {
+      // Nếu không có ảnh nào được truyền vào
+      if (!imageDataArrays || imageDataArrays.length === 0) {
         return db.commit((err) => {
           if (err) return db.rollback(() => callback(err));
           callback(null, { insertId: locationId });
         });
       }
 
-      // Bước B: Chuẩn bị mảng dữ liệu dạng [[location_id, url1], [location_id, url2]] để insert hàng loạt
-      const imageRecords = imageUrls.map(url => [locationId, url]);
-      const sqlImages = 'INSERT INTO location_images (location_id, image) VALUES ?';
+      // Bước B: Chuẩn bị mảng 3 tham số để insert hàng loạt: [location_id, image, description]
+      const imageRecords = imageDataArrays.map(img => [locationId, img.url, img.description || null]);
+      const sqlImages = 'INSERT INTO location_images (location_id, image, description) VALUES ?';
 
       db.query(sqlImages, [imageRecords], (err) => {
         if (err) return db.rollback(() => callback(err));
@@ -75,74 +88,14 @@ export const createWithImages = (locationData, imageUrls, callback) => {
   });
 };
 
-// 4. Cập nhật cơ sở và thay mới bộ ảnh (Xóa ảnh cũ, lưu loạt ảnh mới)
-import * as LocationModel from '../models/locationModel.js';
-import fs from 'fs';
-import path from 'path';
-
-// Hàm helper dùng chung để xóa file vật lý trên ổ cứng tránh lặp code
-const deletePhysicalFiles = (fileNames) => {
-  if (!fileNames || fileNames.length === 0) return;
-  
-  fileNames.forEach(fileName => {
-    // Đường dẫn chính xác tới file cần xóa
-    const filePath = path.join('uploads/locations/', fileName);
-    
-    // Kiểm tra file có tồn tại trên ổ cứng không rồi mới xóa
-    if (fs.existsSync(filePath)) {
-      fs.unlink(filePath, (err) => {
-        if (err) console.error(`Không thể xóa file vật lý: ${filePath}`, err);
-        else console.log(` Đã xóa file rác thành công: ${fileName}`);
-      });
-    }
-  });
-};
-
-export const getAllLocations = (req, res) => {
-  LocationModel.getAll((err, results) => {
-    if (err) return res.status(500).json({ error: err.message });
-    res.json(results);
-  });
-};
-
-export const getLocationById = (req, res) => {
-  LocationModel.getById(req.params.id, (err, results) => {
-    if (err) return res.status(500).json({ error: err.message });
-    if (results.length === 0) return res.status(404).json({ error: 'Không tìm thấy cơ sở này!' });
-    res.json(results[0]);
-  });
-};
-
-export const createLocation = (req, res) => {
-  const { address, phone } = req.body;
-  if (!address) return res.status(400).json({ error: 'Địa chỉ cơ sở là bắt buộc!' });
-
-  let imageUrls = [];
-  if (req.files && req.files.length > 0) {
-    imageUrls = req.files.map(file => file.filename);
-  }
-
-  LocationModel.createWithImages({ address, phone }, imageUrls, (err, result) => {
-    if (err) {
-      // BẪY LỖI HỆ THỐNG: Nếu lưu DB lỗi thì phải xóa các ảnh vừa upload lên để tránh sinh rác
-      deletePhysicalFiles(imageUrls);
-      return res.status(500).json({ error: err.message });
-    }
-    res.status(201).json({ 
-      message: 'Thêm cơ sở kèm bộ sưu tập ảnh thành công!', 
-      location_id: result.insertId,
-      uploaded_images: imageUrls
-    });
-  });
-};
-
-export const updateWithImages = (id, locationData, imageUrls, callback) => {
+// 4. Cập nhật cơ sở và thay mới bộ ảnh
+export const updateWithImages = (id, locationData, imageDataArrays, callback) => {
   const { address, phone } = locationData;
 
   db.beginTransaction((err) => {
     if (err) return callback(err);
 
-    // Bước A: Lấy danh sách ảnh cũ TRƯỚC KHI XÓA trong DB để tí nữa dọn ổ cứng
+    // Bước A: Lấy danh sách tên file ảnh cũ ra để tí nữa Controller dọn dẹp ổ cứng
     db.query('SELECT image FROM location_images WHERE location_id = ?', [id], (err, oldImages) => {
       if (err) return db.rollback(() => callback(err));
 
@@ -153,26 +106,25 @@ export const updateWithImages = (id, locationData, imageUrls, callback) => {
         if (err) return db.rollback(() => callback(err));
         if (result.affectedRows === 0) return db.rollback(() => callback(new Error('NotFound')));
 
-        // Bước C: Nếu có ảnh mới, tiến hành xóa ảnh cũ trong DB và chèn ảnh mới
-        if (imageUrls && imageUrls.length > 0) {
+        // Bước C: Nếu có cập nhật bộ ảnh mới, xóa ảnh cũ trong DB và chèn chuỗi ảnh + mô tả mới vào
+        if (imageDataArrays && imageDataArrays.length > 0) {
           db.query('DELETE FROM location_images WHERE location_id = ?', [id], (err) => {
             if (err) return db.rollback(() => callback(err));
 
-            const imageRecords = imageUrls.map(url => [id, url]);
-            const sqlImages = 'INSERT INTO location_images (location_id, image) VALUES ?';
+            const imageRecords = imageDataArrays.map(img => [id, img.url, img.description || null]);
+            const sqlImages = 'INSERT INTO location_images (location_id, image, description) VALUES ?';
 
             db.query(sqlImages, [imageRecords], (err) => {
               if (err) return db.rollback(() => callback(err));
 
               db.commit((err) => {
                 if (err) return db.rollback(() => callback(err));
-                // Trả về kết quả kèm mảng ảnh cũ cần xóa vật lý
                 callback(null, { affectedRows: result.affectedRows, oldFiles: oldImageFiles });
               });
             });
           });
         } else {
-          // Nếu không có ảnh mới, giữ nguyên ảnh cũ
+          // Nếu không truyền ảnh mới, giữ nguyên bộ ảnh cũ
           db.commit((err) => {
             if (err) return db.rollback(() => callback(err));
             callback(null, { affectedRows: result.affectedRows, oldFiles: [] });
@@ -183,23 +135,71 @@ export const updateWithImages = (id, locationData, imageUrls, callback) => {
   });
 };
 
+// 5. Xóa cơ sở (Xóa dữ liệu DB và trả về danh sách file để controller xóa vật lý)
 export const remove = (id, callback) => {
-  // Lấy danh sách ảnh trước để chuẩn bị xóa file vật lý
-  db.query('SELECT image FROM location_images WHERE location_id = ?', [id], (err, oldImages) => {
+  db.beginTransaction((err) => {
     if (err) return callback(err);
-    
-    const oldImageFiles = oldImages.map(img => img.image);
 
-    // Tiến hành xóa dữ liệu liên kết ở bảng ảnh trong DB
-    db.query('DELETE FROM location_images WHERE location_id = ?', [id], (err) => {
-      if (err) return callback(err);
+    // BƯỚC 1: Thu thập rác vật lý (Lấy tên file ảnh của Location và Services để xóa ổ cứng)
+    // 1.1 Lấy ảnh của Location
+    db.query('SELECT image FROM location_images WHERE location_id = ?', [id], (err, locImgRows) => {
+      if (err) return db.rollback(() => callback(err));
+      const locationFiles = locImgRows.map(row => row.image);
 
-      // Xóa cơ sở ở bảng location
-      db.query('DELETE FROM location WHERE id = ?', [id], (err, result) => {
-        if (err) return callback(err);
-        
-        // Trả về danh sách file ảnh cũ cho Controller xử lý xóa vật lý
-        callback(null, { affectedRows: result.affectedRows, oldFiles: oldImageFiles });
+      // 1.2 Lấy ảnh của tất cả Services thuộc Location này
+      db.query('SELECT image FROM service_images WHERE service_id IN (SELECT id FROM services WHERE location_id = ?)', [id], (err, srvImgRows) => {
+        if (err) return db.rollback(() => callback(err));
+        const serviceFiles = srvImgRows.map(row => row.image);
+
+        // BƯỚC 2: Xóa dữ liệu từ nhánh con (lá) ngược lên gốc bằng Subquery
+        // 2.1 Xóa lịch sử mua gói (user_package)
+        db.query('DELETE FROM user_package WHERE package_id IN (SELECT id FROM packages WHERE service_id IN (SELECT id FROM services WHERE location_id = ?))', [id], (err) => {
+          if (err) return db.rollback(() => callback(err));
+
+          // 2.2 Xóa danh sách gói tập (packages)
+          db.query('DELETE FROM packages WHERE service_id IN (SELECT id FROM services WHERE location_id = ?)', [id], (err) => {
+            if (err) return db.rollback(() => callback(err));
+
+            // 2.3 Xóa ảnh dịch vụ (service_images)
+            db.query('DELETE FROM service_images WHERE service_id IN (SELECT id FROM services WHERE location_id = ?)', [id], (err) => {
+              if (err) return db.rollback(() => callback(err));
+
+              // 2.4 Xóa dịch vụ (services)
+              db.query('DELETE FROM services WHERE location_id = ?', [id], (err) => {
+                if (err) return db.rollback(() => callback(err));
+
+                // 2.5 Xóa dữ liệu ở bảng trung gian (nếu bạn vẫn giữ bảng user_location_service)
+                  db.query('DELETE FROM user_location_service WHERE user_location_id IN (SELECT id FROM user_location WHERE location_id = ?)', [id], (err) => {
+                    if (err) return db.rollback(() => callback(err));
+                
+                    // 2.5 Xóa dữ liệu ở bảng trung gian (nếu bạn vẫn giữ bảng user_location)
+                    db.query('DELETE FROM user_location WHERE location_id = ?', [id], (err) => {
+                    if (err) return db.rollback(() => callback(err));
+
+                  // 2.6 Xóa ảnh cơ sở (location_images)
+                  db.query('DELETE FROM location_images WHERE location_id = ?', [id], (err) => {
+                    if (err) return db.rollback(() => callback(err));
+
+                    // 2.7 BƯỚC CUỐI CÙNG: Xóa gốc cơ sở (location)
+                    db.query('DELETE FROM location WHERE id = ?', [id], (err, result) => {
+                      if (err) return db.rollback(() => callback(err));
+
+                      // Lưu vĩnh viễn và trả về 2 mảng file rác riêng biệt
+                      db.commit((commitErr) => {
+                        if (commitErr) return db.rollback(() => callback(commitErr));
+                        callback(null, { 
+                          affectedRows: result.affectedRows, 
+                          locationFiles, 
+                          serviceFiles 
+                        });
+                      });
+                    });
+                  });
+                });});
+              });
+            });
+          });
+        });
       });
     });
   });

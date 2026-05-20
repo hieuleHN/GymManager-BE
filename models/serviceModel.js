@@ -2,24 +2,35 @@ import db from '../config/db.js';
 
 export const getAll = (callback) => {
   const query = `
-    SELECT s.*, GROUP_CONCAT(si.image) AS images
+    SELECT s.*, 
+           IF(COUNT(si.id) > 0, 
+              CONCAT('[', GROUP_CONCAT(JSON_OBJECT('url', si.image, 'description', si.description)), ']'), 
+              '[]') AS images_json
     FROM services s
     LEFT JOIN service_images si ON s.id = si.service_id
     GROUP BY s.id
   `;
   db.query(query, (err, results) => {
     if (err) return callback(err);
-    const formattedResults = results.map(row => ({
-      ...row,
-      images: row.images ? row.images.split(',') : []
-    }));
+    
+    // Xử lý chuỗi JSON thành mảng Object [{ url: '...', description: '...' }]
+    const formattedResults = results.map(row => {
+      const formattedRow = { ...row };
+      formattedRow.images = JSON.parse(row.images_json || '[]');
+      delete formattedRow.images_json; // Xóa cột tạm
+      return formattedRow;
+    });
+    
     callback(null, formattedResults);
   });
 };
 
 export const getById = (id, callback) => {
   const query = `
-    SELECT s.*, GROUP_CONCAT(si.image) AS images
+    SELECT s.*, 
+           IF(COUNT(si.id) > 0, 
+              CONCAT('[', GROUP_CONCAT(JSON_OBJECT('url', si.image, 'description', si.description)), ']'), 
+              '[]') AS images_json
     FROM services s
     LEFT JOIN service_images si ON s.id = si.service_id
     WHERE s.id = ?
@@ -28,29 +39,35 @@ export const getById = (id, callback) => {
   db.query(query, [id], (err, results) => {
     if (err) return callback(err);
     if (results.length === 0) return callback(null, []);
-    results[0].images = results[0].images ? results[0].images.split(',') : [];
-    callback(null, results);
+    
+    const row = results[0];
+    row.images = JSON.parse(row.images_json || '[]');
+    delete row.images_json;
+    
+    callback(null, [row]);
   });
 };
 
-export const createWithImages = (data, imageUrls, callback) => {
-  const { name, description } = data;
+// Sử dụng mảng imagesData (chứa object) thay cho imageUrls (chỉ chứa string)
+export const createWithImages = (data, imagesData, callback) => {
+  const { name, location_id } = data;
   db.beginTransaction((err) => {
     if (err) return callback(err);
 
-    db.query('INSERT INTO services (name, description) VALUES (?, ?)', [name, description], (err, result) => {
+    db.query('INSERT INTO services (name, location_id) VALUES (?, ?)', [name, location_id], (err, result) => {
       if (err) return db.rollback(() => callback(err));
       const serviceId = result.insertId;
 
-      if (!imageUrls || imageUrls.length === 0) {
+      if (!imagesData || imagesData.length === 0) {
         return db.commit((commitErr) => {
           if (commitErr) return db.rollback(() => callback(commitErr));
           callback(null, result);
         });
       }
 
-      const imageQuery = 'INSERT INTO service_images (service_id, image) VALUES ?';
-      const imageValues = imageUrls.map(url => [serviceId, url]);
+      // Chuẩn bị mảng 3 tham số: [service_id, image, description]
+      const imageQuery = 'INSERT INTO service_images (service_id, image, description) VALUES ?';
+      const imageValues = imagesData.map(img => [serviceId, img.url, img.description || null]);
 
       db.query(imageQuery, [imageValues], (imgErr) => {
         if (imgErr) return db.rollback(() => callback(imgErr));
@@ -63,47 +80,39 @@ export const createWithImages = (data, imageUrls, callback) => {
   });
 };
 
-// --- HÀM CẬP NHẬT ĐƯỢC NÂNG CẤP Ở ĐÂY ---
-export const updateWithImages = (id, data, imageUrls, callback) => {
-  const { name, description } = data;
+export const updateWithImages = (id, data, imagesData, callback) => {
+  const { name, location_id } = data;
 
   db.beginTransaction((err) => {
     if (err) return callback(err);
 
-    // Bước 1: Cập nhật thông tin cơ bản của dịch vụ
-    db.query('UPDATE services SET name = ?, description = ? WHERE id = ?', [name, description, id], (err, result) => {
+    db.query('UPDATE services SET name = ?, location_id = ? WHERE id = ?', [name, location_id, id], (err, result) => {
       if (err) return db.rollback(() => callback(err));
       if (result.affectedRows === 0) return db.rollback(() => callback(new Error('NOT_FOUND')));
 
-      // Nếu Client không upload ảnh mới, giữ nguyên ảnh cũ và commit luôn
-      if (!imageUrls || imageUrls.length === 0) {
+      if (!imagesData || imagesData.length === 0) {
         return db.commit((commitErr) => {
           if (commitErr) return db.rollback(() => callback(commitErr));
           callback(null, { affectedRows: result.affectedRows, oldFilesToDelete: [] });
         });
       }
 
-      // Nếu CÓ ảnh mới gửi lên: Tiến hành dây chuyền đổi ảnh
-      // Bước 2: Lấy danh sách tên file ảnh cũ ra trước để lát xoá ổ cứng
       db.query('SELECT image FROM service_images WHERE service_id = ?', [id], (err, imageRows) => {
         if (err) return db.rollback(() => callback(err));
         const oldFilesToDelete = imageRows.map(row => row.image);
 
-        // Bước 3: Xoá toàn bộ bản ghi ảnh cũ của dịch vụ này trong DB
         db.query('DELETE FROM service_images WHERE service_id = ?', [id], (err) => {
           if (err) return db.rollback(() => callback(err));
 
-          // Bước 4: Bulk Insert loạt ảnh mới vào bảng service_images
-          const imageQuery = 'INSERT INTO service_images (service_id, image) VALUES ?';
-          const imageValues = imageUrls.map(url => [id, url]);
+          // Chèn ảnh và mô tả mới
+          const imageQuery = 'INSERT INTO service_images (service_id, image, description) VALUES ?';
+          const imageValues = imagesData.map(img => [id, img.url, img.description || null]);
 
           db.query(imageQuery, [imageValues], (imgErr) => {
             if (imgErr) return db.rollback(() => callback(imgErr));
 
-            // Bước 5: Commit mọi thứ thành công
             db.commit((commitErr) => {
               if (commitErr) return db.rollback(() => callback(commitErr));
-              // Trả về kết quả kèm mảng ảnh cũ cần xoá vật lý
               callback(null, { affectedRows: result.affectedRows, oldFilesToDelete });
             });
           });
@@ -113,6 +122,7 @@ export const updateWithImages = (id, data, imageUrls, callback) => {
   });
 };
 
+// (Hàm removeCascade giữ nguyên như code của bạn vì nó chỉ xoá và lấy tên file)
 export const removeCascade = (id, callback) => {
   db.beginTransaction((err) => {
     if (err) return callback(err);
