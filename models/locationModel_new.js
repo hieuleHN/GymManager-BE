@@ -1,7 +1,4 @@
 import Location from './schemas/locationSchema.js';
-import Service from './schemas/serviceSchema.js';
-import Package from './schemas/packageSchema.js';
-import UserPackage from './schemas/userPackageSchema.js';
 
 // 1. Lấy tất cả cơ sở kèm danh sách ảnh
 export const getAll = async (callback) => {
