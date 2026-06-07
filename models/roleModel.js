@@ -1,21 +1,47 @@
-import db from '../config/db.js';
+import Role from './schemas/roleSchema.js';
 
-export const getAll = (callback) => {
-  db.query('SELECT * FROM role', callback);
+export const getAll = async (callback) => {
+  try {
+    const roles = await Role.find();
+    callback(null, roles);
+  } catch (err) {
+    callback(err);
+  }
 };
 
-export const getById = (id, callback) => {
-  db.query('SELECT * FROM role WHERE id = ?', [id], callback);
+export const getById = async (id, callback) => {
+  try {
+    const role = await Role.findById(id);
+    callback(null, [role]);
+  } catch (err) {
+    callback(err);
+  }
 };
 
-export const create = (name, callback) => {
-  db.query('INSERT INTO role (name) VALUES (?)', [name], callback);
+export const create = async (name, callback) => {
+  try {
+    const role = new Role({ name });
+    const result = await role.save();
+    callback(null, result);
+  } catch (err) {
+    callback(err);
+  }
 };
 
-export const update = (id, name, callback) => {
-  db.query('UPDATE role SET name = ? WHERE id = ?', [name, id], callback);
+export const update = async (id, name, callback) => {
+  try {
+    const result = await Role.findByIdAndUpdate(id, { name }, { new: true });
+    callback(null, result);
+  } catch (err) {
+    callback(err);
+  }
 };
 
-export const remove = (id, callback) => {
-  db.query('DELETE FROM role WHERE id = ?', [id], callback);
+export const remove = async (id, callback) => {
+  try {
+    await Role.findByIdAndDelete(id);
+    callback(null, { affectedRows: 1 });
+  } catch (err) {
+    callback(err);
+  }
 };

@@ -1,18 +1,23 @@
-import mysql from 'mysql2';
+import mongoose from 'mongoose';
 import dotenv from 'dotenv';
 
 dotenv.config();
 
-const connection = mysql.createConnection({
-  host: process.env.DB_HOST,
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
-  database: process.env.DB_NAME
-});
+const mongoURI = process.env.MONGODB_URI || 'mongodb://localhost:27017/gymmanager';
 
-connection.connect(err => {
-  if (err) throw err;
-  console.log('Connected to MySQL');
-});
+const connectDB = async () => {
+  try {
+    await mongoose.connect(mongoURI, {
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
+    });
+    console.log('🎯 MongoDB được kết nối thành công!');
+  } catch (err) {
+    console.error('❌ Lỗi kết nối MongoDB:', err.message);
+    process.exit(1);
+  }
+};
 
-export default connection;
+connectDB();
+
+export default mongoose;

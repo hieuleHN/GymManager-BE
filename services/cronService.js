@@ -1,6 +1,6 @@
 import cron from 'node-cron';
 import nodemailer from 'nodemailer';
-import db from '../config/db.js';
+import UserPackage from '../models/schemas/userPackageSchema.js';
 
 // 1. Thiết lập cấu hình hòm thư gửi Mail tự động (Ví dụ sử dụng Gmail làm SMTP Server)
 const transporter = nodemailer.createTransport({
@@ -29,65 +29,75 @@ const sendMailHelper = (toEmail, subject, textHtml) => {
 // 2. KHỞI CHẠY TIẾN TRÌNH QUÉT TỰ ĐỘNG (CRON JOB)
 export const initPackageStatusScheduler = () => {
   // Tiến trình chạy tự động vào lúc 00:00 (nửa đêm) mỗi ngày
-  cron.schedule('0 0 * * *', () => {
+  cron.schedule('0 0 * * *', async () => {
     console.log('[Cron Job] Đang thực hiện kiểm tra thời hạn toàn bộ gói tập hội viên...');
 
-    // --- NHÓM 1: QUÉT CÁC GÓI CÒN CHÍNH XÁC 10 NGÀY ---
-    // Sử dụng DATEDIFF() để tính số ngày chênh lệch giữa ngày kết thúc và ngày hôm nay
-    const sqlTenDaysLeft = `
-      SELECT up.id, u.email, u.first_name, u.last_name, p.name AS package_name, DATE_FORMAT(up.end_date, '%d/%m/%Y') AS end_date_formated
-      FROM user_package up
-      JOIN users u ON up.user_id = u.id
-      JOIN packages p ON up.package_id = p.id
-      WHERE up.status = 'đang hoạt động' AND DATEDIFF(up.end_date, CURDATE()) = 10
-    `;
+    try {
+      // --- NHÓM 1: QUÉT CÁC GÓI CÒN CHÍNH XÁC 10 NGÀY ---
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      
+      const tenDaysFromNow = new Date(today);
+      tenDaysFromNow.setDate(today.getDate() + 10);
+      tenDaysFromNow.setHours(23, 59, 59, 999);
 
-    db.query(sqlTenDaysLeft, (err, rows) => {
-      if (err) return console.error('Lỗi truy vấn nhóm sắp hết hạn:', err);
-
-      rows.forEach(row => {
-        // Cập nhật trạng thái chuỗi string sang dạng 'còn 10 ngày'
-        db.query("UPDATE user_package SET status = 'còn 10 ngày' WHERE id = ?", [row.id], (upErr) => {
-          if (upErr) return console.error(upErr);
-
-          // Gửi mail nhắc nhở
-          const emailBody = `
-            <h3>Xin chào ${row.last_name} ${row.first_name},</h3>
-            <p>Gói tập <b>${row.package_name}</b> của bạn tại hệ thống phòng gym chỉ còn lại <b>10 ngày</b> sử dụng (Hết hiệu lực ngày ${row.end_date_formated}).</p>
-            <p>Vui lòng đăng ký gia hạn sớm để giữ các ưu đãi và không bị gián đoạn quá trình luyện tập bạn nhé!</p>
-          `;
-          sendMailHelper(row.email, '[Gym Manager] Thông báo: Gói tập của bạn sắp hết hạn (Còn 10 ngày)', emailBody);
-        });
+      const packagesIn10Days = await UserPackage.find({
+        status: 'đang hoạt động',
+        end_date: { $gte: today, $lte: tenDaysFromNow }
+      }).populate({
+        path: 'user_id',
+        select: 'email first_name last_name'
+      }).populate({
+        path: 'package_id',
+        select: 'name'
       });
-    });
 
-    // --- NHÓM 2: QUÉT CÁC GÓI ĐÃ QUÁ HẠN MÀ CHƯA ĐỔI TRẠNG THÁI ---
-    const sqlExpired = `
-      SELECT up.id, u.email, u.first_name, u.last_name, p.name AS package_name
-      FROM user_package up
-      JOIN users u ON up.user_id = u.id
-      JOIN packages p ON up.package_id = p.id
-      WHERE up.status != 'hết hạn' AND up.end_date < CURDATE()
-    `;
+      for (const userPackage of packagesIn10Days) {
+        // Cập nhật trạng thái
+        await UserPackage.findByIdAndUpdate(userPackage._id, { status: 'còn 10 ngày' });
 
-    db.query(sqlExpired, (err, rows) => {
-      if (err) return console.error('Lỗi truy vấn nhóm đã hết hạn:', err);
+        // Gửi mail nhắc nhở
+        const endDate = new Intl.DateTimeFormat('vi-VN', {
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit'
+        }).format(userPackage.end_date);
 
-      rows.forEach(row => {
-        // Cập nhật trạng thái chuỗi string sang dạng 'hết hạn'
-        db.query("UPDATE user_package SET status = 'hết hạn' WHERE id = ?", [row.id], (upErr) => {
-          if (upErr) return console.error(upErr);
+        const emailBody = `
+          <h3>Xin chào ${userPackage.user_id.last_name} ${userPackage.user_id.first_name},</h3>
+          <p>Gói tập <b>${userPackage.package_id.name}</b> của bạn tại hệ thống phòng gym chỉ còn lại <b>10 ngày</b> sử dụng (Hết hiệu lực ngày ${endDate}).</p>
+          <p>Vui lòng đăng ký gia hạn sớm để giữ các ưu đãi và không bị gián đoạn quá trình luyện tập bạn nhé!</p>
+        `;
+        sendMailHelper(userPackage.user_id.email, '[Gym Manager] Thông báo: Gói tập của bạn sắp hết hạn (Còn 10 ngày)', emailBody);
+      }
 
-          // Gửi mail thông báo hết hạn
-          const emailBody = `
-            <h3>Xin chào ${row.last_name} ${row.first_name},</h3>
-            <p>Gói tập <b>${row.package_name}</b> của bạn đã chính thức <b>HẾT HẠN</b>.</p>
-            <p>Hệ thống tạm thời ngưng quyền check-in của thẻ hội viên này. Bạn có thể mở ứng dụng hoặc liên hệ quầy lễ tân để lựa chọn gói tập mới.</p>
-          `;
-          sendMailHelper(row.email, '[Gym Manager] Cảnh báo: Gói tập của bạn đã hết hạn', emailBody);
-        });
+      // --- NHÓM 2: QUÉT CÁC GÓI ĐÃ QUÁ HẠN MÀ CHƯA ĐỔI TRẠNG THÁI ---
+      const expiredPackages = await UserPackage.find({
+        status: { $ne: 'hết hạn' },
+        end_date: { $lt: today }
+      }).populate({
+        path: 'user_id',
+        select: 'email first_name last_name'
+      }).populate({
+        path: 'package_id',
+        select: 'name'
       });
-    });
 
+      for (const userPackage of expiredPackages) {
+        // Cập nhật trạng thái
+        await UserPackage.findByIdAndUpdate(userPackage._id, { status: 'hết hạn' });
+
+        // Gửi mail thông báo hết hạn
+        const emailBody = `
+          <h3>Xin chào ${userPackage.user_id.last_name} ${userPackage.user_id.first_name},</h3>
+          <p>Gói tập <b>${userPackage.package_id.name}</b> của bạn đã chính thức <b>HẾT HẠN</b>.</p>
+          <p>Hệ thống tạm thời ngưng quyền check-in của thẻ hội viên này. Bạn có thể mở ứng dụng hoặc liên hệ quầy lễ tân để lựa chọn gói tập mới.</p>
+        `;
+        sendMailHelper(userPackage.user_id.email, '[Gym Manager] Cảnh báo: Gói tập của bạn đã hết hạn', emailBody);
+      }
+
+    } catch (error) {
+      console.error('[Cron Job] Lỗi:', error);
+    }
   });
 };
