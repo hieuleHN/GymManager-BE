@@ -1,27 +1,40 @@
 import express from 'express';
+import multer from 'multer';
+import path from 'path';
 import * as ProductController from '../controllers/productController.js';
 
 const router = express.Router();
 
-// Lấy tất cả sản phẩm
+// --- Cấu hình nơi lưu trữ file ảnh tải lên ---
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, 'uploads/'); // Ảnh tải lên từ giao diện sẽ nhảy vào thư mục này
+  },
+  filename: (req, file, cb) => {
+    // Đổi tên file thành: ngày_giờ_tên_gốc để không bao giờ bị trùng lặp file
+    cb(null, Date.now() + path.extname(file.originalname)); 
+  }
+});
+
+const upload = multer({ storage: storage });
+// --------------------------------------------
+
+// 1. Lấy tất cả sản phẩm
 router.get('/', ProductController.getAllProducts);
 
-// Lấy sản phẩm theo cơ sở (location)
-router.get(
-  '/location/:locationId',
-  ProductController.getProductsByLocation
-);
+// 2. Lấy sản phẩm theo cơ sở (location)
+router.get('/location/:locationId', ProductController.getProductsByLocation);
 
-// Lấy sản phẩm theo ID
+// 3. Lấy sản phẩm theo ID
 router.get('/:id', ProductController.getProductById);
 
-// Thêm sản phẩm
-router.post('/', ProductController.createProduct);
+// 4. Thêm sản phẩm (🌟 SỬA DÒNG NÀY: Thêm upload.single('image') để bắt file ảnh thật)
+router.post('/', upload.single('image'), ProductController.createProduct);
 
-// Cập nhật sản phẩm
+// 5. Cập nhật sản phẩm
 router.put('/:id', ProductController.updateProduct);
 
-// Xóa sản phẩm
+// 6. Xóa sản phẩm
 router.delete('/:id', ProductController.deleteProduct);
 
 export default router;

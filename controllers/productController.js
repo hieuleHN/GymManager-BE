@@ -16,7 +16,7 @@ export const getAllProducts = async (req, res) => {
 export const getProductsByLocation = async (req, res) => {
   try {
     const { locationId } = req.params; // Lấy đúng biến locationId từ URL
-    
+
     if (!locationId) {
       return res.status(400).json({ message: 'Thiếu locationId!' });
     }
@@ -46,12 +46,21 @@ export const getProductById = async (req, res) => {
   }
 };
 
-// 4. THÊM mới sản phẩm
-// Khớp với: router.post('/', ProductController.createProduct);
+// 4. THÊM mới sản phẩm kèm FILE ẢNH THẬT tải lên từ giao diện
 export const createProduct = async (req, res) => {
   try {
-    const newProduct = new Product(req.body);
-    const savedProduct = await newProduct.save();
+    // Tạo một đối tượng dữ liệu mới từ body gửi lên
+    const productData = { ...req.body };
+
+    // Kiểm tra xem Front-end có bấm chọn tệp và gửi file ảnh lên không
+    if (req.file) {
+      // Lưu đường dẫn file (ví dụ: uploads/1717923456.png) vào trường image trong database
+      productData.image = req.file.path.replace(/\\/g, '/'); 
+    }
+
+    // Tiến hành lưu vào MongoDB
+    const savedProduct = await Product.create(productData);
+    
     res.status(201).json({ message: 'Thêm sản phẩm thành công!', data: savedProduct });
   } catch (error) {
     res.status(500).json({ message: 'Lỗi server!', error: error.message });

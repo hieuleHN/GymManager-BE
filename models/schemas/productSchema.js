@@ -21,12 +21,17 @@ const productSchema = new mongoose.Schema({
     default: ''
   },
 
-  importDate: { // Ngày nhập hàng (Thêm mới)
+  image: { // 🌟 Đường dẫn ảnh sản phẩm (Thêm mới để khớp giao diện)
+    type: String,
+    default: ''
+  },
+
+  importDate: {
     type: Date,
     required: true
   },
 
-  expiryDate: { // Ngày hết hạn (Thêm mới)
+  expiryDate: {
     type: Date,
     required: true
   },
