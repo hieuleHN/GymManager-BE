@@ -9,6 +9,9 @@ import packageRoutes from './routes/pakageRoutes.js';
 import userPackageRoutes from './routes/userPackageRouters.js';
 import { initPackageStatusScheduler } from './services/cronService.js';
 
+import productRoutes from './routes/productRoutes.js';
+import equipmentRoutes from './routes/equipmentRoutes.js';
+
 dotenv.config();
 
 const app = express();
@@ -21,6 +24,10 @@ app.use('/locations', locationRoutes);
 app.use('/services', serviceRoutes);
 app.use('/packages', packageRoutes);
 app.use('/user-packages', userPackageRoutes);
+
+app.use('/products', productRoutes);
+app.use('/equipments', equipmentRoutes);
+
 
 initPackageStatusScheduler();
 

@@ -16,7 +16,9 @@ const packageSchema = new mongoose.Schema({
   },
   is_active: {
     type: Boolean,
-    default: true
+
+    default: true 
+
   },
   service_id: {
     type: mongoose.Schema.Types.ObjectId,
