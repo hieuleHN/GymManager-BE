@@ -27,10 +27,19 @@ export const getById = async (id, callback) => {
 // 3. Tạo cơ sở mới với ảnh
 export const createWithImages = async (locationData, imageDataArrays, callback) => {
   try {
-    const { address, phone } = locationData;
+    const { address, phone, title, description, openTime, closeTime, bankName, accountNumber, accountName, branch, qrImage } = locationData;
     const location = new Location({
       address,
-      phone,
+      phone: phone || '',
+      title: title || '',
+      description: description || '',
+      openTime: openTime || '06:00',
+      closeTime: closeTime || '22:00',
+      bankName: bankName || '',
+      accountNumber: accountNumber || '',
+      accountName: accountName || '',
+      branch: branch || '',
+      qrImage: qrImage || '',
       images: imageDataArrays || []
     });
     const result = await location.save();
@@ -43,7 +52,7 @@ export const createWithImages = async (locationData, imageDataArrays, callback) 
 // 4. Cập nhật cơ sở và thay mới bộ ảnh
 export const updateWithImages = async (id, locationData, imageDataArrays, callback) => {
   try {
-    const { address, phone } = locationData;
+    const { address, phone, title, description, openTime, closeTime, bankName, accountNumber, accountName, branch, qrImage } = locationData;
     const location = await Location.findById(id);
     
     if (!location) {
@@ -56,7 +65,16 @@ export const updateWithImages = async (id, locationData, imageDataArrays, callba
       id,
       {
         address,
-        phone,
+        phone: phone || '',
+        title: title || '',
+        description: description || '',
+        openTime: openTime || '06:00',
+        closeTime: closeTime || '22:00',
+        bankName: bankName || '',
+        accountNumber: accountNumber || '',
+        accountName: accountName || '',
+        branch: branch || '',
+        qrImage: qrImage || '',
         images: imageDataArrays || []
       },
       { new: true }
@@ -68,7 +86,38 @@ export const updateWithImages = async (id, locationData, imageDataArrays, callba
   }
 };
 
-// 5. Xóa cơ sở (Xóa dữ liệu DB và trả về danh sách file để controller xóa vật lý)
+// 5. Cập nhật thông tin thanh toán
+export const updatePaymentInfo = async (id, paymentData, callback) => {
+  try {
+    const { bankName, accountNumber, accountName, branch } = paymentData;
+    const location = await Location.findByIdAndUpdate(
+      id,
+      { bankName: bankName || '', accountNumber: accountNumber || '', accountName: accountName || '', branch: branch || '' },
+      { new: true }
+    );
+    if (!location) return callback(new Error('NotFound'));
+    callback(null, { affectedRows: 1 });
+  } catch (err) {
+    callback(err);
+  }
+};
+
+// 6. Cập nhật mã QR
+export const updateQR = async (id, qrImage, callback) => {
+  try {
+    const location = await Location.findByIdAndUpdate(
+      id,
+      { qrImage },
+      { new: true }
+    );
+    if (!location) return callback(new Error('NotFound'));
+    callback(null, { affectedRows: 1 });
+  } catch (err) {
+    callback(err);
+  }
+};
+
+// 7. Xóa cơ sở (Xóa dữ liệu DB và trả về danh sách file để controller xóa vật lý)
 export const remove = async (id, callback) => {
   try {
     const location = await Location.findById(id);

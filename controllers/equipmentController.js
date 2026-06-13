@@ -1,10 +1,18 @@
 import Equipment from '../models/schemas/equipmentSchema.js';
 
-// 1. Lấy TẤT CẢ thiết bị không phân biệt cơ sở
+// 1. Lấy tất cả thiết bị, hỗ trợ lọc theo locationId query param
 export const getAllEquipments = async (req, res) => {
   try {
-    const equipments = await Equipment.find();
-    res.status(200).json(equipments);
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 15;
+    const { locationId } = req.query;
+    const filter = locationId ? { location_id: locationId } : {};
+    const skip = (page - 1) * limit;
+    const [data, total] = await Promise.all([
+      Equipment.find(filter).skip(skip).limit(limit),
+      Equipment.countDocuments(filter)
+    ]);
+    res.status(200).json({ data, total, page, limit, totalPages: Math.ceil(total / limit) });
   } catch (error) {
     res.status(500).json({ message: 'Lỗi server!', error: error.message });
   }

@@ -1,16 +1,23 @@
 ﻿import Package from './schemas/packageSchema.js';
 
-// 1. CREATE: Tạo một gói tập mới
 export const createPackage = async (packageData, callback) => {
   try {
-    const { name, price, description, duration_days, is_active, service_id } = packageData;
+    const { name, price, description, duration_days, is_active, service_id, unitPrice, disciplineId, features, durations, contractA, contractB, contractTerms, locationId } = packageData;
     const pkg = new Package({
       name,
       price,
       description,
       duration_days,
       is_active: is_active !== undefined ? is_active : true,
-      service_id
+      service_id,
+      unitPrice,
+      disciplineId,
+      features,
+      durations,
+      contractA,
+      contractB,
+      contractTerms,
+      locationId
     });
     const result = await pkg.save();
     callback(null, result);
@@ -19,20 +26,34 @@ export const createPackage = async (packageData, callback) => {
   }
 };
 
-// 2. READ (Danh sách): Lấy toàn bộ danh sách gói tập
-export const getAllPackages = async (callback) => {
+export const getAllPackages = async (page = 1, limit = 15, locationId, disciplineId, callback) => {
   try {
-    const packages = await Package.find().populate('service_id', 'name');
+    const filter = {};
+    if (locationId) filter.locationId = locationId;
+    if (disciplineId) filter.disciplineId = disciplineId;
+    const skip = (page - 1) * limit;
+    const [data, total] = await Promise.all([
+      Package.find(filter).populate('service_id', 'name').populate('disciplineId', 'name').skip(skip).limit(limit),
+      Package.countDocuments(filter)
+    ]);
+    callback(null, { data, total, page, limit, totalPages: Math.ceil(total / limit) });
+  } catch (err) {
+    callback(err);
+  }
+};
+
+export const getPackagesByDiscipline = async (disciplineId, callback) => {
+  try {
+    const packages = await Package.find({ disciplineId }).populate('service_id', 'name').populate('disciplineId', 'name');
     callback(null, packages);
   } catch (err) {
     callback(err);
   }
 };
 
-// 3. READ (Chi tiết + JOIN)
 export const getPackageById = async (id, callback) => {
   try {
-    const pkg = await Package.findById(id).populate('service_id', 'name').exec();
+    const pkg = await Package.findById(id).populate('service_id', 'name').populate('disciplineId', 'name').exec();
     if (!pkg) return callback(null, []);
     callback(null, [pkg]);
   } catch (err) {
@@ -40,13 +61,12 @@ export const getPackageById = async (id, callback) => {
   }
 };
 
-// 4. UPDATE: Cập nhật thông tin gói tập
 export const updatePackageById = async (id, packageData, callback) => {
   try {
-    const { name, price, description, duration_days, is_active, service_id } = packageData;
+    const { name, price, description, duration_days, is_active, service_id, unitPrice, disciplineId, features, durations, contractA, contractB, contractTerms, locationId, updatedAt } = packageData;
     const result = await Package.findByIdAndUpdate(
       id,
-      { name, price, description, duration_days, is_active, service_id },
+      { name, price, description, duration_days, is_active, service_id, unitPrice, disciplineId, features, durations, contractA, contractB, contractTerms, locationId, updatedAt },
       { new: true }
     );
     callback(null, result);
@@ -55,7 +75,6 @@ export const updatePackageById = async (id, packageData, callback) => {
   }
 };
 
-// 5. DELETE: Xóa gói tập
 export const deletePackageById = async (id, callback) => {
   try {
     const { default: UserPackage } = await import('./schemas/userPackageSchema.js');

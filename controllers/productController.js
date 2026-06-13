@@ -1,11 +1,18 @@
 import Product from '../models/schemas/productSchema.js';
 
-// 1. Lấy TẤT CẢ sản phẩm không phân biệt cơ sở
-// Khớp với: router.get('/', ProductController.getAllProducts);
+// 1. Lấy tất cả sản phẩm, hỗ trợ lọc theo locationId query param
 export const getAllProducts = async (req, res) => {
   try {
-    const products = await Product.find();
-    res.status(200).json(products);
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 15;
+    const { locationId } = req.query;
+    const filter = locationId ? { location_id: locationId } : {};
+    const skip = (page - 1) * limit;
+    const [data, total] = await Promise.all([
+      Product.find(filter).skip(skip).limit(limit),
+      Product.countDocuments(filter)
+    ]);
+    res.status(200).json({ data, total, page, limit, totalPages: Math.ceil(total / limit) });
   } catch (error) {
     res.status(500).json({ message: 'Lỗi server!', error: error.message });
   }
@@ -72,9 +79,13 @@ export const createProduct = async (req, res) => {
 export const updateProduct = async (req, res) => {
   try {
     const { id } = req.params;
+    const productData = { ...req.body };
+    if (req.file) {
+      productData.image = req.file.path.replace(/\\/g, '/');
+    }
     const updatedProduct = await Product.findByIdAndUpdate(
       id,
-      req.body,
+      productData,
       { new: true, runValidators: true }
     );
 
@@ -100,6 +111,53 @@ export const deleteProduct = async (req, res) => {
     }
 
     res.status(200).json({ message: 'Xóa sản phẩm thành công!' });
+  } catch (error) {
+    res.status(500).json({ message: 'Lỗi server!', error: error.message });
+  }
+};
+
+// 7. THÊM báo cáo cho sản phẩm
+export const addReport = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { reason } = req.body;
+
+    if (!reason) {
+      return res.status(400).json({ message: 'Vui lòng cung cấp lý do báo cáo!' });
+    }
+
+    const updatedProduct = await Product.findByIdAndUpdate(
+      id,
+      { $push: { reports: { reason, reportedAt: new Date(), status: 'pending' } } },
+      { new: true }
+    );
+
+    if (!updatedProduct) {
+      return res.status(404).json({ message: 'Không tìm thấy sản phẩm!' });
+    }
+
+    res.status(200).json({ message: 'Báo cáo sản phẩm thành công!', data: updatedProduct });
+  } catch (error) {
+    res.status(500).json({ message: 'Lỗi server!', error: error.message });
+  }
+};
+
+// 8. GIẢI QUYẾT báo cáo (đánh dấu resolved)
+export const resolveReport = async (req, res) => {
+  try {
+    const { id, reportId } = req.params;
+
+    const updatedProduct = await Product.findOneAndUpdate(
+      { _id: id, 'reports._id': reportId },
+      { $set: { 'reports.$.status': 'resolved' } },
+      { new: true }
+    );
+
+    if (!updatedProduct) {
+      return res.status(404).json({ message: 'Không tìm thấy sản phẩm hoặc báo cáo!' });
+    }
+
+    res.status(200).json({ message: 'Đã giải quyết báo cáo!', data: updatedProduct });
   } catch (error) {
     res.status(500).json({ message: 'Lỗi server!', error: error.message });
   }

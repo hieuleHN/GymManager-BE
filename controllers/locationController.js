@@ -38,12 +38,16 @@ export const getLocationById = (req, res) => {
 };
 
 export const createLocation = (req, res) => {
-  const { address, phone } = req.body;
+  const { address, phone, title, description, openTime, closeTime } = req.body;
   
-  // Validate trước, nếu lỗi thì xóa ngay các file Multer vừa tải lên tạm thời
   if (!address) {
     if (req.files) deletePhysicalFiles(req.files.map(f => f.filename), 'locations');
     return res.status(400).json({ error: 'Địa chỉ cơ sở là bắt buộc!' });
+  }
+
+  if (!phone) {
+    if (req.files) deletePhysicalFiles(req.files.map(f => f.filename), 'locations');
+    return res.status(400).json({ error: 'Số điện thoại là bắt buộc!' });
   }
 
   // Chuẩn hóa description từ req.body thành một mảng phẳng để bốc theo index
@@ -64,7 +68,7 @@ export const createLocation = (req, res) => {
   }
 
   // Truyền mảng Object imagesData xuống cho Model xử lý insert
-  LocationModel.createWithImages({ address, phone }, imagesData, (err, result) => {
+  LocationModel.createWithImages({ address, phone, title, description, openTime, closeTime }, imagesData, (err, result) => {
     if (err) {
       // BẪY LỖI HỆ THỐNG: Nếu lỗi DB, lấy danh sách tên file ra để xóa vật lý, tránh rác ổ cứng
       const fileNamesToXoa = req.files ? req.files.map(f => f.filename) : [];
@@ -82,11 +86,16 @@ export const createLocation = (req, res) => {
 
 // 2. CHỨC NĂNG CẬP NHẬT (THAY MỚI ALBUM ẢNH + MÔ TẢ)
 export const updateLocation = (req, res) => {
-  const { address, phone } = req.body;
+  const { address, phone, title, description, openTime, closeTime, bankName, accountNumber, accountName, branch, qrImage } = req.body;
   
   if (!address) {
     if (req.files) deletePhysicalFiles(req.files.map(f => f.filename), 'locations');
     return res.status(400).json({ error: 'Địa chỉ cơ sở là bắt buộc!' });
+  }
+
+  if (!phone) {
+    if (req.files) deletePhysicalFiles(req.files.map(f => f.filename), 'locations');
+    return res.status(400).json({ error: 'Số điện thoại là bắt buộc!' });
   }
 
   // Chuẩn hóa mảng description tương tự hàm tạo mới
@@ -106,7 +115,7 @@ export const updateLocation = (req, res) => {
   }
 
   // Truyền imagesData xuống Model cập nhật
-  LocationModel.updateWithImages(req.params.id, { address, phone }, imagesData, (err, result) => {
+  LocationModel.updateWithImages(req.params.id, { address, phone, title, description, openTime, closeTime, bankName, accountNumber, accountName, branch, qrImage }, imagesData, (err, result) => {
     if (err) {
       // Nếu lỗi DB, xóa các file ảnh vừa được upload lên tạm
       const fileNamesToXoa = req.files ? req.files.map(f => f.filename) : [];
@@ -121,6 +130,27 @@ export const updateLocation = (req, res) => {
     }
 
     res.json({ message: 'Cập nhật cơ sở và thay mới album ảnh thành công!' });
+  });
+};
+
+// Cập nhật thông tin thanh toán
+export const updatePaymentInfo = (req, res) => {
+  const { bankName, accountNumber, accountName, branch } = req.body;
+  LocationModel.updatePaymentInfo(req.params.id, { bankName, accountNumber, accountName, branch }, (err, result) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json({ message: 'Cập nhật thông tin thanh toán thành công!' });
+  });
+};
+
+// Upload mã QR cho cơ sở
+export const uploadQR = (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ error: 'Vui lòng chọn file ảnh QR!' });
+  }
+  const qrImage = req.file.filename;
+  LocationModel.updateQR(req.params.id, qrImage, (err, result) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json({ message: 'Cập nhật mã QR thành công!', qrImage });
   });
 };
 

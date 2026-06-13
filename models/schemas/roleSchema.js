@@ -12,4 +12,4 @@ const roleSchema = new mongoose.Schema({
   }
 });
 
-export default mongoose.model('Role', roleSchema);
+export default mongoose.model('cong_viec', roleSchema);
