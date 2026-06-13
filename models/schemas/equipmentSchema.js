@@ -11,6 +11,16 @@ const equipmentSchema = new mongoose.Schema({
     default: 1
   },
 
+  unitPrice: {
+    type: Number,
+    default: 0
+  },
+
+  total: {
+    type: Number,
+    default: 0
+  },
+
   status: {
     type: String,
     default: 'active'
@@ -34,6 +44,11 @@ const equipmentSchema = new mongoose.Schema({
   purchaser: {
     type: String,
     required: true
+  },
+
+  description: {
+    type: String,
+    default: ''
   },
 
   warranty_period: {

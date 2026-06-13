@@ -45,7 +45,17 @@ const productSchema = new mongoose.Schema({
   createdAt: {
     type: Date,
     default: Date.now
-  }
+  },
+
+  reports: [{
+    reason: { type: String, required: true },
+    reportedAt: { type: Date, default: Date.now },
+    status: {
+      type: String,
+      enum: ['pending', 'resolved'],
+      default: 'pending'
+    }
+  }]
 });
 
 export default mongoose.model('Product', productSchema);
