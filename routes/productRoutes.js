@@ -37,4 +37,10 @@ router.put('/:id', ProductController.updateProduct);
 // 6. Xóa sản phẩm
 router.delete('/:id', ProductController.deleteProduct);
 
+// 7. Báo cáo sản phẩm
+router.post('/:id/report', ProductController.addReport);
+
+// 8. Giải quyết báo cáo
+router.put('/:id/report/:reportId/resolve', ProductController.resolveReport);
+
 export default router;
