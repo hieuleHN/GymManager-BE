@@ -1,32 +1,25 @@
-import mongoose from 'mongoose';
+import mongoose from "mongoose";
 
-const packageSchema = new mongoose.Schema({
-  name: {
-    type: String,
-    required: true
+const packageSchema = new mongoose.Schema(
+  {
+    name: { type: String, required: true, trim: true },
+    price: { type: Number, required: true },
+    durationDays: { type: Number, required: true },
+    durationText: { type: String, required: true },
+    features: [{ type: String }],
+    departmentId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Department",
+    },
+    locationIds: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Location",
+      },
+    ],
+    isActive: { type: Boolean, default: true },
   },
-  price: {
-    type: Number,
-    required: true
-  },
-  description: String,
-  duration_days: {
-    type: Number,
-    required: true
-  },
-  is_active: {
-    type: Boolean,
-    default: true
-  },
-  service_id: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'Service',
-    required: true
-  },
-  createdAt: {
-    type: Date,
-    default: Date.now
-  }
-});
+  { timestamps: true },
+);
 
-export default mongoose.model('Package', packageSchema);
+export default packageSchema;
