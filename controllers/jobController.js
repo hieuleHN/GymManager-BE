@@ -17,6 +17,7 @@ export const detail = (req, res) => {
     if (!job) return res.status(404).json({ error: 'Không tìm thấy công việc!' });
     res.json(job);
   });
+  
 };
 
 export const create = (req, res) => {
