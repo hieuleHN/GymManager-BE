@@ -71,7 +71,11 @@ const customerSchema = new mongoose.Schema({
   }
 });
 
+<<<<<<< HEAD
 customerSchema.pre('save', function (next) {
+=======
+customerSchema.pre('save', function(next) {
+>>>>>>> 8d5dd86e396b7ed3fe4ab92b312d01e2f4b52d8d
   this.updatedAt = new Date();
   next();
 });
