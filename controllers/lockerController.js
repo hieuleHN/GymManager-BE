@@ -1,7 +1,3 @@
-if (err) return res.status(400).json({ error: err.message });
-    res.json({ message: 'Xóa vấn đề thành công!' });
-  });
-};
 import * as LockerModel from '../models/lockerModel.js';
 
 export const list = (req, res) => {
@@ -56,3 +52,7 @@ export const resolve = (req, res) => {
 
 export const remove = (req, res) => {
   LockerModel.deleteById(req.params.id, (err, result) => {
+    if (err) return res.status(400).json({ error: err.message });
+    res.json({ message: 'Xóa vấn đề thành công!' });
+  });
+};
