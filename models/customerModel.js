@@ -1,31 +1,3 @@
-status: 'rejected',
-      rejectionReason: reason,
-      updatedAt: new Date()
-    }, { new: true });
-    if (!customer) return callback({ message: 'Không tìm thấy khách hàng!' });
-    callback(null, customer);
-  } catch (err) {
-    callback(err);
-  }
-};
-
-export const findCustomerByAccount = async (account, callback) => {
-  try {
-    const customer = await Customer.findOne({ account });
-    callback(null, customer);
-  } catch (err) {
-    callback(err);
-  }
-};
-
-export const getPendingCustomers = async (callback) => {
-  try {
-    const customers = await Customer.find({ status: 'pending' }).sort({ createdAt: -1 });
-    callback(null, customers);
-  } catch (err) {
-    callback(err);
-  }
-};
 import Customer from './schemas/customerSchema.js';
 import Staff from './schemas/staffSchema.js';
 import bcrypt from 'bcryptjs';
@@ -114,3 +86,31 @@ export const approveCustomer = async (id, staffId, callback) => {
 export const rejectCustomer = async (id, reason, callback) => {
   try {
     const customer = await Customer.findByIdAndUpdate(id, {
+      status: 'rejected',
+      rejectionReason: reason,
+      updatedAt: new Date()
+    }, { new: true });
+    if (!customer) return callback({ message: 'Không tìm thấy khách hàng!' });
+    callback(null, customer);
+  } catch (err) {
+    callback(err);
+  }
+};
+
+export const findCustomerByAccount = async (account, callback) => {
+  try {
+    const customer = await Customer.findOne({ account });
+    callback(null, customer);
+  } catch (err) {
+    callback(err);
+  }
+};
+
+export const getPendingCustomers = async (callback) => {
+  try {
+    const customers = await Customer.find({ status: 'pending' }).sort({ createdAt: -1 });
+    callback(null, customers);
+  } catch (err) {
+    callback(err);
+  }
+};
