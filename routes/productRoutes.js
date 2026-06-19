@@ -31,8 +31,8 @@ router.get('/:id', ProductController.getProductById);
 // 4. Thêm sản phẩm (🌟 SỬA DÒNG NÀY: Thêm upload.single('image') để bắt file ảnh thật)
 router.post('/', upload.single('image'), ProductController.createProduct);
 
-// 5. Cập nhật sản phẩm
-router.put('/:id', ProductController.updateProduct);
+// 5. Cập nhật sản phẩm (kèm upload ảnh)
+router.put('/:id', upload.single('image'), ProductController.updateProduct);
 
 // 6. Xóa sản phẩm
 router.delete('/:id', ProductController.deleteProduct);
