@@ -4,16 +4,15 @@ import bcrypt from 'bcryptjs';
 
 export const createCustomer = async (data, callback) => {
   try {
-    const { account, password, fullName, gender, phone, email, address, idNumber, idCardFront, idCardBack, locationId } = data;
-    const existing = await Customer.findOne({ $or: [{ account }, { email }, { phone }] });
-    if (existing) return callback({ message: 'Tài khoản, email hoặc số điện thoại đã tồn tại!' });
+    const { account, password, locationId } = data;
+    const existing = await Customer.findOne({ account });
+    if (existing) return callback({ message: 'Tài khoản đã tồn tại!' });
 
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
 
     const customer = new Customer({
-      account, password: hashedPassword, fullName, gender, phone, email, address,
-      idNumber, idCardFront, idCardBack, locationId,
+      account, password: hashedPassword, locationId,
       registerDate: new Date(),
       status: 'pending'
     });
@@ -68,6 +67,30 @@ export const deleteCustomerById = async (id, callback) => {
   }
 };
 
+export const submitPersonalInfo = async (id, data, files, callback) => {
+  try {
+    const updateData = {
+      fullName: data.fullName,
+      gender: data.gender,
+      phone: data.phone,
+      email: data.email,
+      address: data.address || '',
+      idNumber: data.idNumber || '',
+      status: 'pending_approval',
+      infoFilledAt: new Date(),
+      updatedAt: new Date()
+    };
+    if (files?.idCardFront) updateData.idCardFront = files.idCardFront[0].filename;
+    if (files?.idCardBack) updateData.idCardBack = files.idCardBack[0].filename;
+
+    const customer = await Customer.findByIdAndUpdate(id, updateData, { new: true });
+    if (!customer) return callback({ message: 'Không tìm thấy khách hàng!' });
+    callback(null, customer);
+  } catch (err) {
+    callback(err);
+  }
+};
+
 export const approveCustomer = async (id, staffId, callback) => {
   try {
     const customer = await Customer.findByIdAndUpdate(id, {
@@ -97,6 +120,19 @@ export const rejectCustomer = async (id, reason, callback) => {
   }
 };
 
+export const lockCustomer = async (id, callback) => {
+  try {
+    const customer = await Customer.findByIdAndUpdate(id, {
+      status: 'locked',
+      updatedAt: new Date()
+    }, { new: true });
+    if (!customer) return callback({ message: 'Không tìm thấy khách hàng!' });
+    callback(null, customer);
+  } catch (err) {
+    callback(err);
+  }
+};
+
 export const findCustomerByAccount = async (account, callback) => {
   try {
     const customer = await Customer.findOne({ account });
@@ -108,7 +144,20 @@ export const findCustomerByAccount = async (account, callback) => {
 
 export const getPendingCustomers = async (callback) => {
   try {
-    const customers = await Customer.find({ status: 'pending' }).sort({ createdAt: -1 });
+    const customers = await Customer.find({ status: { $in: ['pending', 'pending_approval'] } }).sort({ createdAt: -1 });
+    callback(null, customers);
+  } catch (err) {
+    callback(err);
+  }
+};
+
+export const getCustomersByDeadline = async (callback) => {
+  try {
+    const now = new Date();
+    const customers = await Customer.find({
+      status: 'pending',
+      infoFilledAt: { $exists: false }
+    }).sort({ createdAt: -1 });
     callback(null, customers);
   } catch (err) {
     callback(err);
