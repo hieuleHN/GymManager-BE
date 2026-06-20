@@ -9,35 +9,18 @@ const customerSchema = new mongoose.Schema({
     type: String,
     required: true
   },
-  fullName: {
-    type: String,
-    required: true
-  },
+  fullName: String,
   gender: {
     type: String,
     enum: ['Nam', 'Nữ', 'Khác'],
     default: 'Nam'
   },
-  phone: {
-    type: String,
-    required: true
-  },
-  email: {
-    type: String,
-    required: true
-  },
-  address: {
-    type: String
-  },
-  idNumber: {
-    type: String
-  },
-  idCardFront: {
-    type: String
-  },
-  idCardBack: {
-    type: String
-  },
+  phone: String,
+  email: String,
+  address: String,
+  idNumber: String,
+  idCardFront: String,
+  idCardBack: String,
   locationId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Location'
@@ -48,19 +31,16 @@ const customerSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['pending', 'approved', 'rejected'],
+    enum: ['pending', 'pending_approval', 'approved', 'rejected', 'locked'],
     default: 'pending'
   },
   approvedBy: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Staff'
   },
-  approvedAt: {
-    type: Date
-  },
-  rejectionReason: {
-    type: String
-  },
+  approvedAt: Date,
+  rejectionReason: String,
+  infoFilledAt: Date,
   createdAt: {
     type: Date,
     default: Date.now

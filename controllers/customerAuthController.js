@@ -12,11 +12,8 @@ export const login = (req, res) => {
   findCustomerByAccount(account, (err, customer) => {
     if (err) return res.status(500).json({ error: err.message });
     if (!customer) return res.status(400).json({ error: 'Tài khoản hoặc mật khẩu không chính xác!' });
-    if (customer.status === 'pending') {
-      return res.status(403).json({ error: 'Tài khoản của bạn đang chờ nhân viên xác nhận!' });
-    }
-    if (customer.status === 'rejected') {
-      return res.status(403).json({ error: customer.rejectionReason || 'Tài khoản của bạn đã bị từ chối!' });
+    if (customer.status === 'locked') {
+      return res.status(403).json({ error: 'Tài khoản của bạn đã bị khóa!' });
     }
     bcrypt.compare(password, customer.password, (err, isMatch) => {
       if (err) return res.status(500).json({ error: err.message });
@@ -33,9 +30,10 @@ export const login = (req, res) => {
         user: {
           id: customer._id,
           username: customer.account,
-          fullName: customer.fullName,
+          fullName: customer.fullName || customer.account,
           role: 'member',
-          isStaff: false
+          isStaff: false,
+          status: customer.status
         }
       });
     });
