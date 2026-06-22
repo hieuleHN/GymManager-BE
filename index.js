@@ -19,6 +19,7 @@ import permissionRoutes from './routes/permissionRoutes.js';
 import policyRoutes from './routes/policyRoutes.js';
 import expenseRoutes from './routes/expenseRoutes.js';
 import lockerRoutes from './routes/lockerRoutes.js';
+import userPackageRoutes from './routes/userPackageRoutes.js';
 
 dotenv.config();
 
@@ -48,6 +49,7 @@ app.use('/api/permissions', permissionRoutes);
 app.use('/api/policies', policyRoutes);
 app.use('/api/expenses', expenseRoutes);
 app.use('/api/lockers', lockerRoutes);
+app.use('/api/user-packages', userPackageRoutes);
 
 initPackageStatusScheduler();
 

@@ -75,6 +75,35 @@ async function seed() {
       console.log('Đã tạo công việc Kế toán');
     }
 
+    // Tạo quyền cho Admin (tất cả quyền)
+    const permissionCollection = db.collection('permissions');
+    const existingPermission = await permissionCollection.findOne({ jobId: adminJobId });
+    if (!existingPermission) {
+      await permissionCollection.insertOne({
+        jobId: adminJobId,
+        permissions: [
+          { feature: 'statistics', actions: ['view', 'read'] },
+          { feature: 'customers', actions: ['view', 'create', 'read', 'update', 'delete'] },
+          { feature: 'equipment', actions: ['view', 'create', 'read', 'update', 'delete'] },
+          { feature: 'packages', actions: ['view', 'create', 'read', 'update', 'delete'] },
+          { feature: 'services', actions: ['view', 'create', 'read', 'update', 'delete'] },
+          { feature: 'attendance', actions: ['view', 'create', 'read', 'update', 'delete'] },
+          { feature: 'products', actions: ['view', 'create', 'read', 'update', 'delete'] },
+          { feature: 'clubs', actions: ['view', 'create', 'read', 'update', 'delete'] },
+          { feature: 'staff', actions: ['view', 'create', 'read', 'update', 'delete'] },
+          { feature: 'tasks', actions: ['view', 'create', 'read', 'update', 'delete'] },
+          { feature: 'payment', actions: ['view', 'create', 'read', 'update', 'delete'] },
+          { feature: 'training', actions: ['view', 'create', 'read', 'update', 'delete'] },
+          { feature: 'schedule', actions: ['view', 'create', 'read', 'update', 'delete'] }
+        ],
+        createdAt: new Date(),
+        updatedAt: new Date()
+      });
+      console.log('Đã tạo quyền Admin');
+    } else {
+      console.log('Quyền Admin đã tồn tại');
+    }
+
     // Tạo tài khoản nhân viên Admin
     const staffCollection = db.collection('staffs');
     const existingStaff = await staffCollection.findOne({ account: 'admin' });

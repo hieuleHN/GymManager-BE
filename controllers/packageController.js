@@ -4,7 +4,8 @@ import {
   getPackageById, 
   updatePackageById, 
   deletePackageById,
-  getPackagesByDiscipline
+  getPackagesByDiscipline,
+  getRelatedPackages
 } from '../models/packageModel.js';
 
 export const addPackage = (req, res) => {
@@ -56,6 +57,7 @@ export const getPackageDetail = (req, res) => {
     const pkg = Array.isArray(rows) ? rows[0] : rows;
 
     const packageInfo = {
+      _id: pkg._id || pkg.package_id,
       id: pkg._id || pkg.package_id,
       name: pkg.name || pkg.package_name,
       price: pkg.price,
@@ -108,6 +110,24 @@ export const updatePackage = (req, res) => {
     if (!result) return res.status(404).json({ error: 'Không tìm thấy gói tập để cập nhật!' });
 
     res.status(200).json({ message: 'Cập nhật gói tập thành công!', data: result });
+  });
+};
+
+export const listRelatedPackages = (req, res) => {
+  const packageId = req.params.id;
+  const limit = parseInt(req.query.limit) || 4;
+
+  getPackageById(packageId, (err, rows) => {
+    if (err) return res.status(500).json({ error: 'Lỗi hệ thống: ' + err.message });
+    if (!rows || (Array.isArray(rows) && rows.length === 0)) return res.status(404).json({ error: 'Không tìm thấy gói tập!' });
+    const pkg = Array.isArray(rows) ? rows[0] : rows;
+    const locationId = pkg.locationId?._id || pkg.locationId;
+    const disciplineId = pkg.disciplineId?._id || pkg.disciplineId;
+
+    getRelatedPackages(packageId, locationId, disciplineId, limit, (err2, related) => {
+      if (err2) return res.status(500).json({ error: 'Lỗi hệ thống: ' + err2.message });
+      res.status(200).json(related);
+    });
   });
 };
 
