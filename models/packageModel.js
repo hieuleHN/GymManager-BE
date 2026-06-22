@@ -75,6 +75,22 @@ export const updatePackageById = async (id, packageData, callback) => {
   }
 };
 
+export const getRelatedPackages = async (packageId, locationId, disciplineId, limit = 4, callback) => {
+  try {
+    const filter = { _id: { $ne: packageId }, is_active: true };
+    if (disciplineId) filter.disciplineId = disciplineId;
+    if (locationId) filter.locationId = locationId;
+    const packages = await Package.find(filter)
+      .populate('disciplineId', 'name')
+      .populate('locationId', 'title')
+      .limit(limit)
+      .exec();
+    callback(null, packages);
+  } catch (err) {
+    callback(err);
+  }
+};
+
 export const deletePackageById = async (id, callback) => {
   try {
     const { default: UserPackage } = await import('./schemas/userPackageSchema.js');
