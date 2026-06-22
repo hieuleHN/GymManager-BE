@@ -41,6 +41,29 @@ const userPackageSchema = new mongoose.Schema({
     enum: ['đang hoạt động', 'còn 10 ngày', 'hết hạn', 'đã hủy'],
     default: 'đang hoạt động'
   },
+  payment_status: {
+    type: String,
+    enum: ['chờ thanh toán', 'đã thanh toán', 'đã hủy'],
+    default: 'đã thanh toán'
+  },
+  payment_method: {
+    type: String,
+    enum: ['bank-transfer', 'qr-code', 'vnpay', 'momo', 'bank-card', ''],
+    default: ''
+  },
+  payment_date: {
+    type: Date,
+    default: null
+  },
+  confirmed_by: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Staff',
+    default: null
+  },
+  confirmed_at: {
+    type: Date,
+    default: null
+  },
   createdAt: {
     type: Date,
     default: Date.now
