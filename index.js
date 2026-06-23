@@ -1,5 +1,7 @@
 import express from 'express';
 import cors from 'cors';
+import http from 'http';
+import { Server } from 'socket.io';
 import db from './config/db.js';
 import dotenv from 'dotenv';
 import locationRoutes from './routes/locationRoutes.js';
@@ -20,6 +22,8 @@ import policyRoutes from './routes/policyRoutes.js';
 import expenseRoutes from './routes/expenseRoutes.js';
 import lockerRoutes from './routes/lockerRoutes.js';
 import userPackageRoutes from './routes/userPackageRoutes.js';
+import messageRoutes from './routes/messageRoutes.js';
+import { saveMessage } from './models/messageModel.js';
 
 dotenv.config();
 
@@ -50,10 +54,38 @@ app.use('/api/policies', policyRoutes);
 app.use('/api/expenses', expenseRoutes);
 app.use('/api/lockers', lockerRoutes);
 app.use('/api/user-packages', userPackageRoutes);
+app.use('/api/messages', messageRoutes);
 
 initPackageStatusScheduler();
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
+
+const httpServer = http.createServer(app);
+const io = new Server(httpServer, {
+  cors: { origin: '*' }
+});
+
+io.on('connection', (socket) => {
+  console.log('User connected to socket:', socket.id);
+  
+  socket.on('join', (userId) => {
+    socket.join(userId);
+  });
+
+  socket.on('sendMessage', (data) => {
+    saveMessage(data, (err, saved) => {
+      if (!err) {
+        io.to(data.id_hoi_vien).emit('receiveMessage', saved);
+        io.to(data.id_huan_luyen_vien).emit('receiveMessage', saved);
+      } else {
+        console.error('Error saving message:', err);
+      }
+    });
+  });
+
+  socket.on('disconnect', () => {});
+});
+
+httpServer.listen(PORT, () => {
   console.log(`🚀 Server đang chạy mượt mà tại cổng http://localhost:${PORT}`);
 });
