@@ -28,6 +28,19 @@ const userPackageSchema = new mongoose.Schema({
     type: String,
     default: ''
   },
+  contract_pdf: {
+    type: String,
+    default: ''
+  },
+  payment_status: {
+    type: String,
+    enum: ['pending', 'paid', 'cancelled'],
+    default: 'pending'
+  },
+  payment_expires_at: {
+    type: Date,
+    default: null
+  },
   start_date: {
     type: Date,
     required: true
@@ -38,10 +51,14 @@ const userPackageSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['đang hoạt động', 'còn 10 ngày', 'hết hạn', 'đã hủy'],
-    default: 'đang hoạt động'
+    enum: ['chờ xác nhận', 'đang hoạt động', 'còn 10 ngày', 'hết hạn', 'đã hủy'],
+    default: 'chờ xác nhận'
   },
   createdAt: {
+    type: Date,
+    default: Date.now
+  },
+  updatedAt: {
     type: Date,
     default: Date.now
   }

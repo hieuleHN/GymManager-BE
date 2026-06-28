@@ -6,7 +6,7 @@ export const createRegistration = async (data, callback) => {
     const registration = new UserPackage({
       customer_id, package_id, locationId, duration_months,
       total_price, signature, start_date, end_date,
-      status: 'đang hoạt động'
+      status: data.status || 'chờ xác nhận'
     });
     const result = await registration.save();
     callback(null, result);
@@ -44,7 +44,20 @@ export const cancelRegistrationById = async (id, callback) => {
   try {
     const result = await UserPackage.findByIdAndUpdate(
       id,
-      { status: 'đã hủy' },
+      { status: 'đã hủy', payment_status: 'cancelled' },
+      { new: true }
+    );
+    callback(null, result);
+  } catch (err) {
+    callback(err);
+  }
+};
+
+export const updateRegistrationById = async (id, data, callback) => {
+  try {
+    const result = await UserPackage.findByIdAndUpdate(
+      id,
+      { ...data, updatedAt: new Date() },
       { new: true }
     );
     callback(null, result);

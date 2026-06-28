@@ -1,5 +1,13 @@
 import Policy from './schemas/policySchema.js';
 
+export const getAllSimple = async () => {
+  return Policy.find().sort({ createdAt: -1 });
+};
+
+export const getByIds = async (ids) => {
+  return Policy.find({ _id: { $in: ids } });
+};
+
 export const getAll = async (page = 1, limit = 15, callback) => {
   try {
     const skip = (page - 1) * limit;
