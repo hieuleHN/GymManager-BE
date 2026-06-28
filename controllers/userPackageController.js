@@ -264,10 +264,15 @@ export const createVnPayQR = (req, res) => {
     let signed = hmac.update(Buffer.from(signData, "utf-8")).digest("hex");
 
     vnp_Params["vnp_SecureHash"] = signed;
-    let fullUrl = vnpUrl + "?" + new URLSearchParams(vnp_Params).toString();
+
+    let formBody = new URLSearchParams(vnp_Params).toString();
 
     try {
-      const response = await fetch(fullUrl);
+      const response = await fetch(vnpUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: formBody,
+      });
       const data = await response.json();
 
       if (data.code === "00") {
