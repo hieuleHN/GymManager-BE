@@ -14,7 +14,7 @@ import {
   createRenewOrUpgrade,
   createVnPayUrl,
   vnpayReturn,
-  createVnPayQR
+  vnpayIPN
 } from "../controllers/userPackageController.js";
 
 const router = express.Router();
@@ -26,8 +26,9 @@ router.post("/renew-upgrade", authenticateToken, createRenewOrUpgrade);
 
 // API cho VNPAY
 router.get("/:id/vnpay-url", authenticateToken, createVnPayUrl); 
-router.get("/:id/vnpay-qr", authenticateToken, createVnPayQR);
-router.get("/vnpay-return", vnpayReturn); // API VNPAY gọi về nên không có authenticateToken
+router.get("/vnpay-return", vnpayReturn);
+router.get("/vnpay-ipn", vnpayIPN);
+router.post("/vnpay-ipn", vnpayIPN);
 
 router.get("/:id", authenticateToken, getRegistrationDetail);
 router.post("/:id/cancel", authenticateToken, cancelRegistration);

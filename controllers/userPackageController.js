@@ -6,19 +6,22 @@ import {
   getAllRegistrations,
   updatePaymentStatus,
   updatePaymentMethod,
+  updateVnpayTransactionRef,
+  findRegistrationByTxnRef,
 } from "../models/userPackageModel.js";
 import Package from "../models/schemas/packageSchema.js";
+import vnpay from "../config/vnpayConfig.js";
+import {
+  ProductCode,
+  IpnSuccess,
+  IpnOrderNotFound,
+  IpnFailChecksum,
+  IpnInvalidAmount,
+  IpnUnknownError,
+} from "vnpay";
 import crypto from "crypto";
 
-// Hàm sắp xếp tham số chuẩn VNPAY (Không dùng thư viện ngoài)
-function sortObject(obj) {
-  let sorted = {};
-  let str = Object.keys(obj).sort();
-  for (let key of str) {
-    sorted[key] = obj[key];
-  }
-  return sorted;
-}
+const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
 
 // 1. CÁC HÀM CŨ GIỮ NGUYÊN (Không sửa đổi để tránh lỗi)
 export const registerPackage = (req, res) => {
@@ -123,174 +126,197 @@ export const createRenewOrUpgrade = (req, res) => {
 };
 
 // ==========================================
-// TÍNH NĂNG VNPAY MỚI (TUYỆT ĐỐI CHUẨN)
+// VNPAY INTEGRATION USING vnpay LIBRARY
 // ==========================================
+
 export const createVnPayUrl = (req, res) => {
   const { id } = req.params;
   getRegistrationById(id, (err, reg) => {
     if (err || !reg)
       return res.status(404).json({ error: "Không tìm thấy đơn!" });
 
-    let date = new Date();
-    let tmnCode = "KF6N73AY";
-    let secretKey = "KTE745L87STW4RO89DJIFSKPGPZFL0TV";
-    let vnpUrl = "https://sandbox.vnpayment.vn/paymentv2/vpcpay.html";
-    let txnRef = date.getTime().toString();
-    let amount = Math.floor(Number(reg.total_price) * 100);
+    if (reg.payment_status === "đã thanh toán")
+      return res.status(400).json({ error: "Đơn đã được thanh toán!" });
 
-    let vnp_Params = {
-      vnp_Version: "2.1.0",
-      vnp_Command: "pay",
-      vnp_TmnCode: tmnCode,
-      vnp_Locale: "vn",
-      vnp_CurrCode: "VND",
-      vnp_TxnRef: txnRef,
-      vnp_OrderInfo: "ThanhToanGoiTap",
-      vnp_OrderType: "other",
-      vnp_Amount: amount.toString(),
-      vnp_ReturnUrl: "http://localhost:5173/dashboard/my-packages",
-      vnp_IpAddr: "127.0.0.1",
-      vnp_CreateDate:
-        date.getFullYear() +
-        ("0" + (date.getMonth() + 1)).slice(-2) +
-        ("0" + date.getDate()).slice(-2) +
-        ("0" + date.getHours()).slice(-2) +
-        ("0" + date.getMinutes()).slice(-2) +
-        ("0" + date.getSeconds()).slice(-2),
-    };
+    const date = new Date();
+    const txnRef = `GYM${id.slice(-8).toUpperCase()}${date.getTime()}`;
 
-    vnp_Params = sortObject(vnp_Params);
+    try {
+      const ipAddr =
+        req.headers["x-forwarded-for"]?.split(",")[0]?.trim() ||
+        req.ip ||
+        req.connection?.remoteAddress ||
+        "127.0.0.1";
 
-    // Nối chuỗi thủ công, không qua thư viện để tránh bị encode sai
-    let signData = "";
-    for (let key in vnp_Params) {
-      signData += key + "=" + vnp_Params[key] + "&";
+      const amount = Math.floor(Number(reg.total_price));
+      const returnUrl =
+        process.env.VNP_RETURN_URL ||
+        "http://localhost:5000/api/user-packages/vnpay-return";
+      const tmnCode = process.env.VNP_TMN_CODE || "KF6N73AY";
+      const secureSecret =
+        process.env.VNP_HASH_SECRET ||
+        "KTE745L87STW4RO89DJIFSKPGPZFL0TV";
+
+      const vnp_CreateDate = `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, "0")}${String(date.getDate()).padStart(2, "0")}${String(date.getHours()).padStart(2, "0")}${String(date.getMinutes()).padStart(2, "0")}${String(date.getSeconds()).padStart(2, "0")}`;
+
+      // Build params (sorted alphabetically)
+      const params = {
+        vnp_Amount: String(amount * 100),
+        vnp_Command: "pay",
+        vnp_CreateDate,
+        vnp_CurrCode: "VND",
+        vnp_IpAddr: ipAddr,
+        vnp_Locale: "vn",
+        vnp_OrderInfo: "Thanh toan goi tap",
+        vnp_OrderType: "other",
+        vnp_ReturnUrl: returnUrl,
+        vnp_TmnCode: tmnCode,
+        vnp_TxnRef: txnRef,
+        vnp_Version: "2.1.0",
+      };
+
+      const sortedKeys = Object.keys(params).sort();
+
+      // Build query string using URLSearchParams (PHP-compatible encoding: + for spaces)
+      const searchParams = new URLSearchParams();
+      for (const key of sortedKeys) searchParams.append(key, params[key]);
+      const queryString = searchParams.toString();
+
+      // Hash the encoded query string (matching VNPay PHP sample & original library)
+      const signature = crypto
+        .createHmac("SHA512", secureSecret)
+        .update(Buffer.from(queryString, "utf-8"))
+        .digest("hex");
+
+      const paymentUrl = `https://sandbox.vnpayment.vn/paymentv2/vpcpay.html?${queryString}&vnp_SecureHash=${signature}`;
+
+      console.log("[VNPay] Payment URL (without hash):", paymentUrl.replace(/&vnp_SecureHash=.*$/, ""));
+
+      updateVnpayTransactionRef(id, txnRef, (updateErr) => {
+        if (updateErr)
+          console.error("Lỗi lưu txnRef:", updateErr.message);
+      });
+
+      res.status(200).json({ paymentUrl });
+    } catch (error) {
+      res
+        .status(500)
+        .json({ error: "Lỗi tạo URL thanh toán: " + error.message });
     }
-    signData = signData.slice(0, -1); // Xóa dấu & cuối cùng
-
-    let hmac = crypto.createHmac("sha512", secretKey);
-    let signed = hmac.update(Buffer.from(signData, "utf-8")).digest("hex");
-
-    vnp_Params["vnp_SecureHash"] = signed;
-    vnpUrl += "?" + new URLSearchParams(vnp_Params).toString();
-
-    res.status(200).json({ paymentUrl: vnpUrl });
   });
 };
 
 export const vnpayReturn = (req, res) => {
-  let vnp_Params = req.query;
-  let secureHash = vnp_Params["vnp_SecureHash"];
-  delete vnp_Params["vnp_SecureHash"];
-  delete vnp_Params["vnp_SecureHashType"];
-
-  vnp_Params = sortObject(vnp_Params);
-  let secretKey = "KTE745L87STW4RO89DJIFSKPGPZFL0TV";
-  let signData = "";
-  for (let key in vnp_Params) {
-    signData += key + "=" + vnp_Params[key] + "&";
-  }
-  signData = signData.slice(0, -1);
-
-  let hmac = crypto.createHmac("sha512", secretKey);
-  let signed = hmac.update(Buffer.from(signData, "utf-8")).digest("hex");
-
-  if (secureHash === signed && vnp_Params["vnp_ResponseCode"] === "00") {
-    res.redirect(
-      "http://localhost:5173/dashboard/my-packages?vnpay_success=true",
+  let verify;
+  try {
+    verify = vnpay.verifyReturnUrl(req.query);
+  } catch (error) {
+    return res.redirect(
+      `${FRONTEND_URL}/dashboard/my-packages?vnpay_success=false&message=verify_error`,
     );
+  }
+
+  if (!verify.isVerified) {
+    return res.redirect(
+      `${FRONTEND_URL}/dashboard/my-packages?vnpay_success=false&message=invalid_signature`,
+    );
+  }
+
+  const txnRef = req.query.vnp_TxnRef;
+  const responseCode = req.query.vnp_ResponseCode;
+  const transactionNo = req.query.vnp_TransactionNo;
+  const payDate = req.query.vnp_PayDate;
+  const bankCode = req.query.vnp_BankCode;
+
+  if (responseCode === "00") {
+    findRegistrationByTxnRef(txnRef, (err, reg) => {
+      if (err || !reg) {
+        console.error("Không tìm thấy đơn với txnRef:", txnRef);
+        return res.redirect(
+          `${FRONTEND_URL}/dashboard/my-packages?vnpay_success=false&message=order_not_found`,
+        );
+      }
+
+      if (reg.payment_status === "đã thanh toán") {
+        return res.redirect(
+          `${FRONTEND_URL}/dashboard/my-packages?vnpay_success=true&message=already_paid`,
+        );
+      }
+
+      updatePaymentStatus(
+        reg._id,
+        {
+          payment_status: "đã thanh toán",
+          payment_method: "vnpay",
+          vnpay_txn_ref: txnRef,
+          payment_date: new Date(),
+        },
+        (updateErr) => {
+          if (updateErr)
+            console.error("Lỗi cập nhật thanh toán:", updateErr.message);
+        },
+      );
+
+      res.redirect(
+        `${FRONTEND_URL}/dashboard/my-packages?vnpay_success=true&transactionNo=${transactionNo}`,
+      );
+    });
   } else {
     res.redirect(
-      "http://localhost:5173/dashboard/my-packages?vnpay_success=false",
+      `${FRONTEND_URL}/dashboard/my-packages?vnpay_success=false&code=${responseCode}`,
     );
   }
 };
 
-export const createVnPayQR = (req, res) => {
-  const { id } = req.params;
-  getRegistrationById(id, async (err, reg) => {
-    if (err || !reg)
-      return res.status(404).json({ error: "Không tìm thấy đơn!" });
 
-    let date = new Date();
-    let tmnCode = "KF6N73AY";
-    let secretKey = "KTE745L87STW4RO89DJIFSKPGPZFL0TV";
-    let vnpUrl = "https://sandbox.vnpayment.vn/paymentv2/vpcpay.html";
-    let txnRef = date.getTime().toString();
-    let amount = Math.floor(Number(reg.total_price) * 100);
+export const vnpayIPN = (req, res) => {
+  let verify;
+  try {
+    verify = vnpay.verifyIpnCall(req.query);
+  } catch {
+    return res.status(200).json(IpnUnknownError);
+  }
 
-    let createDate =
-      date.getFullYear() +
-      ("0" + (date.getMonth() + 1)).slice(-2) +
-      ("0" + date.getDate()).slice(-2) +
-      ("0" + date.getHours()).slice(-2) +
-      ("0" + date.getMinutes()).slice(-2) +
-      ("0" + date.getSeconds()).slice(-2);
+  if (!verify.isVerified) {
+    return res.status(200).json(IpnFailChecksum);
+  }
 
-    let expireDate = new Date(date.getTime() + 15 * 60 * 1000);
-    let expDateStr =
-      expireDate.getFullYear() +
-      ("0" + (expireDate.getMonth() + 1)).slice(-2) +
-      ("0" + expireDate.getDate()).slice(-2) +
-      ("0" + expireDate.getHours()).slice(-2) +
-      ("0" + expireDate.getMinutes()).slice(-2) +
-      ("0" + expireDate.getSeconds()).slice(-2);
+  const txnRef = req.query.vnp_TxnRef;
+  const responseCode = req.query.vnp_ResponseCode;
+  const transactionAmount = Number(req.query.vnp_Amount) / 100;
 
-    let vnp_Params = {
-      vnp_Version: "2.1.0",
-      vnp_Command: "genqr",
-      vnp_TmnCode: tmnCode,
-      vnp_Locale: "vn",
-      vnp_CurrCode: "VND",
-      vnp_TxnRef: txnRef,
-      vnp_OrderInfo: "ThanhToanGoiTap",
-      vnp_OrderType: "other",
-      vnp_Amount: amount.toString(),
-      vnp_ReturnUrl: "http://localhost:5173/dashboard/my-packages",
-      vnp_IpAddr: "127.0.0.1",
-      vnp_CreateDate: createDate,
-      vnp_ExpireDate: expDateStr,
-    };
-
-    vnp_Params = sortObject(vnp_Params);
-
-    let signData = "";
-    for (let key in vnp_Params) {
-      signData += key + "=" + vnp_Params[key] + "&";
+  findRegistrationByTxnRef(txnRef, (err, reg) => {
+    if (err || !reg) {
+      return res.status(200).json(IpnOrderNotFound);
     }
-    signData = signData.slice(0, -1);
 
-    let hmac = crypto.createHmac("sha512", secretKey);
-    let signed = hmac.update(Buffer.from(signData, "utf-8")).digest("hex");
+    if (reg.payment_status === "đã thanh toán") {
+      return res.status(200).json(IpnSuccess);
+    }
 
-    vnp_Params["vnp_SecureHash"] = signed;
+    if (Math.floor(Number(reg.total_price)) !== transactionAmount) {
+      return res.status(200).json(IpnInvalidAmount);
+    }
 
-    let formBody = new URLSearchParams(vnp_Params).toString();
+    if (responseCode === "00") {
+      updatePaymentStatus(
+        reg._id,
+        {
+          payment_status: "đã thanh toán",
+          payment_method: "vnpay",
+          vnpay_txn_ref: txnRef,
+          payment_date: new Date(),
+        },
+        (updateErr) => {
+          if (updateErr) {
+            return res.status(200).json(IpnUnknownError);
+          }
 
-    try {
-      const response = await fetch(vnpUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: formBody,
-      });
-      const data = await response.json();
-
-      if (data.code === "00") {
-        res.status(200).json({
-          qrContent: data.qrcontent,
-          amount: reg.total_price,
-          txnRef: txnRef,
-        });
-      } else {
-        res.status(400).json({
-          error: data.message || "Lỗi tạo QR VNPay",
-          code: data.code,
-        });
-      }
-    } catch (fetchErr) {
-      res
-        .status(500)
-        .json({ error: "Không thể kết nối VNPay: " + fetchErr.message });
+          res.status(200).json(IpnSuccess);
+        },
+      );
+    } else {
+      res.status(200).json(IpnSuccess);
     }
   });
 };

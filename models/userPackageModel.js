@@ -143,15 +143,43 @@ export const updatePaymentMethod = async (
   }
 };
 
+export const updateVnpayTransactionRef = async (id, txnRef, callback) => {
+  try {
+    const result = await UserPackage.findByIdAndUpdate(
+      id,
+      { vnpay_txn_ref: txnRef },
+      { new: true },
+    );
+    if (!result) return callback(new Error("NotFound"));
+    callback(null, result);
+  } catch (err) {
+    callback(err);
+  }
+};
+
+export const findRegistrationByTxnRef = async (txnRef, callback) => {
+  try {
+    const reg = await UserPackage.findOne({ vnpay_txn_ref: txnRef })
+      .populate("customer_id", "fullName email phone")
+      .populate("package_id", "name unitPrice");
+    if (!reg) return callback(null, null);
+    callback(null, reg);
+  } catch (err) {
+    callback(err);
+  }
+};
+
 export const updatePaymentStatus = async (id, paymentData, callback) => {
   try {
-    const { payment_status, confirmed_by } = paymentData;
+    const { payment_status, confirmed_by, payment_method, vnpay_txn_ref, payment_date } = paymentData;
     const update = {
       payment_status,
       confirmed_by,
-      confirmed_at: payment_status === "đã thanh toán" ? new Date() : null,
-      payment_date: payment_status === "đã thanh toán" ? new Date() : null,
+      confirmed_at: payment_status === "đã thanh toán" ? (payment_date || new Date()) : null,
+      payment_date: payment_status === "đã thanh toán" ? (payment_date || new Date()) : null,
     };
+    if (payment_method) update.payment_method = payment_method;
+    if (vnpay_txn_ref) update.vnpay_txn_ref = vnpay_txn_ref;
     if (payment_status === "đã hủy") {
       update.status = "đã hủy";
     }

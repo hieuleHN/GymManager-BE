@@ -46,7 +46,9 @@
 
         "node-cron": "^4.2.1",
 
-        "nodemailer": "^8.0.7"
+        "nodemailer": "^8.0.7",
+
+        "vnpay": "^2.5.0"
 
     },
 
