@@ -12,6 +12,9 @@ import {
   confirmPayment,
   setPaymentMethod,
   createRenewOrUpgrade,
+  createVnPayUrl,
+  vnpayReturn,
+  createVnPayQR
 } from "../controllers/userPackageController.js";
 
 const router = express.Router();
@@ -20,6 +23,12 @@ router.get("/payments/list", authenticateToken, listAllRegistrations);
 router.post("/register", authenticateToken, registerPackage);
 router.get("/my", authenticateToken, listMyPackages);
 router.post("/renew-upgrade", authenticateToken, createRenewOrUpgrade);
+
+// API cho VNPAY
+router.get("/:id/vnpay-url", authenticateToken, createVnPayUrl); 
+router.get("/:id/vnpay-qr", authenticateToken, createVnPayQR);
+router.get("/vnpay-return", vnpayReturn); // API VNPAY gọi về nên không có authenticateToken
+
 router.get("/:id", authenticateToken, getRegistrationDetail);
 router.post("/:id/cancel", authenticateToken, cancelRegistration);
 router.patch("/:id/payment", authenticateToken, confirmPayment);

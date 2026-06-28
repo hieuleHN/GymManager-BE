@@ -1,77 +1,81 @@
-import mongoose from 'mongoose';
+import mongoose from "mongoose";
 
 const userPackageSchema = new mongoose.Schema({
   customer_id: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'Customer',
-    required: true
+    ref: "Customer",
+    required: true,
   },
   package_id: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'Package',
-    required: true
+    ref: "Package",
+    required: true,
   },
   locationId: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'Location',
-    default: null
+    ref: "Location",
+    default: null,
   },
   duration_months: {
     type: Number,
-    default: 1
+    default: 1,
   },
   total_price: {
     type: Number,
-    default: 0
+    default: 0,
   },
   signature: {
     type: String,
-    default: ''
+    default: "",
   },
   start_date: {
     type: Date,
-    required: true
+    required: true,
   },
   end_date: {
     type: Date,
-    required: true
+    required: true,
   },
   status: {
     type: String,
-    enum: ['đang hoạt động', 'còn 10 ngày', 'hết hạn', 'đã hủy'],
-    default: 'đang hoạt động'
+    enum: ["đang hoạt động", "còn 10 ngày", "hết hạn", "đã hủy"],
+    default: "đang hoạt động",
   },
   payment_status: {
     type: String,
-    enum: ['chờ thanh toán', 'đã thanh toán', 'đã hủy'],
-    default: 'đã thanh toán'
+    enum: ["chờ thanh toán", "đã thanh toán", "đã hủy"],
+    default: "chờ thanh toán", // Đã sửa lại mặc định là chờ thanh toán
   },
   payment_method: {
     type: String,
-    enum: ['bank-transfer', 'qr-code', 'vnpay', 'momo', 'bank-card', ''],
-    default: ''
+    enum: ["bank-transfer", "qr-code", "vnpay", "momo", "bank-card", ""],
+    default: "",
+  },
+  vnpay_txn_ref: {
+    type: String,
+    default: null, // Lưu mã giao dịch VNPAY để đối soát
   },
   payment_date: {
     type: Date,
-    default: null
+    default: null,
   },
   confirmed_by: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'Staff',
-    default: null
+    ref: "Staff",
+    default: null,
   },
   confirmed_at: {
     type: Date,
-    default: null
+    default: null,
   },
   createdAt: {
     type: Date,
-    default: Date.now
-  }
+    default: Date.now,
+  },
 });
 
-userPackageSchema.pre('save', function(next) {
-  if (this.isModified('start_date') && !this.end_date) {
+userPackageSchema.pre("save", function (next) {
+  if (this.isModified("start_date") && !this.end_date) {
     const end = new Date(this.start_date);
     end.setMonth(end.getMonth() + this.duration_months);
     this.end_date = end;
@@ -79,4 +83,4 @@ userPackageSchema.pre('save', function(next) {
   next();
 });
 
-export default mongoose.model('UserPackage', userPackageSchema);
+export default mongoose.model("UserPackage", userPackageSchema);
