@@ -1,0 +1,4 @@
+◇ injected env (10) from .env // tip: ⌁ auth for agents [www.vestauth.com]
+◇ injected env (0) from .env // tip: ⌘ multiple files { path: ['.env.local', '.env'] }
+🚀 Server đang chạy mượt mà tại cổng http://localhost:5000
+🎯 MongoDB được kết nối thành công!
