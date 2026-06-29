@@ -19,6 +19,12 @@ import permissionRoutes from './routes/permissionRoutes.js';
 import policyRoutes from './routes/policyRoutes.js';
 import expenseRoutes from './routes/expenseRoutes.js';
 import lockerRoutes from './routes/lockerRoutes.js';
+<<<<<<< Updated upstream
+=======
+import userPackageRoutes from './routes/userPackageRoutes.js';
+import bookingRoutes from './routes/bookingRoutes.js';
+import notificationRoutes from './routes/notificationRoutes.js';
+>>>>>>> Stashed changes
 
 dotenv.config();
 
@@ -48,6 +54,12 @@ app.use('/api/permissions', permissionRoutes);
 app.use('/api/policies', policyRoutes);
 app.use('/api/expenses', expenseRoutes);
 app.use('/api/lockers', lockerRoutes);
+<<<<<<< Updated upstream
+=======
+app.use('/api/user-packages', userPackageRoutes);
+app.use('/api/bookings', bookingRoutes);
+app.use('/api/notifications', notificationRoutes);
+>>>>>>> Sgtashed changes
 
 initPackageStatusScheduler();
 
