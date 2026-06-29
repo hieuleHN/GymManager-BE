@@ -3,7 +3,7 @@ import cors from 'cors';
 import db from './config/db.js';
 import dotenv from 'dotenv';
 import locationRoutes from './routes/locationRoutes.js';
-import packageRoutes from './routes/pakageRoutes.js';
+import packageRoutes from './routes/packageRoutes.js';
 import { initPackageStatusScheduler } from './services/cronService.js';
 
 import productRoutes from './routes/productRoutes.js';
@@ -20,6 +20,7 @@ import policyRoutes from './routes/policyRoutes.js';
 import expenseRoutes from './routes/expenseRoutes.js';
 import lockerRoutes from './routes/lockerRoutes.js';
 import userPackageRoutes from './routes/userPackageRoutes.js';
+import checkInRoutes from './routes/checkInRoutes.js';
 
 dotenv.config();
 
@@ -50,6 +51,7 @@ app.use('/api/policies', policyRoutes);
 app.use('/api/expenses', expenseRoutes);
 app.use('/api/lockers', lockerRoutes);
 app.use('/api/user-packages', userPackageRoutes);
+app.use('/api/checkin', checkInRoutes);
 
 initPackageStatusScheduler();
 
