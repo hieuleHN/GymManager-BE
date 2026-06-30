@@ -1,3 +1,6 @@
 node_modules/
 dist/
 build/
+pnpm-lock.yaml
+
+uploads/

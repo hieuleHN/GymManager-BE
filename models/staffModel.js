@@ -1,6 +1,7 @@
 import Staff from './schemas/staffSchema.js';
 import bcrypt from 'bcryptjs';
 
+
 export const getTrainers = async (callback) => {
   try {
     const trainers = await Staff.find({ status: 'active' })

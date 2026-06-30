@@ -5,6 +5,7 @@ import { getJobById } from '../models/jobModel.js';
 import { getPermissionsByJob } from '../models/permissionModel.js';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+
 import {getTrainers} from '../models/staffModel.js';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'Phong_Gym_Master_Key_2026';
