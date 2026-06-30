@@ -53,7 +53,23 @@ const userPackageSchema = new mongoose.Schema({
   },
   vnpay_txn_ref: {
     type: String,
-    default: null, // Lưu mã giao dịch VNPAY để đối soát
+    default: null,
+  },
+  vnpay_bank_code: {
+    type: String,
+    default: null,
+  },
+  vnpay_bank_tran_no: {
+    type: String,
+    default: null,
+  },
+  vnpay_card_type: {
+    type: String,
+    default: null,
+  },
+  vnpay_transaction_no: {
+    type: String,
+    default: null,
   },
   payment_date: {
     type: Date,

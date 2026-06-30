@@ -8,18 +8,17 @@ import {
   updatePaymentMethod,
   updateVnpayTransactionRef,
   findRegistrationByTxnRef,
+  getTransactionHistory,
 } from "../models/userPackageModel.js";
 import Package from "../models/schemas/packageSchema.js";
 import vnpay from "../config/vnpayConfig.js";
 import {
-  ProductCode,
   IpnSuccess,
   IpnOrderNotFound,
   IpnFailChecksum,
   IpnInvalidAmount,
   IpnUnknownError,
 } from "vnpay";
-import crypto from "crypto";
 
 const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
 
@@ -126,6 +125,17 @@ export const createRenewOrUpgrade = (req, res) => {
 };
 
 // ==========================================
+// MEMBER TRANSACTION HISTORY
+// ==========================================
+
+export const transactionHistory = (req, res) => {
+  getTransactionHistory(req.user.id, (err, transactions) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(transactions);
+  });
+};
+
+// ==========================================
 // VNPAY INTEGRATION USING vnpay LIBRARY
 // ==========================================
 
@@ -138,59 +148,27 @@ export const createVnPayUrl = (req, res) => {
     if (reg.payment_status === "đã thanh toán")
       return res.status(400).json({ error: "Đơn đã được thanh toán!" });
 
-    const date = new Date();
-    const txnRef = `GYM${id.slice(-8).toUpperCase()}${date.getTime()}`;
-
     try {
       const ipAddr =
         req.headers["x-forwarded-for"]?.split(",")[0]?.trim() ||
         req.ip ||
-        req.connection?.remoteAddress ||
         "127.0.0.1";
 
       const amount = Math.floor(Number(reg.total_price));
+      const txnRef = `GYM${id.slice(-8).toUpperCase()}${Date.now()}`;
       const returnUrl =
         process.env.VNP_RETURN_URL ||
         "http://localhost:5000/api/user-packages/vnpay-return";
-      const tmnCode = process.env.VNP_TMN_CODE || "KF6N73AY";
-      const secureSecret =
-        process.env.VNP_HASH_SECRET ||
-        "KTE745L87STW4RO89DJIFSKPGPZFL0TV";
 
-      const vnp_CreateDate = `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, "0")}${String(date.getDate()).padStart(2, "0")}${String(date.getHours()).padStart(2, "0")}${String(date.getMinutes()).padStart(2, "0")}${String(date.getSeconds()).padStart(2, "0")}`;
-
-      // Build params (sorted alphabetically)
-      const params = {
-        vnp_Amount: String(amount * 100),
-        vnp_Command: "pay",
-        vnp_CreateDate,
-        vnp_CurrCode: "VND",
+      const paymentUrl = vnpay.buildPaymentUrl({
+        vnp_Amount: amount,
         vnp_IpAddr: ipAddr,
-        vnp_Locale: "vn",
-        vnp_OrderInfo: "Thanh toan goi tap",
-        vnp_OrderType: "other",
         vnp_ReturnUrl: returnUrl,
-        vnp_TmnCode: tmnCode,
         vnp_TxnRef: txnRef,
-        vnp_Version: "2.1.0",
-      };
-
-      const sortedKeys = Object.keys(params).sort();
-
-      // Build query string using URLSearchParams (PHP-compatible encoding: + for spaces)
-      const searchParams = new URLSearchParams();
-      for (const key of sortedKeys) searchParams.append(key, params[key]);
-      const queryString = searchParams.toString();
-
-      // Hash the encoded query string (matching VNPay PHP sample & original library)
-      const signature = crypto
-        .createHmac("SHA512", secureSecret)
-        .update(Buffer.from(queryString, "utf-8"))
-        .digest("hex");
-
-      const paymentUrl = `https://sandbox.vnpayment.vn/paymentv2/vpcpay.html?${queryString}&vnp_SecureHash=${signature}`;
-
-      console.log("[VNPay] Payment URL (without hash):", paymentUrl.replace(/&vnp_SecureHash=.*$/, ""));
+        vnp_OrderInfo: `Thanh toan goi tap ${reg.package_id?.name || ''}`,
+        vnp_Locale: 'vn',
+        vnp_BankCode: '',
+      });
 
       updateVnpayTransactionRef(id, txnRef, (updateErr) => {
         if (updateErr)
@@ -250,6 +228,10 @@ export const vnpayReturn = (req, res) => {
           payment_method: "vnpay",
           vnpay_txn_ref: txnRef,
           payment_date: new Date(),
+          vnpay_bank_code: bankCode,
+          vnpay_bank_tran_no: req.query.vnp_BankTranNo,
+          vnpay_card_type: req.query.vnp_CardType,
+          vnpay_transaction_no: transactionNo,
         },
         (updateErr) => {
           if (updateErr)
@@ -306,6 +288,10 @@ export const vnpayIPN = (req, res) => {
           payment_method: "vnpay",
           vnpay_txn_ref: txnRef,
           payment_date: new Date(),
+          vnpay_bank_code: req.query.vnp_BankCode,
+          vnpay_bank_tran_no: req.query.vnp_BankTranNo,
+          vnpay_card_type: req.query.vnp_CardType,
+          vnpay_transaction_no: req.query.vnp_TransactionNo,
         },
         (updateErr) => {
           if (updateErr) {
