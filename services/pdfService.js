@@ -3,6 +3,8 @@ import fs from 'fs';
 import path from 'path';
 
 const contractsDir = path.resolve('uploads/contracts');
+const regularFont = path.resolve('fonts/NotoSans-Regular.ttf');
+const boldFont = path.resolve('fonts/NotoSans-Bold.ttf');
 
 if (!fs.existsSync(contractsDir)) {
   fs.mkdirSync(contractsDir, { recursive: true });
@@ -22,8 +24,11 @@ export const generateContractPDF = async ({ registration, pkg, customer, policie
       const stream = fs.createWriteStream(filePath);
       doc.pipe(stream);
 
-      const regular = 'Helvetica';
-      const bold = 'Helvetica-Bold';
+      doc.registerFont('NotoSans', regularFont);
+      doc.registerFont('NotoSans-Bold', boldFont);
+
+      const regular = 'NotoSans';
+      const bold = 'NotoSans-Bold';
 
       // Helper functions
       const drawLine = (y) => {
