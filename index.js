@@ -23,6 +23,8 @@ import userPackageRoutes from './routes/userPackageRoutes.js';
 import bookingRoutes from './routes/bookingRoutes.js';
 import notificationRoutes from './routes/notificationRoutes.js';
 import checkInRoutes from './routes/checkInRoutes.js';
+import reviewRoutes from './routes/reviewRoutes.js';
+import reportRoutes from './routes/reportRoutes.js';
 
 
 dotenv.config();
@@ -59,6 +61,8 @@ app.use('/api/bookings', bookingRoutes);
 app.use('/api/notifications', notificationRoutes);
 
 app.use('/api/checkin', checkInRoutes);
+app.use('/api/reviews', reviewRoutes);
+app.use('/api/reports', reportRoutes);
 
 
 initPackageStatusScheduler();
