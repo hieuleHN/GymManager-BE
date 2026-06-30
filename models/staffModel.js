@@ -1,6 +1,20 @@
 import Staff from './schemas/staffSchema.js';
 import bcrypt from 'bcryptjs';
 
+
+export const getTrainers = async (callback) => {
+  try {
+    const trainers = await Staff.find({ status: 'active' })
+      .populate('job', 'name description isAdmin')
+      .populate('locationId', 'title address')
+      .sort({ rating: -1 });
+    const filtered = trainers.filter(t => t.job && !t.job.isAdmin);
+    callback(null, filtered);
+  } catch (error) {
+    callback(error);
+  }
+};
+
 export const createStaff = async (data, callback) => {
   try {
     const existing = await Staff.findOne({ $or: [{ account: data.account }, { email: data.email }] });

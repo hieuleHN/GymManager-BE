@@ -6,7 +6,16 @@ import { getPermissionsByJob } from '../models/permissionModel.js';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 
+import {getTrainers} from '../models/staffModel.js';
+
 const JWT_SECRET = process.env.JWT_SECRET || 'Phong_Gym_Master_Key_2026';
+
+export const listTrainers = (req, res) => {
+  getTrainers((err, trainers) => {
+      if (err) return res.status(500).json({ error: 'Lỗi lấy danh sách: ' + err.message });
+      res.json(trainers);
+  })
+}
 
 export const login = (req, res) => {
   const { account, password } = req.body;
