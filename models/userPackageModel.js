@@ -169,9 +169,29 @@ export const findRegistrationByTxnRef = async (txnRef, callback) => {
   }
 };
 
+export const getTransactionHistory = async (customerId, callback) => {
+  try {
+    const transactions = await UserPackage.find({ customer_id: customerId })
+      .populate({
+        path: "package_id",
+        select: "name unitPrice features durations",
+      })
+      .populate("locationId", "title name address bankName accountNumber accountName branch")
+      .sort({ createdAt: -1 });
+    callback(null, transactions);
+  } catch (err) {
+    callback(err);
+  }
+};
+
 export const updatePaymentStatus = async (id, paymentData, callback) => {
   try {
-    const { payment_status, confirmed_by, payment_method, vnpay_txn_ref, payment_date } = paymentData;
+    const {
+      payment_status, confirmed_by, payment_method,
+      vnpay_txn_ref, payment_date,
+      vnpay_bank_code, vnpay_bank_tran_no,
+      vnpay_card_type, vnpay_transaction_no,
+    } = paymentData;
     const update = {
       payment_status,
       confirmed_by,
@@ -180,6 +200,10 @@ export const updatePaymentStatus = async (id, paymentData, callback) => {
     };
     if (payment_method) update.payment_method = payment_method;
     if (vnpay_txn_ref) update.vnpay_txn_ref = vnpay_txn_ref;
+    if (vnpay_bank_code) update.vnpay_bank_code = vnpay_bank_code;
+    if (vnpay_bank_tran_no) update.vnpay_bank_tran_no = vnpay_bank_tran_no;
+    if (vnpay_card_type) update.vnpay_card_type = vnpay_card_type;
+    if (vnpay_transaction_no) update.vnpay_transaction_no = vnpay_transaction_no;
     if (payment_status === "đã hủy") {
       update.status = "đã hủy";
     }

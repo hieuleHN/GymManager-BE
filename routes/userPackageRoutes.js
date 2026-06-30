@@ -14,7 +14,8 @@ import {
   createRenewOrUpgrade,
   createVnPayUrl,
   vnpayReturn,
-  vnpayIPN
+  vnpayIPN,
+  transactionHistory,
 } from "../controllers/userPackageController.js";
 
 const router = express.Router();
@@ -22,6 +23,7 @@ const router = express.Router();
 router.get("/payments/list", authenticateToken, listAllRegistrations);
 router.post("/register", authenticateToken, registerPackage);
 router.get("/my", authenticateToken, listMyPackages);
+router.get("/transactions", authenticateToken, transactionHistory);
 router.post("/renew-upgrade", authenticateToken, createRenewOrUpgrade);
 
 // API cho VNPAY
