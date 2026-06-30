@@ -9,7 +9,8 @@ export const createBooking = async (data, callback) => {
       time: data.time,
       locationId: data.locationId,
       note: data.note || '',
-      status: 'pending'
+      status: 'pending',
+      price: data.price || 500000
     });
     const saved = await booking.save();
     callback(null, saved);
@@ -85,6 +86,60 @@ export const getAllBookings = async (page = 1, limit = 20, filters = {}, callbac
       Booking.countDocuments(query)
     ]);
     callback(null, { data, total, page, limit, totalPages: Math.ceil(total / limit) });
+  } catch (err) {
+    callback(err);
+  }
+};
+
+export const updateBookingVnpayTransactionRef = async (id, txnRef, callback) => {
+  try {
+    await Booking.findByIdAndUpdate(id, { vnpay_txn_ref: txnRef, updatedAt: new Date() });
+    callback(null);
+  } catch (err) {
+    callback(err);
+  }
+};
+
+export const getBookingByVnpayTxnRef = async (txnRef, callback) => {
+  try {
+    const booking = await Booking.findOne({ vnpay_txn_ref: txnRef })
+      .populate('customerId', 'fullName phone email')
+      .populate('trainerId', 'fullName phone');
+    callback(null, booking);
+  } catch (err) {
+    callback(err);
+  }
+};
+
+export const updateBookingPaymentVnpay = async (id, data, callback) => {
+  try {
+    const update = {
+      paymentMethod: 'vnpay',
+      paymentStatus: 'paid',
+      vnpay_bank_code: data.bankCode || '',
+      vnpay_bank_tran_no: data.bankTranNo || '',
+      vnpay_card_type: data.cardType || '',
+      vnpay_transaction_no: data.transactionNo || '',
+      payment_date: data.paymentDate || '',
+      updatedAt: new Date()
+    };
+    const booking = await Booking.findByIdAndUpdate(id, update, { new: true });
+    if (!booking) return callback({ message: 'Không tìm thấy lịch đặt!' });
+    callback(null, booking);
+  } catch (err) {
+    callback(err);
+  }
+};
+
+export const updateBookingPayment = async (id, paymentMethod, callback) => {
+  try {
+    const booking = await Booking.findByIdAndUpdate(id, {
+      paymentMethod,
+      paymentStatus: 'paid',
+      updatedAt: new Date()
+    }, { new: true });
+    if (!booking) return callback({ message: 'Không tìm thấy lịch đặt!' });
+    callback(null, booking);
   } catch (err) {
     callback(err);
   }

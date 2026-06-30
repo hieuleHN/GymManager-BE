@@ -11,9 +11,22 @@ import {getTrainers} from '../models/staffModel.js';
 const JWT_SECRET = process.env.JWT_SECRET || 'Phong_Gym_Master_Key_2026';
 
 export const listTrainers = (req, res) => {
+  const { disciplineId, locationId } = req.query;
   getTrainers((err, trainers) => {
       if (err) return res.status(500).json({ error: 'Lỗi lấy danh sách: ' + err.message });
-      res.json(trainers);
+      let filtered = trainers;
+      if (disciplineId) {
+        filtered = filtered.filter(t =>
+          t.disciplineId?._id?.toString() === disciplineId ||
+          t.specialties?.some(s => s.toLowerCase().includes(
+            trainers.find(t2 => t2.disciplineId?._id?.toString() === disciplineId)?.disciplineId?.name?.toLowerCase() || ''
+          ))
+        );
+      }
+      if (locationId) {
+        filtered = filtered.filter(t => t.locationId?._id?.toString() === locationId);
+      }
+      res.json(filtered);
   })
 }
 
@@ -107,8 +120,8 @@ export const create = (req, res) => {
 };
 
 export const update = (req, res) => {
-  const { fullName, email, phone, gender, job, startDate, address, baseSalary, bonus, status } = req.body;
-  const data = { fullName, email, phone, gender, job, startDate, address, baseSalary, bonus, status };
+  const { fullName, email, phone, gender, job, startDate, address, baseSalary, bonus, status, avatar, coverImage, description, specialties, gallery, experience, certifications, disciplineId, pricePerSession } = req.body;
+  const data = { fullName, email, phone, gender, job, startDate, address, baseSalary, bonus, status, avatar, coverImage, description, specialties, gallery, experience, certifications, disciplineId, pricePerSession };
   Object.keys(data).forEach(k => data[k] === undefined && delete data[k]);
   updateStaffById(req.params.id, data, (err, staff) => {
     if (err) return res.status(400).json({ error: err.message || 'Lỗi cập nhật!' });

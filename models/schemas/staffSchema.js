@@ -55,6 +55,47 @@ const staffSchema = new mongoose.Schema({
     enum: ['active', 'inactive'],
     default: 'active'
   },
+  avatar: {
+    type: String,
+    default: ''
+  },
+  coverImage: {
+    type: String,
+    default: ''
+  },
+  description: {
+    type: String,
+    default: ''
+  },
+  specialties: [{
+    type: String
+  }],
+  gallery: [{
+    type: String
+  }],
+  rating: {
+    type: Number,
+    default: 0
+  },
+  totalReviews: {
+    type: Number,
+    default: 0
+  },
+  experience: {
+    type: String,
+    default: ''
+  },
+  certifications: [{
+    type: String
+  }],
+  disciplineId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Discipline'
+  },
+  pricePerSession: {
+    type: Number,
+    default: 500000
+  },
   createdAt: {
     type: Date,
     default: Date.now

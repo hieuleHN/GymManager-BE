@@ -26,7 +26,7 @@ const locationSchema = new mongoose.Schema({
   },
   closeTime: {
     type: String,
-    default: '22:00'
+    default: '21:00'
   },
   bankName: {
     type: String,

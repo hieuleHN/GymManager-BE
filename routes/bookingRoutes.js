@@ -9,7 +9,11 @@ import {
   confirmBooking,
   rejectBooking,
   checkConflict,
-  getByLocation
+  getByLocation,
+  updatePayment,
+  createBookingVnPayUrl,
+  bookingsVnpayReturn,
+  bookingsVnpayIPN
 } from '../controllers/bookingController.js';
 
 const router = express.Router();
@@ -23,5 +27,10 @@ router.get('/location/:locationId', authenticateToken, getByLocation);
 router.get('/:id', authenticateToken, detail);
 router.put('/:id/confirm', authenticateToken, confirmBooking);
 router.put('/:id/reject', authenticateToken, rejectBooking);
+router.put('/:id/payment', authenticateToken, updatePayment);
+router.get('/:id/vnpay-url', authenticateToken, createBookingVnPayUrl);
+router.get('/vnpay-return', bookingsVnpayReturn);
+router.get('/vnpay-ipn', bookingsVnpayIPN);
+router.post('/vnpay-ipn', bookingsVnpayIPN);
 
 export default router;
