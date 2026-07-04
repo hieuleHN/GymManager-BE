@@ -215,19 +215,23 @@ export const createBookingVnPayUrl = (req, res) => {
         process.env.VNP_RETURN_URL_BOOKING ||
         'http://localhost:5000/api/bookings/vnpay-return';
 
-      console.log('DEBUG building VNPAY URL for amount:', amount, 'txnRef:', txnRef);
+        const dateStr = booking.date instanceof Date
+        ? booking.date.toISOString().split('T')[0]
+        : String(booking.date || '');
+
+      console.log('DEBUG building VNPAY URL for amount:', amount, 'txnRef:', txnRef, 'orderInfo:', `Thanh toan buoi tap ${dateStr}`, 'returnUrl:', returnUrl);
 
       const paymentUrl = vnpay.buildPaymentUrl({
         vnp_Amount: amount,
         vnp_IpAddr: ipAddr,
         vnp_ReturnUrl: returnUrl,
         vnp_TxnRef: txnRef,
-        vnp_OrderInfo: `Thanh toan buoi tap ${booking.date || ''}`,
+        vnp_OrderInfo: `Thanh toan buoi tap ${dateStr}`,
         vnp_Locale: 'vn',
         vnp_BankCode: '',
       });
 
-      console.log('DEBUG VNPAY URL generated:', paymentUrl ? 'OK (length=' + paymentUrl.length + ')' : 'NULL');
+      console.log('DEBUG VNPAY URL generated:', paymentUrl);
 
       updateBookingVnpayTransactionRef(id, txnRef, (updateErr) => {
         if (updateErr)
