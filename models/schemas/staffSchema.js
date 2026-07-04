@@ -5,6 +5,9 @@ const staffSchema = new mongoose.Schema({
     type: String,
     required: true
   },
+  avatar: {
+    type: String,
+  },
   password: {
     type: String,
     required: true

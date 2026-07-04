@@ -55,7 +55,7 @@ export const getBookingById = async (id, callback) => {
   try {
     const booking = await Booking.findById(id)
       .populate('customerId', 'fullName phone email')
-      .populate('trainerId', 'fullName phone')
+      .populate('trainerId', 'fullName phone avatar')
       .populate('locationId', 'title address');
     callback(null, booking);
   } catch (err) {
@@ -188,8 +188,8 @@ export const getBookingsByLocation = async (locationId, page = 1, limit = 20, ca
     const query = { locationId };
     const [data, total] = await Promise.all([
       Booking.find(query)
-        .populate('customerId', 'fullName phone email')
-        .populate('trainerId', 'fullName')
+        .populate('customerId', 'fullName phone')
+        .populate('trainerId', 'fullName phone avatar')
         .sort({ date: -1 })
         .skip(skip)
         .limit(limit),

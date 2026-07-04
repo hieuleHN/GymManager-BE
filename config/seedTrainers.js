@@ -63,7 +63,7 @@ async function seedTrainers() {
     const trainerPass = await bcrypt.hash('trainer123', salt);
     const trainers = [
       {
-        fullName: 'Nguyễn Thùy Anh', email: 'thuyanh@gym.com', phone: '0912345601', gender: 'Nữ',
+        fullName: 'Nguyễn Thùy Anhaa', email: 'thuyanh@gym.com', phone: '0912345601', gender: 'Nữ',
         job: 'Yoga & Pilates',
         avatar: 'https://images.unsplash.com/photo-1518611012118-696072aa579a?auto=format&fit=crop&q=80&w=400',
         description: 'Huấn luyện viên Yoga được chứng nhận với 8 năm kinh nghiệm. Chuyên về Yoga phục hồi, Pilates và thiền định.',
@@ -72,7 +72,7 @@ async function seedTrainers() {
       {
         fullName: 'Trần Văn Mạnh', email: 'vanmanh@gym.com', phone: '0912345602', gender: 'Nam',
         job: 'Gym & Bodybuilding',
-        avatar: 'https://images.unsplash.com/photo-1567013127542-490d757e51fe?auto=format&fit=crop&q=80&w=400',
+        avatar: 'https://i.pinimg.com/1200x/3d/25/88/3d2588e7962761a3514db5837e4de526.jpg',
         description: 'Cựu vận động viên thể hình quốc gia. Chuyên về xây dựng cơ bắp, tăng cường sức mạnh.',
         specialties: ['Bodybuilding', 'Powerlifting', 'Strength'], rating: 4.8, totalReviews: 98, experience: '10 năm kinh nghiệm'
       },
@@ -93,7 +93,7 @@ async function seedTrainers() {
       {
         fullName: 'Hoàng Thị Mai', email: 'thimai@gym.com', phone: '0912345605', gender: 'Nữ',
         job: 'Cardio & HIIT',
-        avatar: 'https://images.unsplash.com/photo-1548690312-e3b507d17a4d?auto=format&fit=crop&q=80&w=400',
+        avatar: 'https://i.pinimg.com/736x/2c/a4/f5/2ca4f5db3f31faf3f7d6b6f914d15420.jpg',
         description: 'Chuyên gia Cardio & HIIT. Chuyên về đốt mỡ, giảm cân và cải thiện sức khỏe tim mạch.',
         specialties: ['Cardio', 'HIIT', 'Fat burn'], rating: 4.8, totalReviews: 112, experience: '4 năm kinh nghiệm'
       },
