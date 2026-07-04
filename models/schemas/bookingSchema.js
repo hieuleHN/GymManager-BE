@@ -36,6 +36,43 @@ const bookingSchema = new mongoose.Schema({
     type: String,
     default: ''
   },
+  price: {
+    type: Number,
+    default: 500000
+  },
+  paymentStatus: {
+    type: String,
+    enum: ['pending', 'paid', 'cancelled'],
+    default: 'pending'
+  },
+  paymentMethod: {
+    type: String,
+    default: ''
+  },
+  vnpay_txn_ref: {
+    type: String,
+    default: ''
+  },
+  vnpay_bank_code: {
+    type: String,
+    default: ''
+  },
+  vnpay_bank_tran_no: {
+    type: String,
+    default: ''
+  },
+  vnpay_card_type: {
+    type: String,
+    default: ''
+  },
+  vnpay_transaction_no: {
+    type: String,
+    default: ''
+  },
+  payment_date: {
+    type: String,
+    default: ''
+  },
   createdAt: {
     type: Date,
     default: Date.now

@@ -7,6 +7,7 @@ export const getTrainers = async (callback) => {
     const trainers = await Staff.find({ status: 'active' })
       .populate('job', 'name description isAdmin')
       .populate('locationId', 'title address')
+      .populate('disciplineId', 'name')
       .sort({ rating: -1 });
     const filtered = trainers.filter(t => t.job && !t.job.isAdmin);
     callback(null, filtered);
@@ -84,6 +85,15 @@ export const updateStaffById = async (id, data, callback) => {
     if (data.baseSalary !== undefined) staff.baseSalary = data.baseSalary;
     if (data.bonus !== undefined) staff.bonus = data.bonus;
     if (data.status) staff.status = data.status;
+    if (data.avatar !== undefined) staff.avatar = data.avatar;
+    if (data.coverImage !== undefined) staff.coverImage = data.coverImage;
+    if (data.description !== undefined) staff.description = data.description;
+    if (data.specialties !== undefined) staff.specialties = data.specialties;
+    if (data.gallery !== undefined) staff.gallery = data.gallery;
+    if (data.experience !== undefined) staff.experience = data.experience;
+    if (data.certifications !== undefined) staff.certifications = data.certifications;
+    if (data.disciplineId !== undefined) staff.disciplineId = data.disciplineId;
+    if (data.pricePerSession !== undefined) staff.pricePerSession = data.pricePerSession;
 
     const saved = await staff.save();
     callback(null, saved);
