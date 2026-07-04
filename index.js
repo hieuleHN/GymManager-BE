@@ -1,7 +1,7 @@
+import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import db from './config/db.js';
-import dotenv from 'dotenv';
 import locationRoutes from './routes/locationRoutes.js';
 import packageRoutes from './routes/packageRoutes.js';
 import { initPackageStatusScheduler } from './services/cronService.js';
@@ -25,9 +25,6 @@ import notificationRoutes from './routes/notificationRoutes.js';
 import checkInRoutes from './routes/checkInRoutes.js';
 import reviewRoutes from './routes/reviewRoutes.js';
 import reportRoutes from './routes/reportRoutes.js';
-
-
-dotenv.config();
 
 const app = express();
 app.use(cors());
