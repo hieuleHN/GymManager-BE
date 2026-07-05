@@ -2,158 +2,159 @@ import PDFDocument from 'pdfkit';
 import fs from 'fs';
 import path from 'path';
 
-const contractsDir = path.resolve('uploads/contracts');
-const regularFont = path.resolve('fonts/NotoSans-Regular.ttf');
-const boldFont = path.resolve('fonts/NotoSans-Bold.ttf');
+const FONT_PATH = 'C:\\Windows\\Fonts\\arial.ttf';
+const FONT_BOLD_PATH = 'C:\\Windows\\Fonts\\arialbd.ttf';
 
-if (!fs.existsSync(contractsDir)) {
-  fs.mkdirSync(contractsDir, { recursive: true });
-}
+const formatDate = (date) => {
+  if (!date) return '';
+  const d = new Date(date);
+  return `${d.getDate()}/${d.getMonth() + 1}/${d.getFullYear()}`;
+};
 
-const formatPrice = (price) => {
-  return price.toLocaleString('vi-VN') + 'đ';
+const formatCurrency = (amount) => {
+  return new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(amount || 0);
 };
 
 export const generateContractPDF = async ({ registration, pkg, customer, policies }) => {
   return new Promise((resolve, reject) => {
     try {
+      const doc = new PDFDocument({ size: 'A4', margins: { top: 40, bottom: 40, left: 50, right: 50 } });
       const fileName = `contract_${registration._id}_${Date.now()}.pdf`;
-      const filePath = path.join(contractsDir, fileName);
-      const doc = new PDFDocument({ size: 'A4', margin: 50 });
+      const outputPath = path.resolve('uploads/contracts', fileName);
 
-      const stream = fs.createWriteStream(filePath);
-      doc.pipe(stream);
+      const fontExists = fs.existsSync(FONT_PATH);
+      if (fontExists) {
+        doc.registerFont('Arial', FONT_PATH);
+        doc.registerFont('Arial-Bold', FONT_BOLD_PATH);
+      }
 
-      doc.registerFont('NotoSans', regularFont);
-      doc.registerFont('NotoSans-Bold', boldFont);
+      const writeStream = fs.createWriteStream(outputPath);
+      doc.pipe(writeStream);
 
-      const regular = 'NotoSans';
-      const bold = 'NotoSans-Bold';
+      const font = fontExists ? 'Arial' : 'Helvetica';
+      const fontBold = fontExists ? 'Arial-Bold' : 'Helvetica-Bold';
 
-      // Helper functions
-      const drawLine = (y) => {
-        doc.moveTo(50, y).lineTo(545, y).stroke('#cccccc');
-      };
+      doc.font(fontBold).fontSize(20).text('HỢP ĐỒNG ĐĂNG KÝ GÓI TẬP', { align: 'center' });
+      doc.moveDown(0.5);
+      doc.font(font).fontSize(11).text('Phòng Gym ZenFitness', { align: 'center' });
+      doc.moveDown(0.5);
 
-      // Header
-      doc.font(bold).fontSize(22).text('CHÍNH SÁCH & ĐIỀU KHOẢN DỊCH VỤ', { align: 'center' });
-      doc.font(regular).fontSize(14).text('Hợp đồng đăng ký gói tập', { align: 'center' });
-      doc.moveDown(1.5);
-      drawLine(doc.y);
+      doc.font(font).fontSize(10).text(`Mã hợp đồng: ${registration._id}`, { align: 'right' });
+      doc.text(`Ngày tạo: ${formatDate(registration.createdAt || new Date())}`, { align: 'right' });
       doc.moveDown(1);
 
-      // I. Thông tin các bên
-      doc.font(bold).fontSize(16).text('I. THÔNG TIN CÁC BÊN');
-      doc.moveDown(0.5);
+      doc.font(fontBold).fontSize(13).text('THÔNG TIN KHÁCH HÀNG');
+      doc.moveDown(0.3);
 
-      doc.font(bold).fontSize(12).text('BÊN A (Bên cung cấp dịch vụ):');
-      doc.font(regular).fontSize(11);
-      doc.text(`  - Tên: ZENFITNESS`);
-      doc.text(`  - Địa chỉ: ${customer?.locationId?.title || 'Hệ thống phòng tập ZenFitness'}`);
-      doc.moveDown(0.5);
+      const customerFields = [
+        ['Họ và tên:', customer?.fullName || ''],
+        ['Giới tính:', customer?.gender || ''],
+        ['Số điện thoại:', customer?.phone || ''],
+        ['Email:', customer?.email || ''],
+        ['Địa chỉ:', customer?.address || ''],
+        ['Số CMND/CCCD:', customer?.idNumber || ''],
+        ['Tài khoản:', customer?.account || ''],
+      ];
 
-      doc.font(bold).fontSize(12).text('BÊN B (Hội viên):');
-      doc.font(regular).fontSize(11);
-      doc.text(`  - Họ tên: ${customer?.fullName || customer?.account || 'N/A'}`);
-      doc.text(`  - Email: ${customer?.email || 'N/A'}`);
-      doc.text(`  - Số điện thoại: ${customer?.phone || 'N/A'}`);
-      doc.text(`  - Ngày ký: ${new Date().toLocaleDateString('vi-VN')}`);
-      doc.moveDown(1);
-      drawLine(doc.y);
-      doc.moveDown(1);
-
-      // II. Thông tin gói dịch vụ
-      doc.font(bold).fontSize(16).text('II. THÔNG TIN GÓI DỊCH VỤ');
-      doc.moveDown(0.5);
-      doc.font(regular).fontSize(11);
-      doc.text(`  - Gói tập: ${pkg.name}`);
-      doc.text(`  - Thời hạn: ${registration.duration_months} tháng`);
-      doc.text(`  - Cơ sở tập luyện: ${customer?.locationId?.title || 'ZenFitness'}`);
-      doc.text(`  - Tổng giá trị: ${formatPrice(registration.total_price)}`);
-      doc.moveDown(0.5);
-
-      doc.font(bold).fontSize(11).text('Quyền lợi bao gồm:');
-      doc.font(regular).fontSize(10);
-      (pkg.features || []).forEach((feature) => {
-        doc.text(`  - ${feature}`);
+      doc.font(font).fontSize(10);
+      customerFields.forEach(([label, value]) => {
+        doc.text(`  ${label}  ${value}`);
       });
       doc.moveDown(1);
-      drawLine(doc.y);
+
+      doc.font(fontBold).fontSize(13).text('THÔNG TIN GÓI TẬP');
+      doc.moveDown(0.3);
+
+      doc.font(font).fontSize(10);
+      doc.text(`  Tên gói tập:  ${pkg?.name || ''}`);
+      doc.text(`  Giá gói:  ${formatCurrency(pkg?.price)}`);
+      doc.text(`  Đơn giá:  ${formatCurrency(pkg?.unitPrice)}`);
+
+      if (pkg?.features && pkg.features.length > 0) {
+        doc.text('  Tính năng:');
+        pkg.features.forEach(f => doc.text(`    - ${f}`));
+      }
+
       doc.moveDown(1);
 
-      // III. Điều khoản bên A
-      if (pkg.contractA) {
-        doc.font(bold).fontSize(16).text('III. ĐIỀU KHOẢN BÊN A (Bên cung cấp dịch vụ)');
-        doc.moveDown(0.5);
-        doc.font(regular).fontSize(11).text(pkg.contractA);
-        doc.moveDown(1);
-        drawLine(doc.y);
-        doc.moveDown(1);
-      }
+      doc.font(fontBold).fontSize(13).text('THÔNG TIN ĐĂNG KÝ');
+      doc.moveDown(0.3);
 
-      // IV. Điều khoản bên B
-      if (pkg.contractB) {
-        doc.font(bold).fontSize(16).text('IV. ĐIỀU KHOẢN BÊN B (Hội viên)');
-        doc.moveDown(0.5);
-        doc.font(regular).fontSize(11).text(pkg.contractB);
-        doc.moveDown(1);
-        drawLine(doc.y);
-        doc.moveDown(1);
-      }
+      doc.font(font).fontSize(10);
+      doc.text(`  Ngày bắt đầu:  ${formatDate(registration.start_date)}`);
+      doc.text(`  Ngày kết thúc:  ${formatDate(registration.end_date)}`);
+      doc.text(`  Thời hạn:  ${registration.duration_months} tháng`);
+      doc.text(`  Tổng tiền:  ${formatCurrency(registration.total_price)}`);
+      doc.text(`  Trạng thái thanh toán:  ${registration.payment_status === 'paid' ? 'Đã thanh toán' : 'Chưa thanh toán'}`);
+      doc.text(`  Trạng thái:  ${registration.status || ''}`);
+      doc.moveDown(1);
 
-      // V. Điều khoản cam kết chung
-      if (pkg.contractTerms) {
-        doc.font(bold).fontSize(16).text('V. ĐIỀU KHOẢN CAM KẾT CHUNG (Cả hai bên)');
-        doc.moveDown(0.5);
-        doc.font(regular).fontSize(11).text(pkg.contractTerms);
-        doc.moveDown(1);
-        drawLine(doc.y);
-        doc.moveDown(1);
-      }
-
-      // VI. Chính sách chung
       if (policies && policies.length > 0) {
-        doc.font(bold).fontSize(16).text('VI. CHÍNH SÁCH CHUNG');
-        doc.moveDown(0.5);
-        doc.font(regular).fontSize(11);
-        policies.forEach((policy, idx) => {
-          doc.text(`${idx + 1}. ${policy.title}`);
-          doc.text(`   ${policy.description}`);
-          doc.moveDown(0.3);
+        doc.font(fontBold).fontSize(13).text('CHÍNH SÁCH & ĐIỀU KHOẢN');
+        doc.moveDown(0.3);
+        doc.font(font).fontSize(10);
+        policies.forEach((policy, index) => {
+          doc.text(`  ${index + 1}. ${policy.title || ''}`);
+          if (policy.description) {
+            doc.fontSize(9).text(`     ${policy.description}`, { indent: 10 });
+            doc.fontSize(10);
+          }
         });
         doc.moveDown(1);
-        drawLine(doc.y);
+      }
+
+      if (pkg?.contractA || pkg?.contractB || pkg?.contractTerms) {
+        doc.font(fontBold).fontSize(13).text('ĐIỀU KHOẢN HỢP ĐỒNG');
+        doc.moveDown(0.3);
+        doc.font(font).fontSize(10);
+
+        if (pkg.contractA) {
+          doc.text(`  Bên A (Chủ sở hữu):  ${pkg.contractA}`);
+        }
+        if (pkg.contractB) {
+          doc.text(`  Bên B (Khách hàng):  ${pkg.contractB}`);
+        }
+        if (pkg.contractTerms) {
+          doc.moveDown(0.3);
+          doc.text(`  Điều khoản:  ${pkg.contractTerms}`);
+        }
         doc.moveDown(1);
       }
 
-      // Chữ ký
-      doc.font(bold).fontSize(16).text('CHỮ KÝ CỦA HỘI VIÊN');
-      doc.moveDown(1);
-
-      // Convert base64 signature to image
       if (registration.signature) {
-        const base64Data = registration.signature.replace(/^data:image\/\w+;base64,/, '');
-        const imgBuffer = Buffer.from(base64Data, 'base64');
-        try {
-          doc.image(imgBuffer, { width: 200, align: 'center' });
-        } catch (e) {
-          doc.font(regular).fontSize(11).text('[Chữ ký đã được ghi nhận]');
-        }
-      } else {
-        doc.font(regular).fontSize(11).text('[Chưa có chữ ký]');
+        doc.font(fontBold).fontSize(13).text('CHỮ KÝ ĐIỆN TỬ');
+        doc.moveDown(0.3);
+        doc.font(font).fontSize(10);
+        doc.text(`  Chữ ký: ${registration.signature}`);
+        doc.text(`  Ngày ký: ${formatDate(registration.createdAt || new Date())}`);
+        doc.moveDown(1);
       }
 
-      doc.moveDown(1);
-      doc.font(regular).fontSize(10).fillColor('#888888')
-        .text(`Hợp đồng được tạo ngày: ${new Date().toLocaleString('vi-VN')}`, { align: 'center' });
-      doc.text(`Mã hợp đồng: ${registration._id}`, { align: 'center' });
+      doc.moveDown(2);
+      const today = new Date();
+      doc.font(font).fontSize(10).text(`Hà Nội, ngày ${today.getDate()} tháng ${today.getMonth() + 1} năm ${today.getFullYear()}`, { align: 'right' });
+      doc.moveDown(0.5);
+
+      doc.font(fontBold).fontSize(10);
+      doc.text('Chủ sở hữu', { align: 'left' });
+      doc.moveDown(3);
+      doc.text('(Ký, ghi rõ họ tên)', { align: 'left' });
+
+      doc.text('Khách hàng', { align: 'right' });
+      doc.moveDown(3);
+      doc.text('(Ký, ghi rõ họ tên)', { align: 'right' });
 
       doc.end();
 
-      stream.on('finish', () => resolve(fileName));
-      stream.on('error', reject);
-    } catch (error) {
-      reject(error);
+      writeStream.on('finish', () => {
+        resolve(fileName);
+      });
+
+      writeStream.on('error', (err) => {
+        reject(err);
+      });
+    } catch (err) {
+      reject(err);
     }
   });
 };

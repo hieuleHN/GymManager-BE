@@ -1,42 +1,46 @@
 import {
-  createPost, getAllPosts, getPostById, getPostsByCustomer,
-  updatePostById, deletePostById, getAnnouncements, getMemberPostsForAdmin
+  createPost, getAllPosts, getPostById, updatePost, deletePost,
+  toggleLike, incrementShare, incrementViews, getPostsByAuthor
 } from '../models/communityPostModel.js';
-import { createNotification } from '../models/notificationModel.js';
+import fs from 'fs';
+import path from 'path';
 
 export const create = (req, res) => {
-  const { content } = req.body;
-  if (!content || !content.trim()) {
-    return res.status(400).json({ error: 'Vui lòng nhập nội dung bài viết!' });
+  const { content, type, title } = req.body;
+  if (!content) {
+    if (req.files) req.files.forEach(f => fs.unlink(path.join('uploads', 'community', f.filename), () => {}));
+    return res.status(400).json({ error: 'Nội dung bài viết là bắt buộc!' });
   }
 
-  const postData = {
-    content: content.trim(),
-    authorType: req.user.isStaff ? 'staff' : 'member',
-    isAnnouncement: req.body.isAnnouncement === 'true' || req.body.isAnnouncement === true
-  };
+  const images = req.files ? req.files.map(f => f.filename) : [];
 
-  if (req.user.isStaff) {
-    postData.staffId = req.user.id;
-  } else {
-    postData.customerId = req.user.id;
-  }
-
-  if (req.files?.images) {
-    postData.images = req.files.images.map(f => f.filename);
-  }
-
-  createPost(postData, (err, post) => {
-    if (err) return res.status(500).json({ error: 'Lỗi tạo bài viết: ' + err.message });
+  createPost({
+    authorId: req.user.id,
+    authorModel: req.user.isStaff ? 'Staff' : 'Customer',
+    content,
+    type: type || 'member',
+    title: title || '',
+    images
+  }, (err, post) => {
+    if (err) {
+      req.files?.forEach(f => fs.unlink(path.join('uploads', 'community', f.filename), () => {}));
+      return res.status(500).json({ error: err.message });
+    }
     res.status(201).json({ message: 'Đăng bài thành công!', post });
   });
 };
 
 export const list = (req, res) => {
   const page = parseInt(req.query.page) || 1;
-  const limit = parseInt(req.query.limit) || 10;
-  getAllPosts(page, limit, (err, result) => {
-    if (err) return res.status(500).json({ error: 'Lỗi lấy danh sách bài viết: ' + err.message });
+  const limit = parseInt(req.query.limit) || 20;
+  const { type, status } = req.query;
+  const filter = {};
+  if (type) filter.type = type;
+  if (status) filter.status = status;
+  else filter.status = { $ne: 'hidden' };
+
+  getAllPosts(page, limit, filter, (err, result) => {
+    if (err) return res.status(500).json({ error: err.message });
     res.json(result);
   });
 };
@@ -50,101 +54,68 @@ export const detail = (req, res) => {
 };
 
 export const update = (req, res) => {
-  const { content } = req.body;
+  const { content, title } = req.body;
   const updateData = {};
   if (content) updateData.content = content;
+  if (title !== undefined) updateData.title = title;
 
-  getPostById(req.params.id, (err, post) => {
-    if (err) return res.status(500).json({ error: err.message });
-    if (!post) return res.status(404).json({ error: 'Không tìm thấy bài viết!' });
-
-    const isOwner = (post.customerId?._id?.toString() === req.user.id) ||
-                    (post.staffId?._id?.toString() === req.user.id);
-    if (!isOwner && !req.user.isStaff) {
-      return res.status(403).json({ error: 'Bạn không có quyền sửa bài viết này!' });
-    }
-
-    updatePostById(req.params.id, updateData, (err2, updated) => {
-      if (err2) return res.status(500).json({ error: err2.message });
-      res.json({ message: 'Cập nhật bài viết thành công!', post: updated });
-    });
+  updatePost(req.params.id, updateData, (err, post) => {
+    if (err) return res.status(400).json({ error: err.message });
+    res.json({ message: 'Cập nhật bài viết thành công!', post });
   });
 };
 
 export const remove = (req, res) => {
-  getPostById(req.params.id, (err, post) => {
+  deletePost(req.params.id, (err, result) => {
+    if (err) return res.status(400).json({ error: err.message });
+    result.images?.forEach(img => fs.unlink(path.join('uploads', 'community', img), () => {}));
+    res.json({ message: 'Xóa bài viết thành công!' });
+  });
+};
+
+export const like = (req, res) => {
+  const userId = req.user.id;
+  const userModel = req.user.isStaff ? 'Staff' : 'Customer';
+  toggleLike(req.params.id, userId, userModel, (err, post) => {
+    if (err) return res.status(400).json({ error: err.message });
+    res.json({ message: 'Thành công!', likes: post.likes.length, liked: post.likes.some(l => l.userId.toString() === userId) });
+  });
+};
+
+export const share = (req, res) => {
+  incrementShare(req.params.id, (err, post) => {
+    if (err) return res.status(400).json({ error: err.message });
+    res.json({ message: 'Chia sẻ thành công!', shareCount: post.shareCount });
+  });
+};
+
+export const view = (req, res) => {
+  incrementViews(req.params.id, (err) => {
     if (err) return res.status(500).json({ error: err.message });
-    if (!post) return res.status(404).json({ error: 'Không tìm thấy bài viết!' });
-
-    const isOwner = (post.customerId?._id?.toString() === req.user.id) ||
-                    (post.staffId?._id?.toString() === req.user.id);
-    if (!isOwner && !req.user.isStaff) {
-      return res.status(403).json({ error: 'Bạn không có quyền xóa bài viết này!' });
-    }
-
-    deletePostById(req.params.id, (err2, result) => {
-      if (err2) return res.status(500).json({ error: err2.message });
-      res.json({ message: 'Xóa bài viết thành công!' });
-    });
+    res.json({ success: true });
   });
 };
 
-export const myPosts = (req, res) => {
+export const listByAuthor = (req, res) => {
+  const { authorId, authorModel } = req.params;
   const page = parseInt(req.query.page) || 1;
-  const limit = parseInt(req.query.limit) || 10;
-  getPostsByCustomer(req.user.id, page, limit, (err, result) => {
-    if (err) return res.status(500).json({ error: 'Lỗi lấy bài viết: ' + err.message });
-    res.json(result);
-  });
-};
-
-export const userPosts = (req, res) => {
-  const page = parseInt(req.query.page) || 1;
-  const limit = parseInt(req.query.limit) || 10;
-  getPostsByCustomer(req.params.userId, page, limit, (err, result) => {
-    if (err) return res.status(500).json({ error: 'Lỗi lấy bài viết: ' + err.message });
-    res.json(result);
-  });
-};
-
-export const announcements = (req, res) => {
-  const page = parseInt(req.query.page) || 1;
-  const limit = parseInt(req.query.limit) || 10;
-  getAnnouncements(page, limit, (err, result) => {
-    if (err) return res.status(500).json({ error: 'Lỗi lấy thông báo: ' + err.message });
-    res.json(result);
-  });
-};
-
-export const adminPosts = (req, res) => {
-  const page = parseInt(req.query.page) || 1;
-  const limit = parseInt(req.query.limit) || 10;
-  getMemberPostsForAdmin(page, limit, (err, result) => {
-    if (err) return res.status(500).json({ error: 'Lỗi lấy bài viết: ' + err.message });
-    res.json(result);
-  });
-};
-
-export const hidePost = (req, res) => {
-  if (!req.user.isStaff) return res.status(403).json({ error: 'Chỉ nhân viên mới có quyền này!' });
-  updatePostById(req.params.id, { status: 'hidden' }, (err, post) => {
+  const limit = parseInt(req.query.limit) || 20;
+  getPostsByAuthor(authorId, authorModel, page, limit, (err, result) => {
     if (err) return res.status(500).json({ error: err.message });
+    res.json(result);
+  });
+};
+
+export const hide = (req, res) => {
+  updatePost(req.params.id, { status: 'hidden' }, (err, post) => {
+    if (err) return res.status(400).json({ error: err.message });
     res.json({ message: 'Đã ẩn bài viết!', post });
   });
 };
 
-export const banPost = (req, res) => {
-  if (!req.user.isStaff) return res.status(403).json({ error: 'Chỉ nhân viên mới có quyền này!' });
-  updatePostById(req.params.id, { status: 'banned' }, (err, post) => {
-    if (err) return res.status(500).json({ error: err.message });
-    res.json({ message: 'Đã cấm bài viết!', post });
-  });
-};
-
-export const restorePost = (req, res) => {
-  if (!req.user.isStaff) return res.status(403).json({ error: 'Chỉ nhân viên mới có quyền này!' });
-  updatePostById(req.params.id, { status: 'active' }, (err, post) => {
-    if (err) return res.status(500).json({ error: err.message });
+export const unhide = (req, res) => {
+  updatePost(req.params.id, { status: 'active' }, (err, post) => {
+    if (err) return res.status(400).json({ error: err.message });
     res.json({ message: 'Đã khôi phục bài viết!', post });
   });
 };

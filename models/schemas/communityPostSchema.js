@@ -1,55 +1,40 @@
 import mongoose from 'mongoose';
 
 const communityPostSchema = new mongoose.Schema({
-  customerId: {
+  authorId: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'Customer'
+    required: true,
+    refPath: 'authorModel'
   },
-  staffId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'Staff'
-  },
-  authorType: {
+  authorModel: {
     type: String,
-    enum: ['member', 'staff'],
+    required: true,
+    enum: ['Customer', 'Staff']
+  },
+  type: {
+    type: String,
+    enum: ['member', 'announcement'],
     default: 'member'
   },
+  title: String,
   content: {
     type: String,
     required: true
   },
   images: [String],
   video: String,
-  isAnnouncement: {
-    type: Boolean,
-    default: false
-  },
-  likesCount: {
-    type: Number,
-    default: 0
-  },
-  commentsCount: {
-    type: Number,
-    default: 0
-  },
+  likes: [{
+    userId: { type: mongoose.Schema.Types.ObjectId },
+    userModel: { type: String, enum: ['Customer', 'Staff'] }
+  }],
+  commentCount: { type: Number, default: 0 },
+  shareCount: { type: Number, default: 0 },
+  views: { type: Number, default: 0 },
   status: {
     type: String,
-    enum: ['active', 'hidden', 'reported', 'banned'],
+    enum: ['active', 'hidden', 'reported'],
     default: 'active'
-  },
-  createdAt: {
-    type: Date,
-    default: Date.now
-  },
-  updatedAt: {
-    type: Date,
-    default: Date.now
   }
-});
-
-communityPostSchema.pre('save', function(next) {
-  this.updatedAt = new Date();
-  next();
-});
+}, { timestamps: true });
 
 export default mongoose.model('CommunityPost', communityPostSchema);

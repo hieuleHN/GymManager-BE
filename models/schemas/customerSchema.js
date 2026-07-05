@@ -21,6 +21,8 @@ const customerSchema = new mongoose.Schema({
   idNumber: String,
   idCardFront: String,
   idCardBack: String,
+  avatar: String,
+  bio: String,
   locationId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Location'

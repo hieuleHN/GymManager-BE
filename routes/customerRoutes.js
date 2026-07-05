@@ -2,7 +2,7 @@ import express from 'express';
 import { authenticateToken } from '../middleware/authMiddleware.js';
 import { uploadDynamic } from '../middleware/uploadMiddleware.js';
 import {
-  register, list, detail, update, remove, approve, reject, pendingList, myInfo, submitInfo
+  register, list, detail, update, remove, approve, reject, pendingList, myInfo, submitInfo, publicProfile, uploadAvatar
 } from '../controllers/customerController.js';
 import { login } from '../controllers/customerAuthController.js';
 
@@ -22,9 +22,11 @@ const handleUpload = (req, res, next) => {
 router.post('/register', register);
 router.post('/login', login);
 router.get('/', authenticateToken, list);
+router.get('/profile/:id', publicProfile);
 router.get('/pending', authenticateToken, pendingList);
 router.get('/my-info', authenticateToken, myInfo);
 router.post('/submit-info', authenticateToken, handleUpload, submitInfo);
+router.post('/avatar', authenticateToken, uploadDynamic('customers').single('avatar'), uploadAvatar);
 router.get('/:id', authenticateToken, detail);
 router.put('/:id', authenticateToken, handleUpload, update);
 router.delete('/:id', authenticateToken, remove);

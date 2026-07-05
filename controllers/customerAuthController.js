@@ -33,7 +33,8 @@ export const login = (req, res) => {
           fullName: customer.fullName || customer.account,
           role: 'member',
           isStaff: false,
-          status: customer.status
+          status: customer.status,
+          avatar: customer.avatar || ''
         }
       });
     });

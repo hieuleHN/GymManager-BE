@@ -76,6 +76,7 @@ export const submitPersonalInfo = async (id, data, files, callback) => {
       email: data.email,
       address: data.address || '',
       idNumber: data.idNumber || '',
+      bio: data.bio || '',
       status: 'pending_approval',
       infoFilledAt: new Date(),
       updatedAt: new Date()

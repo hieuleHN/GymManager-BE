@@ -51,7 +51,7 @@ export const myInfo = (req, res) => {
 
 export const submitInfo = (req, res) => {
   const customerId = req.user.id;
-  const { fullName, gender, phone, email, address, idNumber } = req.body;
+  const { fullName, gender, phone, email, address, idNumber, bio } = req.body;
   if (!fullName || !phone || !email) {
     return res.status(400).json({ error: 'Vui lòng điền đầy đủ họ tên, số điện thoại và email!' });
   }
@@ -64,7 +64,7 @@ export const submitInfo = (req, res) => {
     return res.status(400).json({ error: 'Email không hợp lệ!' });
   }
 
-  submitPersonalInfo(customerId, { fullName, gender, phone, email, address, idNumber }, req.files, (err, customer) => {
+  submitPersonalInfo(customerId, { fullName, gender, phone, email, address, idNumber, bio }, req.files, (err, customer) => {
     if (err) return res.status(400).json({ error: err.message || 'Lỗi cập nhật thông tin!' });
     res.json({ message: 'Gửi thông tin thành công! Vui lòng chờ nhân viên xác nhận.', customer });
   });
@@ -112,5 +112,32 @@ export const pendingList = (req, res) => {
   getPendingCustomers((err, customers) => {
     if (err) return res.status(500).json({ error: err.message });
     res.json(customers);
+  });
+};
+
+export const publicProfile = (req, res) => {
+  getCustomerById(req.params.id, (err, customer) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!customer) return res.status(404).json({ error: 'Không tìm thấy hội viên!' });
+    const profile = {
+      _id: customer._id,
+      fullName: customer.fullName || customer.account,
+      avatar: customer.avatar || '',
+      bio: customer.bio || '',
+      gender: customer.gender,
+      registerDate: customer.registerDate,
+      status: customer.status
+    };
+    res.json(profile);
+  });
+};
+
+export const uploadAvatar = (req, res) => {
+  const customerId = req.user.id;
+  if (!req.file) return res.status(400).json({ error: 'Vui lòng chọn ảnh!' });
+  const avatar = req.file.filename;
+  updateCustomerById(customerId, { avatar }, (err, customer) => {
+    if (err) return res.status(400).json({ error: err.message });
+    res.json({ message: 'Cập nhật ảnh đại diện thành công!', avatar });
   });
 };
