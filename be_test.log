@@ -1,0 +1,3 @@
+◇ injected env (0) from .env // tip: ⌘ suppress logs { quiet: true }
+🚀 Server đang chạy mượt mà tại cổng http://localhost:5000
+🎯 MongoDB được kết nối thành công!
