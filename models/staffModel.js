@@ -62,7 +62,9 @@ export const getAllStaff = async (page = 1, limit = 15, locationId, callback) =>
 
 export const getStaffById = async (id, callback) => {
   try {
-    const staff = await Staff.findById(id).populate('job', 'name salary');
+    const staff = await Staff.findById(id)
+      .populate('job', 'name salary')
+      .populate('disciplineId', 'name');
     if (!staff) return callback(null, null);
     callback(null, staff);
   } catch (err) {

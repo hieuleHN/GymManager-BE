@@ -8,16 +8,20 @@ const bookingSchema = new mongoose.Schema({
   },
   trainerId: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'Staff',
-    required: true
+    ref: 'Staff'
   },
   date: {
     type: Date,
     required: true
   },
   time: {
-    type: String,
-    required: true
+    type: String
+  },
+  startTime: {
+    type: String
+  },
+  endTime: {
+    type: String
   },
   status: {
     type: String,
@@ -27,6 +31,63 @@ const bookingSchema = new mongoose.Schema({
   rejectionReason: {
     type: String,
     default: ''
+  },
+  transferType: {
+    type: String,
+    enum: ['none', 'to_colleague', 'to_another_day'],
+    default: 'none'
+  },
+  transferToTrainerId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Staff',
+    default: null
+  },
+  pendingColleagueIds: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Staff'
+  }],
+  rejectedColleagueIds: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Staff'
+  }],
+  transferredFromTrainerId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Staff',
+    default: null
+  },
+  transferReason: {
+    type: String,
+    default: ''
+  },
+  transferNewDate: {
+    type: Date,
+    default: null
+  },
+  transferNewTime: {
+    type: String,
+    default: ''
+  },
+  transferStatus: {
+    type: String,
+    enum: ['none', 'pending_colleague', 'pending_approval', 'colleague_accepted', 'approved', 'rejected'],
+    default: 'none'
+  },
+  transferApprovedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Staff',
+    default: null
+  },
+  transferApprovedAt: {
+    type: Date,
+    default: null
+  },
+  transferRejectionReason: {
+    type: String,
+    default: ''
+  },
+  disciplineId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Discipline'
   },
   locationId: {
     type: mongoose.Schema.Types.ObjectId,
