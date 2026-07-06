@@ -4,13 +4,17 @@ export const createBooking = async (data, callback) => {
   try {
     const booking = new Booking({
       customerId: data.customerId,
-      trainerId: data.trainerId,
+      trainerId: data.trainerId || undefined,
       date: data.date,
-      time: data.time,
+      time: data.time || undefined,
+      startTime: data.startTime || undefined,
+      endTime: data.endTime || undefined,
+      disciplineId: data.disciplineId || undefined,
       locationId: data.locationId,
       note: data.note || '',
-      status: 'pending',
-      price: data.price || 500000
+      status: data.status || 'pending',
+      price: data.price || 0,
+      paymentStatus: data.paymentStatus || 'pending'
     });
     const saved = await booking.save();
     callback(null, saved);
@@ -42,9 +46,21 @@ export const getBookingsByTrainer = async (trainerId, date, callback) => {
 export const getBookingsByCustomer = async (customerId, callback) => {
   try {
     const bookings = await Booking.find({ customerId })
-      .populate('trainerId', 'fullName phone')
+      .populate('trainerId', 'fullName phone disciplineId specialties')
+      .populate('disciplineId', 'name')
       .populate('locationId', 'title address')
       .sort({ date: -1, time: -1 });
+    callback(null, bookings);
+  } catch (err) {
+    callback(err);
+  }
+};
+
+export const getPersonalBookingsByCustomer = async (customerId, callback) => {
+  try {
+    const bookings = await Booking.find({ customerId, $or: [{ trainerId: { $exists: false } }, { trainerId: null }] })
+      .populate('locationId', 'title address')
+      .sort({ date: -1, startTime: -1 });
     callback(null, bookings);
   } catch (err) {
     callback(err);
@@ -55,8 +71,12 @@ export const getBookingById = async (id, callback) => {
   try {
     const booking = await Booking.findById(id)
       .populate('customerId', 'fullName phone email')
-      .populate('trainerId', 'fullName phone avatar')
-      .populate('locationId', 'title address');
+      .populate('trainerId', 'fullName phone avatar disciplineId specialties')
+      .populate('disciplineId', 'name')
+      .populate('locationId', 'title address')
+      .populate('pendingColleagueIds', 'fullName')
+      .populate('rejectedColleagueIds', 'fullName')
+      .populate('transferredFromTrainerId', 'fullName');
     callback(null, booking);
   } catch (err) {
     callback(err);
@@ -78,7 +98,8 @@ export const getAllBookings = async (page = 1, limit = 20, filters = {}, callbac
     const [data, total] = await Promise.all([
       Booking.find(query)
         .populate('customerId', 'fullName phone email')
-        .populate('trainerId', 'fullName')
+        .populate('trainerId', 'fullName disciplineId specialties')
+        .populate('disciplineId', 'name')
         .populate('locationId', 'title')
         .sort({ createdAt: -1 })
         .skip(skip)
@@ -159,6 +180,222 @@ export const updateBookingStatus = async (id, status, rejectionReason = '', call
   }
 };
 
+export const updateTransferRequest = async (id, transferData, callback) => {
+  try {
+    const transferStatus = transferData.transferType === 'to_colleague' ? 'pending_colleague' : 'pending_approval';
+    
+    if (transferData.transferType === 'to_colleague' && transferData.transferToTrainerId) {
+      const booking = await Booking.findById(id);
+      if (!booking) return callback({ message: 'Không tìm thấy lịch đặt!' });
+      
+      const setFields = {
+        transferType: 'to_colleague',
+        transferReason: transferData.transferReason || '',
+        transferStatus,
+        updatedAt: new Date()
+      };
+      if (!booking.transferredFromTrainerId) {
+        setFields.transferredFromTrainerId = booking.trainerId?._id || booking.trainerId;
+      }
+      
+      const updated = await Booking.findByIdAndUpdate(
+        id,
+        {
+          $addToSet: { pendingColleagueIds: transferData.transferToTrainerId },
+          $set: setFields
+        },
+        { new: true }
+      )
+        .populate('customerId', 'fullName phone email')
+        .populate('trainerId', 'fullName')
+        .populate('transferredFromTrainerId', 'fullName');
+      if (!updated) return callback({ message: 'Không tìm thấy lịch đặt!' });
+      callback(null, updated);
+    } else {
+      const update = {
+        transferType: transferData.transferType,
+        transferToTrainerId: transferData.transferToTrainerId || null,
+        transferReason: transferData.transferReason || '',
+        transferNewDate: transferData.transferNewDate || null,
+        transferNewTime: transferData.transferNewTime || '',
+        transferStatus,
+        transferApprovedBy: null,
+        transferApprovedAt: null,
+        transferRejectionReason: '',
+        updatedAt: new Date()
+      };
+      const booking = await Booking.findByIdAndUpdate(id, update, { new: true })
+        .populate('customerId', 'fullName phone email')
+        .populate('trainerId', 'fullName');
+      if (!booking) return callback({ message: 'Không tìm thấy lịch đặt!' });
+      callback(null, booking);
+    }
+  } catch (err) {
+    callback(err);
+  }
+};
+
+export const colleagueConfirmTransfer = async (id, accept, colleagueId, callback) => {
+  try {
+    const booking = await Booking.findById(id);
+    if (!booking) return callback({ message: 'Không tìm thấy lịch đặt!' });
+
+    if (accept) {
+      const update = {
+        trainerId: colleagueId,
+        transferToTrainerId: colleagueId,
+        pendingColleagueIds: [],
+        rejectedColleagueIds: [],
+        transferStatus: 'approved',
+        transferApprovedAt: new Date(),
+        updatedAt: new Date()
+      };
+
+      const updated = await Booking.findByIdAndUpdate(id, update, { new: true })
+        .populate('customerId', 'fullName phone email')
+        .populate('trainerId', 'fullName')
+        .populate('transferredFromTrainerId', 'fullName');
+      callback(null, updated);
+    } else {
+      const pendingIds = booking.pendingColleagueIds || [];
+      const filtered = pendingIds.filter(id => id.toString() !== colleagueId.toString());
+
+      const update = {
+        pendingColleagueIds: filtered,
+        updatedAt: new Date()
+      };
+
+      const updated = await Booking.findByIdAndUpdate(
+        id,
+        {
+          $pull: { pendingColleagueIds: colleagueId },
+          $addToSet: { rejectedColleagueIds: colleagueId },
+          $set: {
+            transferStatus: filtered.length === 0 ? 'rejected' : 'pending_colleague',
+            transferRejectionReason: filtered.length === 0 ? 'Đồng nghiệp từ chối nhận chuyển lịch' : '',
+            updatedAt: new Date()
+          }
+        },
+        { new: true }
+      )
+        .populate('customerId', 'fullName phone email')
+        .populate('trainerId', 'fullName')
+        .populate('transferredFromTrainerId', 'fullName')
+        .populate('rejectedColleagueIds', 'fullName');
+      callback(null, updated);
+    }
+  } catch (err) {
+    callback(err);
+  }
+};
+
+export const approveTransferRequest = async (id, approvedBy, callback) => {
+  try {
+    const booking = await Booking.findById(id);
+    if (!booking) return callback({ message: 'Không tìm thấy lịch đặt!' });
+
+    const update = {
+      transferStatus: 'approved',
+      transferApprovedBy: approvedBy,
+      transferApprovedAt: new Date(),
+      updatedAt: new Date()
+    };
+
+    if (booking.transferType === 'to_colleague') {
+      const targetTrainerId = booking.transferToTrainerId ||
+        (booking.pendingColleagueIds?.length > 0 ? booking.pendingColleagueIds[0] : null);
+      if (targetTrainerId) {
+        update.trainerId = targetTrainerId;
+        update.transferToTrainerId = targetTrainerId;
+        update.pendingColleagueIds = [];
+        update.rejectedColleagueIds = [];
+      }
+    }
+    if (booking.transferType === 'to_another_day') {
+      if (booking.transferNewDate) update.date = booking.transferNewDate;
+      if (booking.transferNewTime) {
+        update.time = booking.transferNewTime;
+        update.startTime = booking.transferNewTime;
+        const [h, m] = booking.transferNewTime.split(':').map(Number);
+        const m2 = m + 90;
+        update.endTime = `${String(h + Math.floor(m2 / 60)).padStart(2, '0')}:${String(m2 % 60).padStart(2, '0')}`;
+      }
+    }
+
+    const updated = await Booking.findByIdAndUpdate(id, update, { new: true })
+      .populate('customerId', 'fullName phone email')
+      .populate('trainerId', 'fullName')
+      .populate('transferredFromTrainerId', 'fullName');
+    callback(null, updated);
+  } catch (err) {
+    callback(err);
+  }
+};
+
+export const rejectTransferRequest = async (id, rejectionReason, callback) => {
+  try {
+    const update = {
+      transferStatus: 'rejected',
+      transferRejectionReason: rejectionReason || '',
+      transferType: 'none',
+      transferToTrainerId: null,
+      pendingColleagueIds: [],
+      rejectedColleagueIds: [],
+      transferNewDate: null,
+      transferNewTime: '',
+      updatedAt: new Date()
+    };
+    const booking = await Booking.findByIdAndUpdate(id, update, { new: true })
+      .populate('customerId', 'fullName phone email')
+      .populate('trainerId', 'fullName');
+    if (!booking) return callback({ message: 'Không tìm thấy lịch đặt!' });
+    callback(null, booking);
+  } catch (err) {
+    callback(err);
+  }
+};
+
+export const getPendingTransferRequests = async (callback) => {
+  try {
+    const bookings = await Booking.find({ transferStatus: 'pending_approval' })
+      .populate('customerId', 'fullName phone email')
+      .populate('trainerId', 'fullName')
+      .populate('transferToTrainerId', 'fullName')
+      .sort({ updatedAt: -1 });
+    callback(null, bookings);
+  } catch (err) {
+    callback(err);
+  }
+};
+
+export const getTrainerBookings = async (trainerId, dateFrom, dateTo, callback) => {
+  try {
+    const dateFilter = {};
+    if (dateFrom) dateFilter.$gte = new Date(dateFrom);
+    if (dateTo) dateFilter.$lte = new Date(dateTo);
+    const hasDateFilter = dateFrom || dateTo;
+
+    const bookings = await Booking.find({
+      $or: [
+        { trainerId, status: { $in: ['pending', 'confirmed'] }, ...(hasDateFilter ? { date: dateFilter } : {}) },
+        { transferToTrainerId: trainerId, transferStatus: { $in: ['pending_colleague', 'colleague_accepted'] }, ...(hasDateFilter ? { date: dateFilter } : {}) },
+        { pendingColleagueIds: trainerId, transferStatus: 'pending_colleague', ...(hasDateFilter ? { date: dateFilter } : {}) },
+        { transferredFromTrainerId: trainerId, transferStatus: 'approved', ...(hasDateFilter ? { date: dateFilter } : {}) }
+      ]
+    })
+      .populate('customerId', 'fullName phone email avatar')
+      .populate('trainerId', 'fullName')
+      .populate('transferToTrainerId', 'fullName')
+      .populate('pendingColleagueIds', 'fullName')
+      .populate('rejectedColleagueIds', 'fullName')
+      .populate('transferredFromTrainerId', 'fullName')
+      .sort({ date: 1, time: 1 });
+    callback(null, bookings);
+  } catch (err) {
+    callback(err);
+  }
+};
+
 export const checkTrainerConflict = async (trainerId, date, time, excludeBookingId = null, callback) => {
   try {
     const startOfDay = new Date(date);
@@ -189,7 +426,8 @@ export const getBookingsByLocation = async (locationId, page = 1, limit = 20, ca
     const [data, total] = await Promise.all([
       Booking.find(query)
         .populate('customerId', 'fullName phone')
-        .populate('trainerId', 'fullName phone avatar')
+        .populate('trainerId', 'fullName phone avatar disciplineId specialties')
+        .populate('disciplineId', 'name')
         .sort({ date: -1 })
         .skip(skip)
         .limit(limit),
