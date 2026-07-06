@@ -14,14 +14,26 @@ const lockerIssueSchema = new mongoose.Schema({
     type: String,
     required: true,
   },
-  reportedBy: {
+  // Lấy trực tiếp từ req.user khi tạo báo cáo (xem lockerController.create),
+  // không nhận từ client nữa để tránh giả mạo tên người báo cáo.
+  reporterId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "Staff",
+    required: true,
+  },
+  reporterName: {
+    // lưu kèm tên tại thời điểm báo cáo để hiển thị nhanh, không cần populate
     type: String,
     required: true,
   },
   status: {
     type: String,
-    enum: ["pending", "in-progress", "resolved"],
+    enum: ["pending", "in-progress", "resolved", "rejected"],
     default: "pending",
+  },
+  rejectionReason: {
+    type: String,
+    default: null,
   },
   locationId: {
     type: mongoose.Schema.Types.ObjectId,

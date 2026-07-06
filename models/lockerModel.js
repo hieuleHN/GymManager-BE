@@ -1,9 +1,12 @@
 import LockerIssue from "./schemas/lockerIssueSchema.js";
 
-export const getAll = async (page = 1, limit = 15, locationId, callback) => {
+export const getAll = async (page = 1, limit = 15, locationId, reporterId, callback) => {
   try {
     const filter = {};
     if (locationId) filter.locationId = locationId;
+    // reporterId chỉ được set khi người gọi KHÔNG phải admin (xem lockerController.list)
+    // => HLV chỉ nhìn thấy báo cáo do chính mình tạo, không thấy của người khác.
+    if (reporterId) filter.reporterId = reporterId;
     const skip = (page - 1) * limit;
     const [data, total] = await Promise.all([
       LockerIssue.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit),
@@ -33,13 +36,14 @@ export const getById = async (id, callback) => {
 
 export const create = async (data, callback) => {
   try {
-    const { lockerNumber, issueType, description, reportedBy, locationId } =
+    const { lockerNumber, issueType, description, reporterId, reporterName, locationId } =
       data;
     const issue = new LockerIssue({
       lockerNumber,
       issueType,
       description,
-      reportedBy,
+      reporterId,
+      reporterName,
       status: "pending",
       locationId,
     });
@@ -69,6 +73,20 @@ export const markResolved = async (id, callback) => {
     const issue = await LockerIssue.findByIdAndUpdate(
       id,
       { status: "resolved", updatedAt: new Date() },
+      { new: true },
+    );
+    if (!issue) return callback({ message: "Không tìm thấy vấn đề!" });
+    callback(null, issue);
+  } catch (err) {
+    callback(err);
+  }
+};
+
+export const reject = async (id, rejectionReason, callback) => {
+  try {
+    const issue = await LockerIssue.findByIdAndUpdate(
+      id,
+      { status: "rejected", rejectionReason, updatedAt: new Date() },
       { new: true },
     );
     if (!issue) return callback({ message: "Không tìm thấy vấn đề!" });
