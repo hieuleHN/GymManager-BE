@@ -1,12 +1,13 @@
 import LockerIssue from "./schemas/lockerIssueSchema.js";
 
-export const getAll = async (page = 1, limit = 15, locationId, reporterId, callback) => {
+export const getAll = async (page = 1, limit = 15, locationId, reporterId, status, callback) => {
   try {
     const filter = {};
     if (locationId) filter.locationId = locationId;
     // reporterId chỉ được set khi người gọi KHÔNG phải admin (xem lockerController.list)
     // => HLV chỉ nhìn thấy báo cáo do chính mình tạo, không thấy của người khác.
     if (reporterId) filter.reporterId = reporterId;
+    if (status) filter.status = status;
     const skip = (page - 1) * limit;
     const [data, total] = await Promise.all([
       LockerIssue.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit),
