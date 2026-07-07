@@ -7,7 +7,7 @@ const lockerIssueSchema = new mongoose.Schema({
   },
   issueType: {
     type: String,
-    enum: ["broken", "dirty", "lost-key"],
+    enum: ["broken", "dirty", "lost-key", "other"],
     required: true,
   },
   description: {
