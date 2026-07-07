@@ -3,12 +3,12 @@ import * as LockerModel from '../models/lockerModel.js';
 export const list = (req, res) => {
   const page = parseInt(req.query.page) || 1;
   const limit = parseInt(req.query.limit) || 15;
-  const { locationId } = req.query;
+  const { locationId, status } = req.query;
   // Quan trọng: không tin query string của client cho việc lọc "của tôi".
   // Nếu người gọi không phải admin, luôn ép filter theo chính req.user.id
   // (lấy từ token đã xác thực), để HLV không thể truyền reporterId của người khác để xem trộm.
   const reporterId = req.user.isAdmin ? null : req.user.id;
-  LockerModel.getAll(page, limit, locationId || null, reporterId, (err, result) => {
+  LockerModel.getAll(page, limit, locationId || null, reporterId, status || null, (err, result) => {
     if (err) return res.status(500).json({ error: 'Lỗi lấy danh sách: ' + err.message });
     res.json(result);
   });
