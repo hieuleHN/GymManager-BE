@@ -10,9 +10,9 @@ router.get('/:id', authenticateToken, detail);
 router.post('/', authenticateToken, create);
 
 // Admin: các hành động duyệt/xử lý/từ chối/sửa/xóa
-router.put('/:id', authenticateToken, requireAdmin, update);
+router.put('/:id', authenticateToken, update);
 router.patch('/:id/resolve', authenticateToken, requireAdmin, resolve);
 router.patch('/:id/reject', authenticateToken, requireAdmin, reject);
-router.delete('/:id', authenticateToken, requireAdmin, remove);
+router.delete('/:id', authenticateToken, remove);
 
 export default router;

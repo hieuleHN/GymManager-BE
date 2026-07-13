@@ -48,15 +48,39 @@ export const create = async (req, res) => {
 
 export const update = async (req, res) => {
   try {
+    const issue = await LockerModel.getById(req.params.id);
+    if (!issue) return res.status(404).json({ error: 'Không tìm thấy vấn đề!' });
+    if (!req.user.isAdmin && String(issue.reporterId) !== String(req.user.id)) {
+      return res.status(403).json({ error: 'Bạn không có quyền sửa báo cáo này!' });
+    }
+    if (issue.status !== 'pending') {
+      return res.status(400).json({ error: 'Chỉ có thể sửa báo cáo đang chờ xử lý!' });
+    }
     const { lockerNumber, issueType, description } = req.body;
     const data = {};
     if (lockerNumber !== undefined) { if (!lockerNumber.trim()) return res.status(400).json({ error: 'Số tủ không được để trống!' }); data.lockerNumber = lockerNumber.trim(); }
     if (issueType !== undefined) data.issueType = issueType;
     if (description !== undefined) { if (!description.trim()) return res.status(400).json({ error: 'Mô tả không được để trống!' }); data.description = description.trim(); }
-    const issue = await LockerModel.updateById(req.params.id, data);
-    res.json({ message: 'Cập nhật vấn đề thành công!', issue });
+    const updated = await LockerModel.updateById(req.params.id, data);
+    res.json({ message: 'Cập nhật vấn đề thành công!', issue: updated });
   } catch (err) {
     res.status(400).json({ error: err.message || 'Lỗi cập nhật!' });
+  }
+};
+export const remove = async (req, res) => {
+  try {
+    const issue = await LockerModel.getById(req.params.id);
+    if (!issue) return res.status(404).json({ error: 'Không tìm thấy vấn đề!' });
+    if (!req.user.isAdmin && String(issue.reporterId) !== String(req.user.id)) {
+      return res.status(403).json({ error: 'Bạn không có quyền xóa báo cáo này!' });
+    }
+    if (issue.status !== 'pending') {
+      return res.status(400).json({ error: 'Chỉ có thể xóa báo cáo đang chờ xử lý!' });
+    }
+    await LockerModel.deleteById(req.params.id);
+    res.json({ message: 'Xóa vấn đề thành công!' });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
   }
 };
 
@@ -79,14 +103,5 @@ export const reject = async (req, res) => {
     res.json({ message: 'Đã từ chối báo cáo!', issue });
   } catch (err) {
     res.status(400).json({ error: err.message || 'Lỗi từ chối báo cáo!' });
-  }
-};
-
-export const remove = async (req, res) => {
-  try {
-    await LockerModel.deleteById(req.params.id);
-    res.json({ message: 'Xóa vấn đề thành công!' });
-  } catch (err) {
-    res.status(400).json({ error: err.message });
   }
 };
