@@ -55,6 +55,22 @@ const staffSchema = new mongoose.Schema({
     enum: ['active', 'inactive'],
     default: 'active'
   },
+  avatar: {
+    type: String
+  },
+  bio: {
+    type: String
+  },
+  specialty: {
+    type: String
+  },
+  rating: {
+    type: Number,
+    default: 5.0
+  },
+  tags: [{
+    type: String
+  }],
   createdAt: {
     type: Date,
     default: Date.now

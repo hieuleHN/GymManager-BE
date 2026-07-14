@@ -113,3 +113,24 @@ export const remove = (req, res) => {
     res.json({ message: 'Xóa nhân viên thành công!' });
   });
 };
+
+import Staff from '../models/schemas/staffSchema.js';
+
+export const getTrainers = async (req, res) => {
+  try {
+    const trainers = await Staff.find({ status: 'active' }, '-password')
+      .populate('job', 'name isAdmin');
+    
+    // Filter out trainers (PT)
+    let filteredTrainers = trainers.filter(t => t.job && (t.job.name.toLowerCase().includes('huấn luyện viên') || t.job.name.toLowerCase().includes('pt')));
+    
+    // Fallback: if no specific PT found, return all non-admin staff
+    if (filteredTrainers.length === 0) {
+      filteredTrainers = trainers.filter(t => t.job && !t.job.isAdmin);
+    }
+    
+    res.json(filteredTrainers);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};

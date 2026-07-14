@@ -65,11 +65,26 @@ const io = new Server(httpServer, {
   cors: { origin: '*' }
 });
 
+const onlineUsers = new Map();
+
 io.on('connection', (socket) => {
   console.log('User connected to socket:', socket.id);
+  let currentUserId = null;
   
   socket.on('join', (userId) => {
     socket.join(userId);
+    currentUserId = userId;
+    onlineUsers.set(userId, true);
+    io.emit('userStatus', { userId, status: 'online' });
+  });
+
+  socket.on('checkStatus', (userIds) => {
+    if (!Array.isArray(userIds)) return;
+    const statuses = {};
+    userIds.forEach(id => {
+      statuses[id] = onlineUsers.has(id);
+    });
+    socket.emit('statusResult', statuses);
   });
 
   socket.on('sendMessage', (data) => {
@@ -83,7 +98,13 @@ io.on('connection', (socket) => {
     });
   });
 
-  socket.on('disconnect', () => {});
+  socket.on('disconnect', () => {
+    if (currentUserId) {
+      // In a robust app, we'd check if other sockets for this user are still open
+      onlineUsers.delete(currentUserId);
+      io.emit('userStatus', { userId: currentUserId, status: 'offline' });
+    }
+  });
 });
 
 httpServer.listen(PORT, () => {

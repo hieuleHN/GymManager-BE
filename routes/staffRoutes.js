@@ -1,16 +1,17 @@
 import express from 'express';
 import { authenticateToken } from '../middleware/authMiddleware.js';
 import {
-  list, detail, create, update, remove, login
+  list, detail, create, update, remove, login, getTrainers
 } from '../controllers/staffController.js';
 
 const router = express.Router();
 
 router.post('/login', login);
+router.get('/trainers', authenticateToken, getTrainers);
 router.get('/', authenticateToken, list);
 router.get('/:id', authenticateToken, detail);
 router.post('/', authenticateToken, create);
 router.put('/:id', authenticateToken, update);
 router.delete('/:id', authenticateToken, remove);
 
-export default router;
+export default router;
