@@ -32,6 +32,13 @@ export const create = async (req, res) => {
     if (!lockerNumber?.trim()) return res.status(400).json({ error: 'Vui lòng nhập số tủ!' });
     if (!issueType) return res.status(400).json({ error: 'Vui lòng chọn loại vấn đề!' });
     if (!description?.trim()) return res.status(400).json({ error: 'Vui lòng nhập mô tả chi tiết!' });
+
+    // Kiểm tra trùng: cùng số tủ + cùng loại vấn đề + đang chờ xử lý
+    const existingIssue = await LockerModel.findPendingByLockerAndType(lockerNumber.trim(), issueType);
+    if (existingIssue) {
+      return res.status(400).json({ error: 'Tủ này đã có báo cáo "' + (issueType === 'broken' ? 'Hỏng hóc' : issueType === 'dirty' ? 'Bẩn' : issueType === 'lost-key' ? 'Mất chìa khóa' : 'Khác') + '" đang chờ xử lý!' });
+    }
+
     const result = await LockerModel.create({
       lockerNumber: lockerNumber.trim(),
       issueType,

@@ -23,6 +23,14 @@ export const getById = async (id) => {
   return LockerIssue.findById(id);
 };
 
+export const findPendingByLockerAndType = async (lockerNumber, issueType) => {
+  return LockerIssue.findOne({
+    lockerNumber,
+    issueType,
+    status: { $in: ['pending', 'in-progress'] },
+  });
+};
+
 export const create = async (data) => {
   const { lockerNumber, issueType, description, reporterId, reporterName, locationId, image } = data;
   const issue = new LockerIssue({
