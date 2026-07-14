@@ -14,6 +14,10 @@ const lockerIssueSchema = new mongoose.Schema({
     type: String,
     required: true,
   },
+  image: {
+    type: String,
+    default: null,
+  },
   // Lấy trực tiếp từ req.user khi tạo báo cáo (xem lockerController.create),
   // không nhận từ client nữa để tránh giả mạo tên người báo cáo.
   reporterId: {

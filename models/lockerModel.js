@@ -24,7 +24,7 @@ export const getById = async (id) => {
 };
 
 export const create = async (data) => {
-  const { lockerNumber, issueType, description, reporterId, reporterName, locationId } = data;
+  const { lockerNumber, issueType, description, reporterId, reporterName, locationId, image } = data;
   const issue = new LockerIssue({
     lockerNumber,
     issueType,
@@ -33,6 +33,7 @@ export const create = async (data) => {
     reporterName,
     status: "pending",
     locationId,
+    image: image || null,
   });
   const saved = await issue.save();
   return { id: saved._id };

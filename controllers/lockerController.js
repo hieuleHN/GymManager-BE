@@ -39,6 +39,7 @@ export const create = async (req, res) => {
       reporterId: req.user.id,
       reporterName: req.user.fullName || req.user.username,
       locationId,
+      image: req.file ? req.file.filename : null,
     });
     res.status(201).json({ message: 'Báo cáo vấn đề thành công!', id: result.id });
   } catch (err) {
@@ -61,6 +62,7 @@ export const update = async (req, res) => {
     if (lockerNumber !== undefined) { if (!lockerNumber.trim()) return res.status(400).json({ error: 'Số tủ không được để trống!' }); data.lockerNumber = lockerNumber.trim(); }
     if (issueType !== undefined) data.issueType = issueType;
     if (description !== undefined) { if (!description.trim()) return res.status(400).json({ error: 'Mô tả không được để trống!' }); data.description = description.trim(); }
+    if (req.file) data.image = req.file.filename;
     const updated = await LockerModel.updateById(req.params.id, data);
     res.json({ message: 'Cập nhật vấn đề thành công!', issue: updated });
   } catch (err) {
