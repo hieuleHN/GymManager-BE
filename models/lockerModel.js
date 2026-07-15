@@ -1,9 +1,10 @@
+import mongoose from 'mongoose';
 import LockerIssue from "./schemas/lockerIssueSchema.js";
 
 export const getAll = async (page = 1, limit = 15, locationId, reporterId, status, fromDate, toDate) => {
   const filter = {};
-  if (locationId) filter.locationId = locationId;
-  if (reporterId) filter.reporterId = reporterId;
+  if (locationId) filter.locationId = new mongoose.Types.ObjectId(locationId);
+  if (reporterId) filter.reporterId = new mongoose.Types.ObjectId(reporterId);
   if (status) filter.status = status;
   if (fromDate || toDate) {
     filter.createdAt = {};
@@ -15,8 +16,28 @@ export const getAll = async (page = 1, limit = 15, locationId, reporterId, statu
     }
   }
   const skip = (page - 1) * limit;
+  const priorityOrder = { high: 1, medium: 2, low: 3 };
   const [data, total] = await Promise.all([
-    LockerIssue.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit),
+    LockerIssue.aggregate([
+      { $match: filter },
+      { $addFields: {
+        priorityOrder: { $switch: { branches: [
+          { case: { $eq: ["$priority", "high"] }, then: 1 },
+          { case: { $eq: ["$priority", "medium"] }, then: 2 },
+          { case: { $eq: ["$priority", "low"] }, then: 3 },
+        ], default: 2 } },
+        _id: { $toString: "$_id" },
+        reporterId: { $toString: "$reporterId" },
+        locationId: { $cond: { if: "$locationId", then: { $toString: "$locationId" }, else: null } },
+      }},
+      { $sort: { priorityOrder: 1, createdAt: -1 } },
+      { $skip: skip },
+      { $limit: limit },
+      { $project: {
+        priorityOrder: 0,
+        __v: 0,
+      }},
+    ]),
     LockerIssue.countDocuments(filter),
   ]);
   return {
