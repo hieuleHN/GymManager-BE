@@ -1,10 +1,19 @@
 import LockerIssue from "./schemas/lockerIssueSchema.js";
 
-export const getAll = async (page = 1, limit = 15, locationId, reporterId, status) => {
+export const getAll = async (page = 1, limit = 15, locationId, reporterId, status, fromDate, toDate) => {
   const filter = {};
   if (locationId) filter.locationId = locationId;
   if (reporterId) filter.reporterId = reporterId;
   if (status) filter.status = status;
+  if (fromDate || toDate) {
+    filter.createdAt = {};
+    if (fromDate) filter.createdAt.$gte = new Date(fromDate);
+    if (toDate) {
+      const end = new Date(toDate);
+      end.setHours(23, 59, 59, 999);
+      filter.createdAt.$lte = end;
+    }
+  }
   const skip = (page - 1) * limit;
   const [data, total] = await Promise.all([
     LockerIssue.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit),

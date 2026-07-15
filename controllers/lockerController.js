@@ -4,9 +4,21 @@ export const list = async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 15;
-    const { locationId, status } = req.query;
+    const { locationId, status, fromDate, toDate } = req.query;
+
+    if (fromDate && toDate && fromDate > toDate) {
+      return res.status(400).json({ error: 'Ngày bắt đầu không được sau ngày kết thúc!' });
+    }
+    const now = new Date();
+    if (fromDate && new Date(fromDate) > now) {
+      return res.status(400).json({ error: 'Không được lọc ngày tương lai!' });
+    }
+    if (toDate && new Date(toDate) > now) {
+      return res.status(400).json({ error: 'Không được lọc ngày tương lai!' });
+    }
+
     const reporterId = req.user.isAdmin ? null : req.user.id;
-    const result = await LockerModel.getAll(page, limit, locationId || null, reporterId, status || null);
+    const result = await LockerModel.getAll(page, limit, locationId || null, reporterId, status || null, fromDate || null, toDate || null);
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: 'Lỗi lấy danh sách: ' + err.message });
