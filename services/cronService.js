@@ -1,6 +1,8 @@
 import cron from 'node-cron';
 import Customer from '../models/schemas/customerSchema.js';
 import { lockCustomer } from '../models/customerModel.js';
+import { autoCancelPendingBookings } from '../jobs/autoCancelBooking.js';
+import { autoCancelPendingPackages } from '../jobs/autoCancelPendingPackages.js';
 
 export const initPackageStatusScheduler = () => {
   cron.schedule('0 0 * * *', async () => {
@@ -34,5 +36,15 @@ export const initPackageStatusScheduler = () => {
     } catch (error) {
       console.error('[Cron Job] Lỗi:', error);
     }
+  });
+
+  cron.schedule('* * * * *', async () => {
+    console.log('[Cron Job] Kiểm tra lịch tập quá hạn...');
+    await autoCancelPendingBookings();
+  });
+
+  cron.schedule('* * * * *', async () => {
+    console.log('[Cron Job] Kiểm tra đơn đăng ký gói tập quá hạn thanh toán...');
+    await autoCancelPendingPackages();
   });
 };

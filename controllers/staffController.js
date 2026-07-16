@@ -11,8 +11,8 @@ import {getTrainers} from '../models/staffModel.js';
 const JWT_SECRET = process.env.JWT_SECRET || 'Phong_Gym_Master_Key_2026';
 
 export const listTrainers = (req, res) => {
-  const { disciplineId, locationId } = req.query;
-  getTrainers((err, trainers) => {
+  const { disciplineId, locationId, permission } = req.query;
+  getTrainers(permission, (err, trainers) => {
       if (err) return res.status(500).json({ error: 'Lỗi lấy danh sách: ' + err.message });
       let filtered = trainers;
       if (disciplineId) {
@@ -44,6 +44,7 @@ export const login = (req, res) => {
 
       const jobId = staff.job?._id;
       const isAdmin = staff.job?.isAdmin === true;
+      const jobPermissions = staff.job?.permissions || [];
 
       getPermissionsByJob(jobId, (err, permission) => {
         let permissions = [];
@@ -70,7 +71,8 @@ export const login = (req, res) => {
             isStaff: true,
             isAdmin,
             locationId: staff.locationId || null,
-            permissions
+            permissions,
+            jobPermissions
           }
         });
       });
