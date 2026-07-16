@@ -11,7 +11,7 @@ export async function autoCancelPendingPackages() {
       payment_status: 'chờ thanh toán',
       createdAt: { $lt: cutoff }
     });
-
+ 
     for (const pkg of pendingPackages) {
       const customerId = pkg.customer_id;
 
