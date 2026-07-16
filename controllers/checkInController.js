@@ -8,6 +8,15 @@ import {
     verifyQRToken
 } from "../services/qrService.js";
 
+// Hàm hỗ trợ lấy ngày hiện tại định dạng YYYY-MM-DD theo múi giờ Việt Nam (GMT+7)
+const getVNFormattedDate = (date = new Date()) => {
+    const vnTime = new Date(date.getTime() + (7 * 60 * 60 * 1000)); // Cộng thêm 7 tiếng chuẩn GMT+7
+    const yyyy = vnTime.getUTCFullYear();
+    const mm = String(vnTime.getUTCMonth() + 1).padStart(2, '0');
+    const dd = String(vnTime.getUTCDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
+};
+
 export const generateQRCode = async (req, res) => {
     try {
         const customer = await Customer.findById(req.user.id);
@@ -89,26 +98,22 @@ export const verifyQRCode = async (req, res) => {
             });
         }
 
-        const today = new Date();
-        const startDay = new Date(
-            today.getFullYear(),
-            today.getMonth(),
-            today.getDate(),
-            0, 0, 0
-        );
-        const endDay = new Date(
-            today.getFullYear(),
-            today.getMonth(),
-            today.getDate(),
-            23, 59, 59
-        );
+        // Lấy chuỗi ngày YYYY-MM-DD theo múi giờ Việt Nam (GMT+7)
+        const todayStr = getVNFormattedDate(new Date());
 
+        // Kiểm tra xem hôm nay hội viên đã điểm danh hay chưa bằng cách kiểm tra trường checkInDate tĩnh
         const existedCheckin = await CheckIn.findOne({
             customerId: customer._id,
-            checkInTime: {
-                $gte: startDay,
-                $lte: endDay
-            }
+            $or: [
+                { checkInDate: todayStr },
+                // Back-up phòng trường hợp bản ghi cũ trong DB chưa được cập nhật trường checkInDate
+                {
+                    checkInTime: {
+                        $gte: new Date(new Date().setHours(0, 0, 0, 0)),
+                        $lte: new Date(new Date().setHours(23, 59, 59, 999))
+                    }
+                }
+            ]
         });
 
         if (existedCheckin) {
@@ -117,12 +122,14 @@ export const verifyQRCode = async (req, res) => {
             });
         }
 
+        // Tạo bản ghi CheckIn mới lưu trữ cả thời gian thực lẫn ngày tĩnh đã chuẩn hóa
         const checkin = await CheckIn.create({
             customerId: customer._id,
             staffId: req.user ? req.user.id : null,
             userPackageId: activePackage._id,
             qrToken: token,
             checkInTime: new Date(),
+            checkInDate: todayStr, // Định dạng "YYYY-MM-DD" chuẩn Việt Nam không lo lệch múi giờ
             status: "success"
         });
 

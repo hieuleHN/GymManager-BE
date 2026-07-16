@@ -31,6 +31,13 @@ const checkInSchema = new mongoose.Schema({
         default: Date.now
     },
 
+    // ĐÃ TỐI ƯU: Thêm trường ngày tĩnh định dạng "YYYY-MM-DD" theo múi giờ Việt Nam
+    checkInDate: {
+        type: String,
+        required: false,
+        default: ""
+    },
+
     status: {
         type: String,
         enum: [
