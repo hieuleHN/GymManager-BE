@@ -23,6 +23,7 @@ import userPackageRoutes from './routes/userPackageRoutes.js';
 import communityPostRoutes from './routes/communityPostRoutes.js';
 import communityCommentRoutes from './routes/communityCommentRoutes.js';
 import communityReportRoutes from './routes/communityReportRoutes.js';
+import notificationRoutes from './routes/notificationRoutes.js';
 
 dotenv.config();
 
@@ -57,6 +58,7 @@ app.use('/api/user-packages', userPackageRoutes);
 app.use('/api/community/posts', communityPostRoutes);
 app.use('/api/community/comments', communityCommentRoutes);
 app.use('/api/community/reports', communityReportRoutes);
+app.use('/api/notifications', notificationRoutes);
 
 initPackageStatusScheduler();
 

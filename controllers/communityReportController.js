@@ -1,4 +1,6 @@
 import { createReport, getAllReports, updateReportStatus } from '../models/communityReportModel.js';
+import { getPostById } from '../models/communityPostModel.js';
+import { createNotification } from '../models/notificationModel.js';
 
 export const create = (req, res) => {
   const { postId, title, reason } = req.body;
@@ -14,6 +16,21 @@ export const create = (req, res) => {
     reason
   }, (err, report) => {
     if (err) return res.status(500).json({ error: err.message });
+
+    getPostById(postId, (err, post) => {
+      if (!err && post && post.authorId.toString() !== req.user.id) {
+        const recipientRole = post.authorModel === 'Staff' ? 'staff' : 'member';
+        createNotification({
+          recipientId: post.authorId,
+          recipientRole,
+          title: 'Báo cáo bài viết',
+          message: `Bài viết của bạn đã bị báo cáo với lý do: ${title}.`,
+          type: 'report',
+          relatedPostId: post._id
+        }, () => {});
+      }
+    });
+
     res.status(201).json({ message: 'Báo cáo thành công! Cảm ơn bạn đã đóng góp.', report });
   });
 };

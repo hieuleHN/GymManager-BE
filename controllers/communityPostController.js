@@ -2,6 +2,7 @@ import {
   createPost, getAllPosts, getPostById, updatePost, deletePost,
   toggleLike, incrementShare, incrementViews, getPostsByAuthor
 } from '../models/communityPostModel.js';
+import { createNotification } from '../models/notificationModel.js';
 import fs from 'fs';
 import path from 'path';
 
@@ -101,7 +102,19 @@ export const like = (req, res) => {
   const userModel = req.user.isStaff ? 'Staff' : 'Customer';
   toggleLike(req.params.id, userId, userModel, (err, post) => {
     if (err) return res.status(400).json({ error: err.message });
-    res.json({ message: 'Thành công!', likes: post.likes.length, liked: post.likes.some(l => l.userId.toString() === userId) });
+    const isLiked = post.likes.some(l => l.userId.toString() === userId);
+    if (isLiked && post.authorId.toString() !== userId) {
+      const recipientRole = post.authorModel === 'Staff' ? 'staff' : 'member';
+      createNotification({
+        recipientId: post.authorId,
+        recipientRole,
+        title: 'Yêu thích bài viết',
+        message: `${req.user.username || 'Người dùng'} đã thích bài viết của bạn.`,
+        type: 'like',
+        relatedPostId: post._id
+      }, () => {});
+    }
+    res.json({ message: 'Thành công!', likes: post.likes.length, liked: isLiked });
   });
 };
 

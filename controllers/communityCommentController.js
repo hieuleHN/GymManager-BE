@@ -1,4 +1,6 @@
 import { createComment, getCommentsByPost, deleteComment } from '../models/communityCommentModel.js';
+import { getPostById } from '../models/communityPostModel.js';
+import { createNotification } from '../models/notificationModel.js';
 
 export const create = (req, res) => {
   const { postId } = req.params;
@@ -12,6 +14,21 @@ export const create = (req, res) => {
     content
   }, (err, comment) => {
     if (err) return res.status(500).json({ error: err.message });
+
+    getPostById(postId, (err, post) => {
+      if (!err && post && post.authorId.toString() !== req.user.id) {
+        const recipientRole = post.authorModel === 'Staff' ? 'staff' : 'member';
+        createNotification({
+          recipientId: post.authorId,
+          recipientRole,
+          title: 'Bình luận mới',
+          message: `${req.user.username || 'Người dùng'} đã bình luận bài viết của bạn.`,
+          type: 'comment',
+          relatedPostId: post._id
+        }, () => {});
+      }
+    });
+
     res.status(201).json({ message: 'Bình luận thành công!', comment });
   });
 };
