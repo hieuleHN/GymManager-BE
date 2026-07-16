@@ -54,14 +54,37 @@ export const detail = (req, res) => {
 };
 
 export const update = (req, res) => {
-  const { content, title } = req.body;
+  const { content, title, existingImages } = req.body;
   const updateData = {};
-  if (content) updateData.content = content;
+  if (content !== undefined) updateData.content = content;
   if (title !== undefined) updateData.title = title;
 
-  updatePost(req.params.id, updateData, (err, post) => {
-    if (err) return res.status(400).json({ error: err.message });
-    res.json({ message: 'Cập nhật bài viết thành công!', post });
+  getPostById(req.params.id, (err, post) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!post) return res.status(404).json({ error: 'Không tìm thấy bài viết!' });
+
+    const oldImages = post.images || [];
+    let keepImages = [];
+    try {
+      keepImages = existingImages ? JSON.parse(existingImages) : oldImages;
+    } catch {
+      keepImages = oldImages;
+    }
+    if (!Array.isArray(keepImages)) keepImages = oldImages;
+
+    const newImages = req.files ? req.files.map(f => f.filename) : [];
+    updateData.images = [...keepImages, ...newImages];
+
+    const removedImages = oldImages.filter(img => !keepImages.includes(img));
+    removedImages.forEach(img => fs.unlink(path.join('uploads', 'community', img), () => {}));
+
+    updatePost(req.params.id, updateData, (err, updated) => {
+      if (err) {
+        newImages.forEach(img => fs.unlink(path.join('uploads', 'community', img), () => {}));
+        return res.status(400).json({ error: err.message });
+      }
+      res.json({ message: 'Cập nhật bài viết thành công!', post: updated });
+    });
   });
 };
 

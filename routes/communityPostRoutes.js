@@ -12,7 +12,7 @@ router.get('/', list);
 router.get('/author/:authorId/:authorModel', listByAuthor);
 router.get('/:id', detail);
 router.post('/', authenticateToken, uploadCommunity.array('images', 10), create);
-router.put('/:id', authenticateToken, update);
+router.put('/:id', authenticateToken, uploadCommunity.array('images', 10), update);
 router.delete('/:id', authenticateToken, remove);
 router.post('/:id/like', authenticateToken, like);
 router.post('/:id/share', authenticateToken, share);
