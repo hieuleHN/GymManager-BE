@@ -26,6 +26,7 @@ import checkInRoutes from "./routes/checkInRoutes.js";
 import reviewRoutes from "./routes/reviewRoutes.js";
 import reportRoutes from "./routes/reportRoutes.js";
 import walletRoutes from "./routes/walletRoutes.js";
+import staffShiftRoutes from "./routes/staffShiftRoutes.js";
 import { autoCancelPendingBookings } from "./jobs/autoCancelBooking.js";
 import { autoCancelPendingPackages } from "./jobs/autoCancelPendingPackages.js";
 
@@ -66,6 +67,7 @@ app.use("/api/checkin", checkInRoutes);
 app.use("/api/reviews", reviewRoutes);
 app.use("/api/reports", reportRoutes);
 app.use("/api/wallet", walletRoutes);
+app.use("/api/staff-shifts", staffShiftRoutes);
 
 initPackageStatusScheduler();
 
