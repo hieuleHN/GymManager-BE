@@ -1,4 +1,5 @@
 import * as LockerModel from '../models/lockerModel.js';
+import { createNotification } from '../models/notificationModel.js';
 
 export const list = async (req, res) => {
   try {
@@ -108,6 +109,17 @@ export const remove = async (req, res) => {
 export const resolve = async (req, res) => {
   try {
     const issue = await LockerModel.markResolved(req.params.id);
+    console.log('Resolve issue:', issue._id, 'reporterId:', issue.reporterId, 'type:', typeof issue.reporterId);
+    if (issue.reporterId) {
+      createNotification({
+        recipientId: issue.reporterId,
+        recipientRole: 'staff',
+        title: 'Báo cáo tủ đồ đã được giải quyết',
+        message: `Tủ ${issue.lockerNumber} đã được xử lý.`,
+        type: 'locker_resolved',
+        relatedLockerIssueId: issue._id,
+      }, (err) => { if (err) console.error('Noti error:', err); });
+    }
     res.json({ message: 'Đã đánh dấu hoàn thành!', issue });
   } catch (err) {
     res.status(400).json({ error: err.message || 'Lỗi cập nhật trạng thái!' });
@@ -121,6 +133,16 @@ export const reject = async (req, res) => {
       return res.status(400).json({ error: 'Vui lòng nhập lý do từ chối!' });
     }
     const issue = await LockerModel.reject(req.params.id, rejectionReason.trim());
+    if (issue.reporterId) {
+      createNotification({
+        recipientId: issue.reporterId,
+        recipientRole: 'staff',
+        title: 'Báo cáo tủ đồ bị từ chối',
+        message: `Tủ ${issue.lockerNumber}: ${rejectionReason.trim()}`,
+        type: 'locker_rejected',
+        relatedLockerIssueId: issue._id,
+      }, (err) => { if (err) console.error('Noti error:', err); });
+    }
     res.json({ message: 'Đã từ chối báo cáo!', issue });
   } catch (err) {
     res.status(400).json({ error: err.message || 'Lỗi từ chối báo cáo!' });
