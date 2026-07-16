@@ -1,4 +1,6 @@
+import mongoose from 'mongoose';
 import Booking from '../models/schemas/bookingSchema.js';
+import Discipline from '../models/schemas/disciplineSchema.js';
 import {
   createBooking,
   getBookingsByTrainer,
@@ -15,14 +17,32 @@ import {
   updateTransferRequest,
   approveTransferRequest,
   rejectTransferRequest,
-  colleagueConfirmTransfer,
   getPendingTransferRequests,
   getTrainerBookings
 } from '../models/bookingModel.js';
+import { createVnpayGroup, getVnpayGroupByTxnRef, markVnpayGroupPaid } from '../models/vnpayGroupModel.js';
 import { createNotification } from '../models/notificationModel.js';
+import { createWalletTransaction } from '../models/walletTransactionModel.js';
+import Customer from '../models/schemas/customerSchema.js';
 import vnpay from "../config/vnpayConfig.js";
 
-export const create = (req, res) => {
+const resolveDiscipline = async (disciplineId) => {
+  if (!disciplineId) return { disciplineId: null, disciplineName: '' };
+
+  const isValidObjectId = mongoose.Types.ObjectId.isValid(disciplineId);
+  if (isValidObjectId) {
+    const disc = await Discipline.findById(disciplineId);
+    return { disciplineId, disciplineName: disc ? disc.name : '' };
+  }
+
+  const disc = await Discipline.findOne({ name: { $regex: new RegExp(`^${disciplineId}$`, 'i') } });
+  if (disc) {
+    return { disciplineId: disc._id, disciplineName: disc.name };
+  }
+  return { disciplineId: null, disciplineName: disciplineId };
+};
+
+export const create = async (req, res) => {
   const { trainerId, date, time, startTime, endTime, disciplineId, locationId, note, price } = req.body;
   const customerId = req.user.id;
 
@@ -45,6 +65,8 @@ export const create = (req, res) => {
     return `${String(h + Math.floor(m2 / 60)).padStart(2, '0')}:${String(m2 % 60).padStart(2, '0')}`;
   })() : '');
 
+  const resolved = await resolveDiscipline(disciplineId);
+
   const bookingData = {
     customerId,
     trainerId: trainerId || null,
@@ -52,7 +74,8 @@ export const create = (req, res) => {
     time: time || '',
     startTime: start,
     endTime: end,
-    disciplineId: disciplineId || null,
+    disciplineId: resolved.disciplineId,
+    disciplineName: resolved.disciplineName,
     locationId,
     note,
     price: price || 0
@@ -160,8 +183,9 @@ export const getByTrainer = (req, res) => {
 
 export const getByCustomer = (req, res) => {
   const customerId = req.user.id;
+  const { batchId } = req.query;
 
-  getBookingsByCustomer(customerId, (err, bookings) => {
+  getBookingsByCustomer(customerId, batchId || null, (err, bookings) => {
     if (err) return res.status(500).json({ error: err.message });
     res.json(bookings);
   });
@@ -221,14 +245,40 @@ export const rejectBooking = (req, res) => {
       return res.status(403).json({ error: 'Bạn không có quyền từ chối lịch tập này!' });
     }
 
-    updateBookingStatus(id, 'rejected', rejectionReason, (err, booking) => {
+    updateBookingStatus(id, 'rejected', rejectionReason, async (err, booking) => {
       if (err) return res.status(400).json({ error: err.message });
 
+      const customerId = booking.customerId._id || booking.customerId;
+      const refundAmount = booking.price || 0;
+
+      if (refundAmount > 0 && (booking.paymentStatus === 'paid' || booking.paymentStatus === 'confirmed')) {
+        try {
+          const customer = await Customer.findById(customerId);
+          if (customer) {
+            const beforeBalance = customer.balance || 0;
+            await Customer.findByIdAndUpdate(customerId, {
+              $inc: { balance: refundAmount },
+              updatedAt: new Date()
+            });
+
+            createWalletTransaction({
+              customerId,
+              type: 'refund',
+              amount: refundAmount,
+              balanceBefore: beforeBalance,
+              balanceAfter: beforeBalance + refundAmount,
+              status: 'completed',
+              description: `Hoàn tiền buổi tập bị từ chối - ${refundAmount.toLocaleString('vi-VN')}₫`
+            }, () => {});
+          }
+        } catch {}
+      }
+
       createNotification({
-        recipientId: booking.customerId._id || booking.customerId,
+        recipientId: customerId,
         recipientRole: 'member',
         title: 'Lịch tập bị từ chối',
-        message: `Lịch tập với HLV ${booking.trainerId?.fullName || 'HLV'} lúc ${booking.time || booking.startTime} đã bị từ chối. Lý do: ${rejectionReason}`,
+        message: `Lịch tập với HLV ${booking.trainerId?.fullName || 'HLV'} lúc ${booking.time || booking.startTime} - ${booking.date ? new Date(booking.date).toLocaleDateString('vi-VN') : ''} đã bị từ chối. Lý do: ${rejectionReason}${refundAmount > 0 ? `. Đã hoàn ${refundAmount.toLocaleString('vi-VN')}₫ vào Ví.` : ''}`,
         type: 'booking_rejected',
         relatedBookingId: booking._id
       }, () => {});
@@ -263,46 +313,6 @@ export const requestTransfer = (req, res) => {
       return res.status(403).json({ error: 'Bạn không có quyền yêu cầu chuyển lịch này!' });
     }
 
-    if (transferType === 'to_another_day') {
-      const newTime = transferNewTime || booking.time || booking.startTime || '';
-      const [h, m] = newTime.split(':').map(Number);
-      const m2 = m + 90;
-      const endTime = `${String(h + Math.floor(m2 / 60)).padStart(2, '0')}:${String(m2 % 60).padStart(2, '0')}`;
-
-      const update = {
-        date: new Date(transferNewDate),
-        time: newTime,
-        startTime: newTime,
-        endTime,
-        transferType: 'to_another_day',
-        transferReason: transferReason || '',
-        transferNewDate: new Date(transferNewDate),
-        transferNewTime: newTime,
-        transferStatus: 'approved',
-        updatedAt: new Date()
-      };
-
-      Booking.findByIdAndUpdate(id, update, { new: true })
-        .populate('customerId', 'fullName phone email')
-        .populate('trainerId', 'fullName')
-        .then(updated => {
-          if (!updated) return res.status(404).json({ error: 'Không tìm thấy lịch đặt!' });
-
-          createNotification({
-            recipientId: updated.customerId?._id || updated.customerId,
-            recipientRole: 'member',
-            title: 'Chuyển lịch tập',
-            message: `Lịch tập của bạn đã được chuyển sang ngày ${new Date(transferNewDate).toLocaleDateString('vi-VN')} lúc ${newTime}. Lý do: ${transferReason || 'HLV bận'}`,
-            type: 'booking_transferred',
-            relatedBookingId: updated._id
-          }, () => {});
-
-          res.json({ message: 'Đã chuyển lịch tập thành công!', booking: updated });
-        })
-        .catch(err => res.status(500).json({ error: err.message }));
-      return;
-    }
-
     updateTransferRequest(id, { transferType, transferToTrainerId, transferReason, transferNewDate, transferNewTime }, (err, booking) => {
       if (err) return res.status(400).json({ error: err.message });
 
@@ -310,8 +320,8 @@ export const requestTransfer = (req, res) => {
         createNotification({
           recipientId: transferToTrainerId,
           recipientRole: 'staff',
-          title: 'Yêu cầu chuyển lịch tập',
-          message: `HLV ${booking.trainerId?.fullName || 'HLV'} muốn chuyển lịch tập cho bạn. Vui lòng xác nhận.`,
+          title: 'Chuyển lịch tập',
+          message: `HLV ${booking.trainerId?.fullName || 'HLV'} đã yêu cầu chuyển lịch tập cho bạn, chờ quản lý phê duyệt.`,
           type: 'transfer_requested',
           relatedBookingId: booking._id
         }, () => {});
@@ -322,80 +332,7 @@ export const requestTransfer = (req, res) => {
   });
 };
 
-export const colleagueConfirm = (req, res) => {
-  const { id } = req.params;
-  const { accept } = req.body;
 
-  getBookingById(id, (err, booking) => {
-    if (err) return res.status(500).json({ error: err.message });
-    if (!booking) return res.status(404).json({ error: 'Không tìm thấy lịch đặt!' });
-
-    if (booking.transferStatus !== 'pending_colleague') {
-      return res.status(400).json({ error: 'Yêu cầu chuyển lịch không ở trạng thái chờ đồng nghiệp!' });
-    }
-
-    const pendingIds = (booking.pendingColleagueIds || []).map(p => {
-      const id = p?._id?.toString?.() || p?.toString?.();
-      return id;
-    }).filter(Boolean);
-    if (!pendingIds.includes(req.user.id)) {
-      return res.status(403).json({ error: 'Bạn không có quyền xác nhận yêu cầu này!' });
-    }
-
-    colleagueConfirmTransfer(id, accept, req.user.id, (err, booking) => {
-      if (err) return res.status(400).json({ error: err.message });
-
-      const customerId = booking.customerId?._id || booking.customerId;
-      const originalTrainerId = booking.transferredFromTrainerId?._id || booking.transferredFromTrainerId;
-
-      if (accept) {
-        const newTrainerName = booking.trainerId?.fullName || 'HLV mới';
-        const originalTrainerName = booking.transferredFromTrainerId?.fullName || 'HLV';
-
-        createNotification({
-          recipientId: customerId,
-          recipientRole: 'member',
-          title: 'Chuyển lịch tập thành công',
-          message: `Lịch tập của bạn đã được chuyển sang HLV ${newTrainerName} do HLV ${originalTrainerName} chuyển.`,
-          type: 'booking_transferred',
-          relatedBookingId: booking._id
-        }, () => {});
-        createNotification({
-          recipientId: originalTrainerId,
-          recipientRole: 'staff',
-          title: 'Chuyển lịch tập thành công',
-          message: `Đồng nghiệp đã xác nhận nhận lịch tập của bạn.`,
-          type: 'transfer_approved',
-          relatedBookingId: booking._id
-        }, () => {});
-        res.json({ message: 'Bạn đã xác nhận nhận lịch tập thành công!', booking });
-      } else {
-        createNotification({
-          recipientId: originalTrainerId,
-          recipientRole: 'staff',
-          title: 'Yêu cầu chuyển lịch bị từ chối',
-          message: 'Đồng nghiệp đã từ chối nhận chuyển lịch tập của bạn.',
-          type: 'transfer_rejected',
-          relatedBookingId: booking._id
-        }, () => {});
-
-        const remainingPending = (booking.pendingColleagueIds || []).length;
-        if (remainingPending === 0) {
-          createNotification({
-            recipientId: originalTrainerId,
-            recipientRole: 'staff',
-            title: 'Tất cả đồng nghiệp đã từ chối',
-            message: 'Tất cả đồng nghiệp đã từ chối nhận chuyển lịch tập của bạn.',
-            type: 'transfer_rejected',
-            relatedBookingId: booking._id
-          }, () => {});
-        }
-
-        res.json({ message: 'Bạn đã từ chối nhận lịch tập!', booking });
-      }
-    });
-  });
-};
 
 export const approveTransfer = (req, res) => {
   const { id } = req.params;
@@ -408,7 +345,7 @@ export const approveTransfer = (req, res) => {
       return res.status(403).json({ error: 'Bạn không có quyền phê duyệt!' });
     }
 
-    if (!['pending_approval', 'pending_colleague'].includes(booking.transferStatus)) {
+    if (booking.transferStatus !== 'pending_approval') {
       return res.status(400).json({ error: 'Yêu cầu chuyển lịch không thể phê duyệt!' });
     }
 
@@ -442,14 +379,16 @@ export const approveTransfer = (req, res) => {
         }, () => {});
       }
 
-      createNotification({
-        recipientId: booking.trainerId?._id || booking.trainerId,
-        recipientRole: 'staff',
-        title: 'Lịch tập mới',
-        message: `Bạn đã được nhận chuyển lịch tập từ HLV ${originalTrainerName}.`,
-        type: 'booking_transferred',
-        relatedBookingId: booking._id
-      }, () => {});
+      if (booking.transferType === 'to_colleague') {
+        createNotification({
+          recipientId: booking.trainerId?._id || booking.trainerId,
+          recipientRole: 'staff',
+          title: 'Lịch tập mới',
+          message: `Bạn đã được nhận chuyển lịch tập từ HLV ${originalTrainerName}.`,
+          type: 'booking_transferred',
+          relatedBookingId: booking._id
+        }, () => {});
+      }
 
       res.json({ message: 'Đã phê duyệt chuyển lịch!', booking });
     });
@@ -468,7 +407,7 @@ export const rejectTransfer = (req, res) => {
       return res.status(403).json({ error: 'Bạn không có quyền từ chối!' });
     }
 
-    if (!['pending_colleague', 'pending_approval'].includes(booking.transferStatus)) {
+    if (booking.transferStatus !== 'pending_approval') {
       return res.status(400).json({ error: 'Yêu cầu chuyển lịch không thể từ chối!' });
     }
 
@@ -476,6 +415,7 @@ export const rejectTransfer = (req, res) => {
       if (err) return res.status(400).json({ error: err.message });
 
       const customerId = booking.customerId?._id || booking.customerId;
+      const originalTrainerId = booking.transferredFromTrainerId?._id || booking.transferredFromTrainerId;
 
       createNotification({
         recipientId: customerId,
@@ -485,6 +425,17 @@ export const rejectTransfer = (req, res) => {
         type: 'transfer_rejected',
         relatedBookingId: booking._id
       }, () => {});
+
+      if (originalTrainerId) {
+        createNotification({
+          recipientId: originalTrainerId,
+          recipientRole: 'staff',
+          title: 'Yêu cầu chuyển lịch bị từ chối',
+          message: 'Yêu cầu chuyển lịch tập của bạn đã bị quản lý từ chối.',
+          type: 'transfer_rejected',
+          relatedBookingId: booking._id
+        }, () => {});
+      }
 
       res.json({ message: 'Đã từ chối yêu cầu chuyển lịch!', booking });
     });
@@ -505,6 +456,102 @@ export const getMyTrainerBookings = (req, res) => {
   getTrainerBookings(trainerId, dateFrom, dateTo, (err, bookings) => {
     if (err) return res.status(500).json({ error: err.message });
     res.json(bookings);
+  });
+};
+
+export const createBulk = async (req, res) => {
+  const { trainerId, slots, dates, time, startTime, endTime, disciplineId, locationId, note, price } = req.body;
+  const customerId = req.user.id;
+
+  let bookingSlots;
+  if (slots && Array.isArray(slots) && slots.length > 0) {
+    bookingSlots = slots.map(s => ({
+      date: s.date,
+      time: s.time || '',
+      startTime: s.startTime || s.time || '',
+      endTime: s.endTime || (s.startTime || s.time ? (() => {
+        const start = s.startTime || s.time || '';
+        const [h, m] = start.split(':').map(Number);
+        const m2 = m + 90;
+        return `${String(h + Math.floor(m2 / 60)).padStart(2, '0')}:${String(m2 % 60).padStart(2, '0')}`;
+      })() : '')
+    }));
+  } else if (dates && Array.isArray(dates) && dates.length > 0) {
+    if (trainerId && !time) {
+      return res.status(400).json({ error: 'Vui lòng chọn giờ!' });
+    }
+    const start = startTime || time || '';
+    const end = endTime || (start ? (() => {
+      const [h, m] = start.split(':').map(Number);
+      const m2 = m + 90;
+      return `${String(h + Math.floor(m2 / 60)).padStart(2, '0')}:${String(m2 % 60).padStart(2, '0')}`;
+    })() : '');
+    bookingSlots = dates.map(dateStr => ({ date: dateStr, time: time || '', startTime: start, endTime: end }));
+  } else {
+    return res.status(400).json({ error: 'Vui lòng chọn ít nhất một ngày!' });
+  }
+
+  const batchId = `BATCH${Date.now()}${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+  const resolved = await resolveDiscipline(disciplineId);
+
+  const created = [];
+  const errors = [];
+
+  for (const slot of bookingSlots) {
+    const bookingData = {
+      batchId,
+      customerId,
+      trainerId: trainerId || null,
+      date: slot.date,
+      time: slot.time,
+      startTime: slot.startTime,
+      endTime: slot.endTime,
+      disciplineId: resolved.disciplineId,
+      disciplineName: resolved.disciplineName,
+      locationId,
+      note,
+      price: price || 0
+    };
+
+    if (trainerId) {
+      const conflict = await new Promise((resolve) => {
+        checkTrainerConflict(trainerId, slot.date, slot.time, null, (err, conflict) => {
+          resolve(err ? null : conflict);
+        });
+      });
+      if (conflict) {
+        errors.push({ date: slot.date, time: slot.time, error: 'HLV đã có lịch vào thời gian này!' });
+        continue;
+      }
+    }
+
+    const booking = await new Promise((resolve, reject) => {
+      createBooking(bookingData, (err, booking) => {
+        if (err) reject(err);
+        else resolve(booking);
+      });
+    });
+
+    if (trainerId) {
+      createNotification({
+        recipientId: trainerId,
+        recipientRole: 'staff',
+        title: 'Lịch tập mới',
+        message: `Học viên ${req.user.fullName || 'Hội viên'} đã đặt lịch tập với bạn`,
+        type: 'booking_request',
+        relatedBookingId: booking._id
+      }, () => {});
+    }
+
+    created.push(booking);
+  }
+
+  res.status(201).json({
+    message: errors.length > 0
+      ? `Đã đặt ${created.length} buổi thành công! ${errors.length} buổi bị lỗi.`
+      : `Đã đặt ${created.length} buổi thành công!`,
+    bookings: created,
+    errors
   });
 };
 
@@ -544,6 +591,59 @@ export const getByLocation = (req, res) => {
     if (err) return res.status(500).json({ error: err.message });
     res.json(result);
   });
+};
+
+export const createBulkVnpayUrl = async (req, res) => {
+  const { bookingIds, totalAmount, trainerId, disciplineId } = req.body;
+  const customerId = req.user.id;
+
+  if (!bookingIds || !Array.isArray(bookingIds) || bookingIds.length === 0) {
+    return res.status(400).json({ error: 'Thiếu danh sách booking!' });
+  }
+
+  const amount = Math.floor(Number(totalAmount));
+  if (!amount || amount <= 0) {
+    return res.status(400).json({ error: 'Số tiền không hợp lệ!' });
+  }
+
+  try {
+    const ipAddr =
+      req.headers['x-forwarded-for']?.split(',')[0]?.trim() ||
+      req.ip ||
+      '127.0.0.1';
+
+    const txnRef = `BATCH${Date.now()}${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+    const returnUrl =
+      process.env.VNP_RETURN_URL_BOOKING ||
+      'http://localhost:5000/api/bookings/vnpay-return';
+
+    const paymentUrl = vnpay.buildPaymentUrl({
+      vnp_Amount: amount,
+      vnp_IpAddr: ipAddr,
+      vnp_ReturnUrl: returnUrl,
+      vnp_TxnRef: txnRef,
+      vnp_OrderInfo: `Thanh toan goi PT ${bookingIds.length} buoi`,
+      vnp_Locale: 'vn',
+      vnp_BankCode: '',
+    });
+
+    createVnpayGroup({
+      txnRef,
+      bookingIds,
+      totalAmount: amount,
+      customerId
+    }, (err) => {
+      if (err) return res.status(500).json({ error: 'Lỗi lưu nhóm thanh toán!' });
+
+      bookingIds.forEach((id) => {
+        updateBookingVnpayTransactionRef(id, txnRef, () => {});
+      });
+
+      res.status(200).json({ paymentUrl, txnRef, amount });
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Lỗi tạo URL thanh toán: ' + error.message });
+  }
 };
 
 export const createBookingVnPayUrl = (req, res) => {
@@ -635,32 +735,66 @@ export const bookingsVnpayReturn = (req, res) => {
     return res.redirect(redirectUrl);
   }
 
-  getBookingByVnpayTxnRef(vnp_TxnRef, (err, booking) => {
-    if (err || !booking) {
-      const redirectUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/payment?vnpay_success=false&message=order_not_found`;
-      return res.redirect(redirectUrl);
+  getVnpayGroupByTxnRef(vnp_TxnRef, async (groupErr, group) => {
+    if (groupErr || !group) {
+      getBookingByVnpayTxnRef(vnp_TxnRef, (err, booking) => {
+        if (err || !booking) {
+          const redirectUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/payment?vnpay_success=false&message=order_not_found`;
+          return res.redirect(redirectUrl);
+        }
+
+        const bookingId = booking._id.toString();
+        if (booking.paymentStatus === 'paid') {
+          const redirectUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/payment?vnpay_success=true&message=already_paid&bookingId=${bookingId}`;
+          return res.redirect(redirectUrl);
+        }
+
+        updateBookingPaymentVnpay(booking._id, {
+          bankCode: vnp_BankCode,
+          bankTranNo: vnp_BankTranNo,
+          cardType: vnp_CardType,
+          transactionNo: vnp_TransactionNo,
+          paymentDate: vnp_PayDate,
+        }, (updateErr) => {
+          if (updateErr) {
+            const redirectUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/payment?vnpay_success=false&message=update_failed`;
+            return res.redirect(redirectUrl);
+          }
+          const redirectUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/payment?vnpay_success=true&transactionNo=${vnp_TransactionNo}&bookingId=${bookingId}`;
+          return res.redirect(redirectUrl);
+        });
+      });
+      return;
     }
 
-    const bookingId = booking._id.toString();
-
-    if (booking.paymentStatus === 'paid') {
-      const redirectUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/payment?vnpay_success=true&message=already_paid&bookingId=${bookingId}`;
-      return res.redirect(redirectUrl);
-    }
-
-    updateBookingPaymentVnpay(booking._id, {
-      bankCode: vnp_BankCode,
-      bankTranNo: vnp_BankTranNo,
-      cardType: vnp_CardType,
-      transactionNo: vnp_TransactionNo,
-      paymentDate: vnp_PayDate,
-    }, (updateErr) => {
-      if (updateErr) {
+    markVnpayGroupPaid(vnp_TxnRef, async (markErr) => {
+      if (markErr) {
         const redirectUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/payment?vnpay_success=false&message=update_failed`;
         return res.redirect(redirectUrl);
       }
-      const bookingId = booking._id.toString();
-      const redirectUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/payment?vnpay_success=true&transactionNo=${vnp_TransactionNo}&bookingId=${bookingId}`;
+
+      let firstBookingId = '';
+      for (const id of group.bookingIds) {
+        if (!firstBookingId) firstBookingId = id.toString();
+        const payData = {
+          bankCode: vnp_BankCode,
+          bankTranNo: vnp_BankTranNo,
+          cardType: vnp_CardType,
+          transactionNo: vnp_TransactionNo,
+          paymentDate: vnp_PayDate,
+        };
+
+        try {
+          await new Promise((resolve, reject) => {
+            updateBookingPaymentVnpay(id, payData, (updateErr) => {
+              if (updateErr) reject(updateErr);
+              else resolve(null);
+            });
+          });
+        } catch {}
+      }
+
+      const redirectUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/payment?vnpay_success=true&transactionNo=${vnp_TransactionNo}&bookingId=${firstBookingId}`;
       return res.redirect(redirectUrl);
     });
   });
