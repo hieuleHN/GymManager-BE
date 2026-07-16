@@ -14,6 +14,10 @@ const lockerIssueSchema = new mongoose.Schema({
     type: String,
     required: true,
   },
+  image: {
+    type: String,
+    default: null,
+  },
   // Lấy trực tiếp từ req.user khi tạo báo cáo (xem lockerController.create),
   // không nhận từ client nữa để tránh giả mạo tên người báo cáo.
   reporterId: {
@@ -40,6 +44,11 @@ const lockerIssueSchema = new mongoose.Schema({
     ref: "Location",
     default: null,
   },
+  priority: {
+    type: String,
+    enum: ["high", "medium", "low"],
+    default: "medium",
+  },
   createdAt: {
     type: Date,
     default: Date.now,
@@ -51,6 +60,10 @@ const lockerIssueSchema = new mongoose.Schema({
 });
 
 lockerIssueSchema.pre("save", function (next) {
+  if (this.isNew || this.isModified("issueType")) {
+    const priorityMap = { broken: "high", "lost-key": "medium", dirty: "low", other: "low" };
+    this.priority = priorityMap[this.issueType] || "medium";
+  }
   this.updatedAt = new Date();
   next();
 });

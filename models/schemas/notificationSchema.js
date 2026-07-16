@@ -27,6 +27,10 @@ const notificationSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Booking'
   },
+  relatedLockerIssueId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'LockerIssue'
+  },
   read: {
     type: Boolean,
     default: false
