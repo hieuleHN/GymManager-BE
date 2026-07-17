@@ -24,6 +24,7 @@ import { createVnpayGroup, getVnpayGroupByTxnRef, markVnpayGroupPaid } from '../
 import { createNotification } from '../models/notificationModel.js';
 import { createWalletTransaction } from '../models/walletTransactionModel.js';
 import Customer from '../models/schemas/customerSchema.js';
+import UserPackage from '../models/schemas/userPackageSchema.js';
 import vnpay from "../config/vnpayConfig.js";
 
 const resolveDiscipline = async (disciplineId) => {
@@ -271,6 +272,23 @@ export const rejectBooking = (req, res) => {
               description: `Hoàn tiền buổi tập bị từ chối - ${refundAmount.toLocaleString('vi-VN')}₫`
             }, () => {});
           }
+        } catch {}
+      }
+
+      if (booking.price === 0) {
+        try {
+          const now = new Date();
+          const month = now.getMonth() + 1;
+          const year = now.getFullYear();
+          await UserPackage.findOneAndUpdate(
+            {
+              customer_id: customerId,
+              payment_status: 'đã thanh toán',
+              monthlySessions: { $elemMatch: { month, year, used: { $gt: 0 } } }
+            },
+            { $inc: { 'monthlySessions.$.used': -1 } },
+            { new: true }
+          );
         } catch {}
       }
 

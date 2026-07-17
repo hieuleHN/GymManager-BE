@@ -11,6 +11,8 @@ import {
   getTransactionHistory,
 } from "../models/userPackageModel.js";
 import Package from "../models/schemas/packageSchema.js";
+import WalletTransaction from "../models/schemas/walletTransactionSchema.js";
+import UserPackage from "../models/schemas/userPackageSchema.js";
 import vnpay from "../config/vnpayConfig.js";
 import {
   IpnSuccess,
@@ -37,19 +39,50 @@ export const registerPackage = (req, res) => {
   // if (!signature || !signature.trim())
   //   return res.status(400).json({ error: "Thiếu chữ ký!" });
 
-  Package.findById(package_id)
+      Package.findById(package_id)
     .exec()
     .then((pkg) => {
       if (!pkg) return res.status(404).json({ error: "Gói không tồn tại!" });
       const start_date = new Date();
       const end_date = new Date(start_date);
       end_date.setMonth(end_date.getMonth() + duration_months);
+
+      const ptSessionsPerMonth = pkg.isFullMonth ? 0 : (pkg.ptSessionsPerMonth || 0);
+      const isFullMonth = pkg.isFullMonth || false;
+      const monthlySessions = [];
+      if (isFullMonth) {
+        for (let i = 0; i < duration_months; i++) {
+          const d = new Date(start_date);
+          d.setMonth(d.getMonth() + i);
+          monthlySessions.push({
+            month: d.getMonth() + 1,
+            year: d.getFullYear(),
+            total: 999,
+            used: 0
+          });
+        }
+      } else if (ptSessionsPerMonth > 0) {
+        for (let i = 0; i < duration_months; i++) {
+          const d = new Date(start_date);
+          d.setMonth(d.getMonth() + i);
+          monthlySessions.push({
+            month: d.getMonth() + 1,
+            year: d.getFullYear(),
+            total: ptSessionsPerMonth,
+            used: 0
+          });
+        }
+      }
+
       createRegistration(
         {
           customer_id: req.user.id,
           package_id,
           locationId,
           duration_months,
+          ptSessionsPerMonth,
+          isFullMonth,
+          monthlySessions,
           total_price,
           signature,
           start_date,
@@ -68,8 +101,40 @@ export const registerPackage = (req, res) => {
     .catch((err) => res.status(500).json({ error: err.message }));
 };
 
-export const listMyPackages = (req, res) => {
-  getUserPackages(req.user.id, (err, regs) => res.status(200).json(regs));
+export const listMyPackages = async (req, res) => {
+  try {
+    const regs = await new Promise((resolve, reject) => {
+      getUserPackages(req.user.id, (err, result) => {
+        if (err) reject(err);
+        else resolve(result);
+      });
+    });
+
+    for (const reg of regs) {
+      if (reg.payment_status === "chờ thanh toán" && reg.total_price > 0) {
+        const walletTx = await WalletTransaction.findOne({
+          customerId: req.user.id,
+          type: 'payment',
+          status: 'completed',
+          description: /^Thanh toán gói tập/
+        }).sort({ createdAt: -1 });
+
+        if (walletTx) {
+          await UserPackage.findByIdAndUpdate(reg._id, {
+            payment_status: "đã thanh toán",
+            payment_method: "wallet",
+            payment_date: walletTx.createdAt || new Date()
+          });
+          reg.payment_status = "đã thanh toán";
+          reg.payment_method = "wallet";
+        }
+      }
+    }
+
+    res.status(200).json(regs);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 };
 export const getRegistrationDetail = (req, res) => {
   getRegistrationById(req.params.id, (err, reg) => res.status(200).json(reg));
@@ -122,6 +187,121 @@ export const createRenewOrUpgrade = (req, res) => {
     (err, result) =>
       res.status(201).json({ message: "OK", registration: result }),
   );
+};
+
+// ==========================================
+// PT SESSION MANAGEMENT
+// ==========================================
+
+export const getMyPtSessions = async (req, res) => {
+  try {
+    const regs = await new Promise((resolve, reject) => {
+      getUserPackages(req.user.id, (err, result) => {
+        if (err) reject(err);
+        else resolve(result);
+      });
+    });
+
+    for (const reg of regs) {
+      if (reg.payment_status === "chờ thanh toán" && reg.total_price > 0) {
+        const walletTx = await WalletTransaction.findOne({
+          customerId: req.user.id,
+          type: 'payment',
+          status: 'completed',
+          description: /^Thanh toán gói tập/
+        }).sort({ createdAt: -1 });
+
+        if (walletTx) {
+          await UserPackage.findByIdAndUpdate(reg._id, {
+            payment_status: "đã thanh toán",
+            payment_method: "wallet",
+            payment_date: walletTx.createdAt || new Date()
+          });
+          reg.payment_status = "đã thanh toán";
+        }
+      }
+    }
+
+    const now = new Date();
+    const currentMonth = now.getMonth() + 1;
+    const currentYear = now.getFullYear();
+    const result = [];
+
+    for (const reg of regs) {
+      if (reg.payment_status !== 'đã thanh toán') continue;
+      if (reg.status === 'hết hạn' || reg.status === 'đã hủy') continue;
+      if (reg.ptSessionsPerMonth <= 0 && !reg.isFullMonth) continue;
+
+      const monthly = (reg.monthlySessions || []).find(
+        m => m.month === currentMonth && m.year === currentYear
+      );
+
+      const remaining = monthly ? monthly.total - monthly.used : 0;
+
+      result.push({
+        registrationId: reg._id,
+        packageName: reg.package_id?.name || '',
+        ptSessionsPerMonth: reg.ptSessionsPerMonth,
+        isFullMonth: reg.isFullMonth,
+        currentMonthRemaining: reg.isFullMonth ? 999 : remaining,
+        currentMonth,
+        currentYear,
+        startDate: reg.start_date,
+        endDate: reg.end_date
+      });
+    }
+
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+export const deductPtSession = async (req, res) => {
+  const { registrationId, count } = req.body;
+  if (!registrationId) return res.status(400).json({ error: 'Thiếu registrationId!' });
+
+  try {
+    const reg = await UserPackage.findById(registrationId);
+    if (!reg) return res.status(404).json({ error: 'Không tìm thấy đăng ký!' });
+    if (String(reg.customer_id?._id || reg.customer_id) !== req.user.id) {
+      return res.status(403).json({ error: 'Không có quyền!' });
+    }
+
+    const now = new Date();
+    const currentMonth = now.getMonth() + 1;
+    const currentYear = now.getFullYear();
+
+    if (reg.isFullMonth) {
+      return res.json({ success: true, message: 'Full tháng - không cần trừ' });
+    }
+
+    const monthly = (reg.monthlySessions || []).find(
+      m => m.month === currentMonth && m.year === currentYear
+    );
+
+    if (!monthly) {
+      return res.status(400).json({ error: 'Không tìm thấy thông tin buổi tập tháng này!' });
+    }
+
+    const deductCount = count || 1;
+    if (monthly.used + deductCount > monthly.total) {
+      return res.status(400).json({ error: `Chỉ còn ${monthly.total - monthly.used} buổi trong tháng này!` });
+    }
+
+    await UserPackage.updateOne(
+      {
+        _id: registrationId,
+        'monthlySessions.month': currentMonth,
+        'monthlySessions.year': currentYear,
+      },
+      { $inc: { 'monthlySessions.$.used': deductCount } }
+    );
+
+    res.json({ success: true, remaining: monthly.total - monthly.used - deductCount });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 };
 
 // ==========================================

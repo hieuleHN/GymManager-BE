@@ -20,6 +20,20 @@ const userPackageSchema = new mongoose.Schema({
     type: Number,
     default: 1,
   },
+  ptSessionsPerMonth: {
+    type: Number,
+    default: 0
+  },
+  isFullMonth: {
+    type: Boolean,
+    default: false
+  },
+  monthlySessions: [{
+    month: Number,
+    year: Number,
+    total: Number,
+    used: { type: Number, default: 0 }
+  }],
   total_price: {
     type: Number,
     default: 0,
