@@ -13,7 +13,7 @@ export const initPackageStatusScheduler = () => {
       const fiveDaysAgo = new Date(now);
       fiveDaysAgo.setDate(fiveDaysAgo.getDate() - 5);
       const tenDaysAgo = new Date(now);
-      tenDaysAgo.setDate(tenDaysAgo.getDate() - 10);
+      tenDaysAgo.setDate(tenDaysAgo.getDate() - 10); 
 
       const customers = await Customer.find({
         status: 'pending',

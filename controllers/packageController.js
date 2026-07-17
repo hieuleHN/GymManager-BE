@@ -25,17 +25,17 @@ export const addPackage = (req, res) => {
     contractB,
     contractTerms,
     locationId,
+    ptSessionsPerMonth,
+    isFullMonth,
   } = req.body;
 
-  // Kiểm tra điều kiện bắt buộc (Validation) đối với thuộc tính định danh tên gói
   if (!name) {
     return res.status(400).json({ error: "Vui lòng cung cấp tên gói tập!" });
   }
 
-  // Khởi tạo Payload dữ liệu đồng bộ cấu trúc Schema trước khi lưu trữ
   const payload = {
     name,
-    price: price ?? unitPrice, // Sử dụng toán tử Nullish Coalescing để chuẩn hóa dữ liệu giá tiền
+    price: price ?? unitPrice,
     description,
     duration_days,
     is_active,
@@ -48,6 +48,8 @@ export const addPackage = (req, res) => {
     contractB,
     contractTerms,
     locationId,
+    ptSessionsPerMonth: isFullMonth ? 0 : (Number(ptSessionsPerMonth) || 0),
+    isFullMonth: !!isFullMonth,
   };
 
   // Thực thi truy vấn xuống tầng Model qua kiến trúc Callback mẫu
@@ -131,7 +133,9 @@ export const getPackageDetail = (req, res) => {
       contractB: pkg.contractB,
       contractTerms: pkg.contractTerms,
       locationId: pkg.locationId,
-      members: [], // Khởi tạo mảng lưu trữ danh sách thành viên đang sở hữu gói tập
+      ptSessionsPerMonth: pkg.ptSessionsPerMonth ?? 0,
+      isFullMonth: pkg.isFullMonth ?? false,
+      members: [],
     };
 
     // Chuẩn hóa và map mảng hội viên liên quan từ Database đổ về view
@@ -175,9 +179,10 @@ export const updatePackage = (req, res) => {
     contractB,
     contractTerms,
     locationId,
+    ptSessionsPerMonth,
+    isFullMonth,
   } = req.body;
 
-  // Thiết lập Payload dữ liệu mới kèm mốc thời gian cập nhật hệ thống
   const payload = {
     name,
     price: price ?? unitPrice,
@@ -193,6 +198,8 @@ export const updatePackage = (req, res) => {
     contractB,
     contractTerms,
     locationId,
+    ptSessionsPerMonth: isFullMonth ? 0 : (Number(ptSessionsPerMonth) || 0),
+    isFullMonth: !!isFullMonth,
     updatedAt: new Date(),
   };
 

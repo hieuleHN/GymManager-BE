@@ -16,6 +16,8 @@ import {
   vnpayReturn,
   vnpayIPN,
   transactionHistory,
+  getMyPtSessions,
+  deductPtSession,
 } from "../controllers/userPackageController.js";
 
 const router = express.Router();
@@ -24,6 +26,8 @@ router.get("/payments/list", authenticateToken, listAllRegistrations);
 router.post("/register", authenticateToken, registerPackage);
 router.get("/my", authenticateToken, listMyPackages);
 router.get("/transactions", authenticateToken, transactionHistory);
+router.get("/pt-sessions", authenticateToken, getMyPtSessions);
+router.post("/pt-sessions/deduct", authenticateToken, deductPtSession);
 router.post("/renew-upgrade", authenticateToken, createRenewOrUpgrade);
 
 // API cho VNPAY

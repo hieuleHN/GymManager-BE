@@ -49,6 +49,14 @@ const packageSchema = new mongoose.Schema({
     type: String,
     default: ''
   },
+  ptSessionsPerMonth: {
+    type: Number,
+    default: 0
+  },
+  isFullMonth: {
+    type: Boolean,
+    default: false
+  },
   locationId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Location'
