@@ -1,7 +1,8 @@
 import {
   createCustomer, getAllCustomers, getCustomerById, updateCustomerById, deleteCustomerById,
-  approveCustomer, rejectCustomer, getPendingCustomers, submitPersonalInfo
+  approveCustomer, rejectCustomer, getPendingCustomers, submitPersonalInfo, findCustomerByAccount
 } from '../models/customerModel.js';
+import { findStaffByAccount } from '../models/staffModel.js';
 import fs from 'fs';
 import path from 'path';
 
@@ -14,11 +15,21 @@ export const register = (req, res) => {
     return res.status(400).json({ error: 'Mật khẩu phải có ít nhất 6 ký tự!' });
   }
 
-  createCustomer({ account, password, locationId }, (err, result) => {
-    if (err) {
-      return res.status(400).json({ error: err.message || 'Lỗi đăng ký!' });
-    }
-    res.status(201).json({ message: 'Đăng ký thành công! Bạn có thể đăng nhập ngay.', customerId: result.customerId });
+  findCustomerByAccount(account, (err, customer) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (customer) return res.status(400).json({ error: 'Tên tài khoản đã tồn tại trong hệ thống!' });
+
+    findStaffByAccount(account, (err, staff) => {
+      if (err) return res.status(500).json({ error: err.message });
+      if (staff) return res.status(400).json({ error: 'Tên tài khoản đã tồn tại trong hệ thống!' });
+
+      createCustomer({ account, password, locationId }, (err, result) => {
+        if (err) {
+          return res.status(400).json({ error: err.message || 'Lỗi đăng ký!' });
+        }
+        res.status(201).json({ message: 'Đăng ký thành công! Bạn có thể đăng nhập ngay.', customerId: result.customerId });
+      });
+    });
   });
 };
 

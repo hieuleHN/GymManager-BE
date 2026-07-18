@@ -1,12 +1,11 @@
 import {
-  createStaff, getAllStaff, getStaffById, updateStaffById, deleteStaffById, findStaffByAccount
+  createStaff, getAllStaff, getStaffById, updateStaffById, deleteStaffById, findStaffByAccount, getTrainers
 } from '../models/staffModel.js';
+import { findCustomerByAccount } from '../models/customerModel.js';
 import { getJobById } from '../models/jobModel.js';
 import { getPermissionsByJob } from '../models/permissionModel.js';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-
-import {getTrainers} from '../models/staffModel.js';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'Phong_Gym_Master_Key_2026';
 
@@ -114,10 +113,20 @@ export const create = (req, res) => {
   if (!emailRegex.test(email)) {
     return res.status(400).json({ error: 'Email không hợp lệ!' });
   }
-  const staffData = { account, password, fullName, email, phone, gender, job, startDate, address, baseSalary, locationId };
-  createStaff(staffData, (err, result) => {
-    if (err) return res.status(400).json({ error: err.message || 'Lỗi thêm nhân viên!' });
-    res.status(201).json({ message: 'Thêm nhân viên thành công!', staffId: result.staffId });
+  findStaffByAccount(account, (err, existingStaff) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (existingStaff) return res.status(400).json({ error: 'Tên tài khoản đã tồn tại trong hệ thống!' });
+
+    findCustomerByAccount(account, (err, existingCustomer) => {
+      if (err) return res.status(500).json({ error: err.message });
+      if (existingCustomer) return res.status(400).json({ error: 'Tên tài khoản đã tồn tại trong hệ thống!' });
+
+      const staffData = { account, password, fullName, email, phone, gender, job, startDate, address, baseSalary, locationId };
+      createStaff(staffData, (err, result) => {
+        if (err) return res.status(400).json({ error: err.message || 'Lỗi thêm nhân viên!' });
+        res.status(201).json({ message: 'Thêm nhân viên thành công!', staffId: result.staffId });
+      });
+    });
   });
 };
 

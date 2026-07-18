@@ -5,7 +5,7 @@ import db from "./config/db.js";
 import locationRoutes from "./routes/locationRoutes.js";
 import packageRoutes from "./routes/packageRoutes.js";
 import { initPackageStatusScheduler } from "./services/cronService.js";
-import dashboardRoutes from "./routes/dashboardRoutes.js";
+
 import productRoutes from "./routes/productRoutes.js";
 import equipmentRoutes from "./routes/equipmentRoutes.js";
 import disciplineRoutes from "./routes/disciplineRoutes.js";
@@ -27,6 +27,8 @@ import reviewRoutes from "./routes/reviewRoutes.js";
 import reportRoutes from "./routes/reportRoutes.js";
 import walletRoutes from "./routes/walletRoutes.js";
 import staffShiftRoutes from "./routes/staffShiftRoutes.js";
+import dashboardRoutes from "./routes/dashboardRoutes.js";
+import authRoutes from "./routes/authRoutes.js";
 import { autoCancelPendingBookings } from "./jobs/autoCancelBooking.js";
 import { autoCancelPendingPackages } from "./jobs/autoCancelPendingPackages.js";
 
@@ -67,8 +69,10 @@ app.use("/api/checkin", checkInRoutes);
 app.use("/api/reviews", reviewRoutes);
 app.use("/api/reports", reportRoutes);
 app.use("/api/wallet", walletRoutes);
+app.use("/api/auth", authRoutes);
 app.use("/api/staff-shifts", staffShiftRoutes);
 app.use("/api/dashboard", dashboardRoutes);
+
 initPackageStatusScheduler();
 
 // Chạy sau khi MongoDB đã kết nối thành công
