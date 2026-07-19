@@ -13,6 +13,7 @@ import {
 import Package from "../models/schemas/packageSchema.js";
 import WalletTransaction from "../models/schemas/walletTransactionSchema.js";
 import UserPackage from "../models/schemas/userPackageSchema.js";
+import Booking from "../models/schemas/bookingSchema.js";
 import vnpay from "../config/vnpayConfig.js";
 import {
   IpnSuccess,
@@ -21,6 +22,7 @@ import {
   IpnInvalidAmount,
   IpnUnknownError,
 } from "vnpay";
+import { jsPDF } from "jspdf";
 
 const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
 
@@ -485,4 +487,358 @@ export const vnpayIPN = (req, res) => {
       res.status(200).json(IpnSuccess);
     }
   });
+};
+
+// ==========================================
+// SCHEDULE CONFLICT CHECK
+// ==========================================
+
+export const checkScheduleConflict = async (req, res) => {
+  try {
+    const customerId = req.user.id;
+    const { disciplineId } = req.query;
+
+    const now = new Date();
+
+    const activePackages = await UserPackage.find({
+      customer_id: customerId,
+      status: { $in: ["đang hoạt động", "còn 10 ngày"] },
+      payment_status: "đã thanh toán",
+      end_date: { $gt: now },
+    }).populate("package_id", "name disciplineId ptSessionsPerMonth isFullMonth");
+
+    if (!activePackages || activePackages.length === 0) {
+      return res.json({ hasConflict: false, conflicts: [] });
+    }
+
+    const conflictingPackages = activePackages.filter((up) => {
+      if (!up.package_id) return false;
+      const pkgDiscipline = up.package_id.disciplineId;
+      if (!pkgDiscipline || !disciplineId) return true;
+      return pkgDiscipline.toString() === disciplineId;
+    });
+
+    if (conflictingPackages.length === 0) {
+      return res.json({ hasConflict: false, conflicts: [] });
+    }
+
+    const now2 = new Date();
+    const upcomingBookings = await Booking.find({
+      customerId,
+      date: { $gte: now2 },
+      status: { $in: ["pending", "confirmed"] },
+    }).populate("trainerId", "fullName")
+      .populate("disciplineId", "name")
+      .sort({ date: 1, time: 1 })
+      .limit(10);
+
+    const conflicts = conflictingPackages.map((up) => ({
+      packageId: up.package_id?._id,
+      packageName: up.package_id?.name || "Gói tập",
+      endDate: up.end_date,
+      ptSessionsPerMonth: up.package_id?.ptSessionsPerMonth || 0,
+      isFullMonth: up.package_id?.isFullMonth || false,
+      remainingSessions: up.monthlySessions?.find(
+        (m) => m.month === now.getMonth() + 1 && m.year === now.getFullYear()
+      ),
+      upcomingBookingsCount: upcomingBookings.length,
+    }));
+
+    res.json({
+      hasConflict: true,
+      conflicts,
+      upcomingBookings: upcomingBookings.map((b) => ({
+        date: b.date,
+        time: b.time || b.startTime,
+        trainer: b.trainerId?.fullName || "",
+        discipline: b.disciplineId?.name || b.disciplineName || "",
+      })),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// ==========================================
+// CONTRACT PDF GENERATION
+// ==========================================
+
+const addVietnameseText = (doc, text, x, y, options = {}) => {
+  const {
+    fontSize = 11,
+    fontStyle = "normal",
+    maxWidth = 170,
+  } = options;
+
+  doc.setFontSize(fontSize);
+  doc.setFont("helvetica", fontStyle);
+
+  const lines = doc.splitTextToSize(text, maxWidth);
+  doc.text(lines, x, y);
+  return lines.length;
+};
+
+export const generateContractPdf = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const reg = await UserPackage.findById(id)
+      .populate("package_id")
+      .populate("customer_id", "fullName email phone")
+      .populate("locationId", "title address");
+
+    if (!reg) {
+      return res.status(404).json({ error: "Không tìm thấy đăng ký!" });
+    }
+
+    if (
+      req.user.id !== String(reg.customer_id?._id || reg.customer_id) &&
+      !req.user.isAdmin
+    ) {
+      return res.status(403).json({ error: "Không có quyền truy cập!" });
+    }
+
+    const pkg = reg.package_id;
+    const customer = reg.customer_id;
+    const location = reg.locationId;
+
+    const doc = new jsPDF();
+    const pageWidth = 210;
+    const margin = 20;
+    let y = 20;
+
+    doc.setFontSize(16);
+    doc.setFont("helvetica", "bold");
+    doc.text("CONG TY TNHH ZENFITNESS", pageWidth / 2, y, { align: "center" });
+    y += 7;
+    doc.setFontSize(10);
+    doc.setFont("helvetica", "normal");
+    doc.text(
+      location?.title || "ZenFitness Gym",
+      pageWidth / 2,
+      y,
+      { align: "center" }
+    );
+    if (location?.address) {
+      y += 5;
+      doc.text(location.address, pageWidth / 2, y, { align: "center" });
+    }
+
+    y += 12;
+    doc.setDrawColor(0, 0, 0);
+    doc.setLineWidth(0.5);
+    doc.line(margin, y, pageWidth - margin, y);
+    y += 10;
+
+    doc.setFontSize(18);
+    doc.setFont("helvetica", "bold");
+    doc.text("HOP DONG DANG KY GOI TAP", pageWidth / 2, y, { align: "center" });
+    y += 10;
+
+    doc.setFontSize(11);
+    doc.setFont("helvetica", "normal");
+    const contractDate = reg.createdAt
+      ? new Date(reg.createdAt).toLocaleDateString("vi-VN")
+      : new Date().toLocaleDateString("vi-VN");
+    doc.text(`Ngay lap hop dong: ${contractDate}`, margin, y);
+    y += 5;
+    doc.text(`So hop dong: ${reg._id}`, margin, y);
+    y += 12;
+
+    doc.setFontSize(13);
+    doc.setFont("helvetica", "bold");
+    doc.text("THONG TIN CAC BEN", margin, y);
+    y += 8;
+
+    doc.setFontSize(11);
+    doc.setFont("helvetica", "bold");
+    doc.text("BEN A (Ben cung cap dich vu):", margin, y);
+    y += 6;
+    doc.setFont("helvetica", "normal");
+    doc.text(`Ten: ZENFITNESS`, margin + 2, y);
+    y += 5;
+    doc.text(`Dia chi: ${location?.title || "He thong phong tap ZenFitness"}`, margin + 2, y);
+    y += 5;
+    if (location?.address) {
+      doc.text(`Dia chi chi tiet: ${location.address}`, margin + 2, y);
+      y += 5;
+    }
+    y += 5;
+
+    doc.setFont("helvetica", "bold");
+    doc.text("BEN B (Hoi vien):", margin, y);
+    y += 6;
+    doc.setFont("helvetica", "normal");
+    doc.text(`Họ và tên: ${customer?.fullName || "Chua cap nhat"}`, margin + 2, y);
+    y += 5;
+    doc.text(`Email: ${customer?.email || "Chua cap nhat"}`, margin + 2, y);
+    y += 5;
+    doc.text(`So dien thoai: ${customer?.phone || "Chua cap nhat"}`, margin + 2, y);
+    y += 12;
+
+    doc.setFontSize(13);
+    doc.setFont("helvetica", "bold");
+    doc.text("THONG TIN GOI DICH VU", margin, y);
+    y += 8;
+
+    doc.setFontSize(11);
+    doc.setFont("helvetica", "normal");
+    doc.text(`Goi tap: ${pkg?.name || "N/A"}`, margin + 2, y);
+    y += 6;
+    doc.text(`Thoi han: ${reg.duration_months} thang`, margin + 2, y);
+    y += 6;
+    if (pkg?.disciplineId) {
+      doc.text(`Bo mon: ${pkg.disciplineId.name || pkg.disciplineId}`, margin + 2, y);
+      y += 6;
+    }
+    doc.text(
+      `Gia tri: ${reg.total_price?.toLocaleString("vi-VN")} VND`,
+      margin + 2,
+      y
+    );
+    y += 6;
+    if (pkg?.ptSessionsPerMonth > 0 || pkg?.isFullMonth) {
+      doc.text(
+        `Buoi tap voi HLV: ${
+          pkg.isFullMonth ? "Khong gioi han" : `${pkg.ptSessionsPerMonth} buoi/thang`
+        }`,
+        margin + 2,
+        y
+      );
+      y += 6;
+    }
+    const startDate = reg.start_date
+      ? new Date(reg.start_date).toLocaleDateString("vi-VN")
+      : "";
+    const endDate = reg.end_date
+      ? new Date(reg.end_date).toLocaleDateString("vi-VN")
+      : "";
+    doc.text(`Ngay bat dau: ${startDate}`, margin + 2, y);
+    y += 6;
+    doc.text(`Ngay ket thuc: ${endDate}`, margin + 2, y);
+    y += 6;
+    doc.text(
+      `Phuong thuc thanh toan: ${reg.payment_method || "Chua xac dinh"}`,
+      margin + 2,
+      y
+    );
+    y += 6;
+    doc.text(
+      `Trang thai thanh toan: ${reg.payment_status || "Chua xac dinh"}`,
+      margin + 2,
+      y
+    );
+    y += 12;
+
+    if (pkg?.features && pkg.features.length > 0) {
+      doc.setFontSize(13);
+      doc.setFont("helvetica", "bold");
+      doc.text("QUYEN LOI BAO GOM:", margin, y);
+      y += 7;
+      doc.setFontSize(10);
+      doc.setFont("helvetica", "normal");
+      pkg.features.forEach((feature) => {
+        doc.text(`- ${feature}`, margin + 2, y);
+        y += 5;
+      });
+      y += 5;
+    }
+
+    if (pkg?.contractA) {
+      doc.setFontSize(13);
+      doc.setFont("helvetica", "bold");
+      doc.text("DIEU KHOAN BEN A:", margin, y);
+      y += 7;
+      const lines = addVietnameseText(doc, pkg.contractA, margin + 2, y, {
+        fontSize: 10,
+        maxWidth: 165,
+      });
+      y += lines * 5 + 5;
+    }
+
+    if (pkg?.contractB) {
+      doc.setFontSize(13);
+      doc.setFont("helvetica", "bold");
+      doc.text("DIEU KHOAN BEN B:", margin, y);
+      y += 7;
+      const lines = addVietnameseText(doc, pkg.contractB, margin + 2, y, {
+        fontSize: 10,
+        maxWidth: 165,
+      });
+      y += lines * 5 + 5;
+    }
+
+    if (pkg?.contractTerms) {
+      doc.setFontSize(13);
+      doc.setFont("helvetica", "bold");
+      doc.text("DIEU KHOAN CAM KET CHUNG:", margin, y);
+      y += 7;
+      const lines = addVietnameseText(doc, pkg.contractTerms, margin + 2, y, {
+        fontSize: 10,
+        maxWidth: 165,
+      });
+      y += lines * 5 + 5;
+    }
+
+    if (y > 250) {
+      doc.addPage();
+      y = 20;
+    }
+
+    y += 5;
+    doc.setFontSize(11);
+    doc.setFont("helvetica", "bold");
+    doc.text("CHU KY CUA CAC BEN", margin, y);
+    y += 10;
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
+    doc.text("Dai dien BEN A:", margin, y);
+    doc.text("Hoi vien (BEN B):", margin + 100, y);
+    y += 5;
+    doc.text("(Ky, ghi ho ten)", margin, y);
+    doc.text("(Ky, ghi ho ten)", margin + 100, y);
+
+    y += 15;
+    if (reg.signature) {
+      try {
+        const signatureWidth = 60;
+        const signatureHeight = 25;
+        doc.addImage(
+          reg.signature,
+          "PNG",
+          margin + 70,
+          y,
+          signatureWidth,
+          signatureHeight
+        );
+        y += signatureHeight + 5;
+      } catch {
+        doc.text("Chu ky khong xac dinh", margin + 100, y);
+        y += 10;
+      }
+    }
+
+    y += 10;
+    doc.setFontSize(9);
+    doc.setFont("helvetica", "italic");
+    doc.text(
+      "Hop dong nay duoc lap thanh 02 ban, moi ben giu 01 ban, co gia tri phap ly nhu nhau.",
+      pageWidth / 2,
+      y,
+      { align: "center" }
+    );
+
+    const pdfBuffer = Buffer.from(doc.output("arraybuffer"));
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader(
+      "Content-Disposition",
+      `inline; filename="hop-dong-${reg._id}.pdf"`
+    );
+    res.send(pdfBuffer);
+  } catch (err) {
+    console.error("Lỗi tạo PDF hợp đồng:", err);
+    res.status(500).json({ error: "Lỗi tạo PDF: " + err.message });
+  }
 };

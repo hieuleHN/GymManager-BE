@@ -18,11 +18,14 @@ import {
   transactionHistory,
   getMyPtSessions,
   deductPtSession,
+  checkScheduleConflict,
+  generateContractPdf,
 } from "../controllers/userPackageController.js";
 
 const router = express.Router();
 
 router.get("/payments/list", authenticateToken, listAllRegistrations);
+router.get("/check-conflict", authenticateToken, checkScheduleConflict);
 router.post("/register", authenticateToken, registerPackage);
 router.get("/my", authenticateToken, listMyPackages);
 router.get("/transactions", authenticateToken, transactionHistory);
@@ -36,6 +39,7 @@ router.get("/vnpay-return", vnpayReturn);
 router.get("/vnpay-ipn", vnpayIPN);
 router.post("/vnpay-ipn", vnpayIPN);
 
+router.get("/:id/contract-pdf", authenticateToken, generateContractPdf);
 router.get("/:id", authenticateToken, getRegistrationDetail);
 router.post("/:id/cancel", authenticateToken, cancelRegistration);
 router.patch("/:id/payment", authenticateToken, confirmPayment);
