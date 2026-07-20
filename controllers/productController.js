@@ -116,6 +116,38 @@ export const deleteProduct = async (req, res) => {
   }
 };
 
+// 6b. GHI NHẬN BÁN HÀNG: trừ tồn kho, cộng số lượng đã bán
+export const sellProduct = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { quantity } = req.body;
+    const qty = parseInt(quantity) || 1;
+
+    if (qty < 1) {
+      return res.status(400).json({ message: 'Số lượng bán phải lớn hơn 0!' });
+    }
+
+    const product = await Product.findById(id);
+    if (!product) {
+      return res.status(404).json({ message: 'Không tìm thấy sản phẩm!' });
+    }
+
+    if ((product.quantity || 0) < qty) {
+      return res.status(400).json({ message: `Không đủ tồn kho! Hiện còn ${product.quantity}` });
+    }
+
+    const updated = await Product.findByIdAndUpdate(
+      id,
+      { $inc: { quantity: -qty, sold: qty } },
+      { new: true }
+    );
+
+    res.status(200).json({ message: `Đã ghi nhận bán ${qty} ${product.name}`, data: updated });
+  } catch (error) {
+    res.status(500).json({ message: 'Lỗi server!', error: error.message });
+  }
+};
+
 // 7. THÊM báo cáo cho sản phẩm
 export const addReport = async (req, res) => {
   try {
