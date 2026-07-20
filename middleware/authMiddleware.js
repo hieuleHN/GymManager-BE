@@ -29,3 +29,13 @@ export const authorizeRoles = (...allowedRoles) => {
   };
 };
 
+// Middleware 3: Chỉ cho phép admin/quản lý (dựa vào cờ isAdmin đã ký trong token khi login)
+// Dùng cờ isAdmin thay vì so khớp tên "role" vì role hiện là tên công việc (PT, Lễ tân...),
+// không cố định là chuỗi "admin" nên authorizeRoles('admin') sẽ không hoạt động đúng.
+export const requireAdmin = (req, res, next) => {
+  if (!req.user || !req.user.isAdmin) {
+    return res.status(403).json({ error: 'Chỉ quản trị viên mới có quyền thực hiện hành động này!' });
+  }
+  next();
+};
+

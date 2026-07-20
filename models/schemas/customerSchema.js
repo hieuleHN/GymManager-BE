@@ -42,6 +42,10 @@ const customerSchema = new mongoose.Schema({
   },
   approvedAt: Date,
   rejectionReason: String,
+  balance: {
+    type: Number,
+    default: 0
+  },
   infoFilledAt: Date,
   createdAt: {
     type: Date,

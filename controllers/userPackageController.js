@@ -1,332 +1,488 @@
 import {
-  createRegistration, getUserPackages, getRegistrationById, cancelRegistrationById,
-  updateRegistrationById
-} from '../models/userPackageModel.js';
-import Package from '../models/schemas/packageSchema.js';
-import UserPackage from '../models/schemas/userPackageSchema.js';
-import Customer from '../models/schemas/customerSchema.js';
-import * as PolicyModel from '../models/policyModel.js';
-import { generateContractPDF } from '../services/pdfService.js';
-import jwt from 'jsonwebtoken';
-import fs from 'fs';
-import path from 'path';
+  createRegistration,
+  getUserPackages,
+  getRegistrationById,
+  cancelRegistrationById,
+  getAllRegistrations,
+  updatePaymentStatus,
+  updatePaymentMethod,
+  updateVnpayTransactionRef,
+  findRegistrationByTxnRef,
+  getTransactionHistory,
+} from "../models/userPackageModel.js";
+import Package from "../models/schemas/packageSchema.js";
+import WalletTransaction from "../models/schemas/walletTransactionSchema.js";
+import UserPackage from "../models/schemas/userPackageSchema.js";
+import vnpay from "../config/vnpayConfig.js";
+import {
+  IpnSuccess,
+  IpnOrderNotFound,
+  IpnFailChecksum,
+  IpnInvalidAmount,
+  IpnUnknownError,
+} from "vnpay";
 
-const JWT_SECRET = process.env.JWT_SECRET || 'Phong_Gym_Master_Key_2026';
+const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
 
+// 1. CÁC HÀM CŨ GIỮ NGUYÊN (Không sửa đổi để tránh lỗi)
 export const registerPackage = (req, res) => {
-  const customer_id = req.user.id;
-  const { package_id, locationId, duration_months, total_price, signature, policies: policyIds } = req.body;
+  const {
+    package_id,
+    locationId,
+    duration_months,
+    total_price,
+    signature,
+    payment_method,
+  } = req.body;
+  if (!package_id || !locationId || !duration_months || !total_price)
+    return res.status(400).json({ error: "Thiếu thông tin!" });
+  // if (!signature || !signature.trim())
+  //   return res.status(400).json({ error: "Thiếu chữ ký!" });
 
-  if (!package_id || !locationId || !duration_months || !total_price) {
-    return res.status(400).json({ error: 'Vui lòng cung cấp đầy đủ thông tin đăng ký!' });
-  }
-
-  if (!signature || !signature.trim()) {
-    return res.status(400).json({ error: 'Vui lòng ký tên (chữ ký điện tử) để hoàn tất đăng ký!' });
-  }
-
-  Package.findById(package_id).exec()
-    .then(pkg => {
-      if (!pkg) return res.status(404).json({ error: 'Gói tập không tồn tại!' });
-      if (!pkg.is_active) return res.status(400).json({ error: 'Gói tập hiện không khả dụng!' });
-
+      Package.findById(package_id)
+    .exec()
+    .then((pkg) => {
+      if (!pkg) return res.status(404).json({ error: "Gói không tồn tại!" });
       const start_date = new Date();
       const end_date = new Date(start_date);
       end_date.setMonth(end_date.getMonth() + duration_months);
-      const payment_expires_at = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24h to pay
 
-      const registrationData = {
-        customer_id, package_id, locationId,
-        duration_months, total_price, signature,
-        start_date, end_date,
-        payment_status: 'pending',
-        payment_expires_at,
-        status: 'chờ xác nhận'
-      };
+      const ptSessionsPerMonth = pkg.isFullMonth ? 0 : (pkg.ptSessionsPerMonth || 0);
+      const isFullMonth = pkg.isFullMonth || false;
+      const monthlySessions = [];
+      if (isFullMonth) {
+        for (let i = 0; i < duration_months; i++) {
+          const d = new Date(start_date);
+          d.setMonth(d.getMonth() + i);
+          monthlySessions.push({
+            month: d.getMonth() + 1,
+            year: d.getFullYear(),
+            total: 999,
+            used: 0
+          });
+        }
+      } else if (ptSessionsPerMonth > 0) {
+        for (let i = 0; i < duration_months; i++) {
+          const d = new Date(start_date);
+          d.setMonth(d.getMonth() + i);
+          monthlySessions.push({
+            month: d.getMonth() + 1,
+            year: d.getFullYear(),
+            total: ptSessionsPerMonth,
+            used: 0
+          });
+        }
+      }
 
-      createRegistration(registrationData, async (err, result) => {
-        if (err) return res.status(500).json({ error: 'Lỗi hệ thống khi đăng ký gói tập: ' + err.message });
+      createRegistration(
+        {
+          customer_id: req.user.id,
+          package_id,
+          locationId,
+          duration_months,
+          ptSessionsPerMonth,
+          isFullMonth,
+          monthlySessions,
+          total_price,
+          signature,
+          start_date,
+          end_date,
+          payment_method,
+          payment_status: "chờ thanh toán",
+        },
+        (err, result) => {
+          if (err) return res.status(500).json({ error: err.message });
+          res
+            .status(201)
+            .json({ message: "Đăng ký thành công!", registration: result });
+        },
+      );
+    })
+    .catch((err) => res.status(500).json({ error: err.message }));
+};
 
-        try {
-          const customer = await Customer.findById(customer_id);
-          let policies = [];
-          if (policyIds && policyIds.length > 0) {
-            policies = await PolicyModel.getByIds(policyIds);
-          } else {
-            policies = await PolicyModel.getAllSimple();
+export const listMyPackages = async (req, res) => {
+  try {
+    const regs = await new Promise((resolve, reject) => {
+      getUserPackages(req.user.id, (err, result) => {
+        if (err) reject(err);
+        else resolve(result);
+      });
+    });
+
+    for (const reg of regs) {
+      if (reg.payment_status === "chờ thanh toán" && reg.total_price > 0) {
+        const walletTx = await WalletTransaction.findOne({
+          customerId: req.user.id,
+          type: 'payment',
+          status: 'completed',
+          description: /^Thanh toán gói tập/
+        }).sort({ createdAt: -1 });
+
+        if (walletTx) {
+          await UserPackage.findByIdAndUpdate(reg._id, {
+            payment_status: "đã thanh toán",
+            payment_method: "wallet",
+            payment_date: walletTx.createdAt || new Date()
+          });
+          reg.payment_status = "đã thanh toán";
+          reg.payment_method = "wallet";
+        }
+      }
+    }
+
+    res.status(200).json(regs);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+export const getRegistrationDetail = (req, res) => {
+  getRegistrationById(req.params.id, (err, reg) => res.status(200).json(reg));
+};
+export const cancelRegistration = (req, res) => {
+  cancelRegistrationById(req.params.id, (err, result) =>
+    res.status(200).json({ message: "Đã hủy" }),
+  );
+};
+export const listAllRegistrations = (req, res) => {
+  let { page, limit, payment_status, locationId, status } = req.query;
+  getAllRegistrations(
+    Number(page) || 1,
+    Number(limit) || 15,
+    { payment_status, locationId, status },
+    (err, result) => res.status(200).json(result),
+  );
+};
+export const confirmPayment = (req, res) => {
+  updatePaymentStatus(
+    req.params.id,
+    { payment_status: req.body.payment_status, confirmed_by: req.user.id },
+    (err, result) => res.status(200).json({ message: "OK" }),
+  );
+};
+export const setPaymentMethod = (req, res) => {
+  updatePaymentMethod(
+    req.params.id,
+    req.user.id,
+    req.body.payment_method,
+    (err, result) => res.status(200).json({ message: "OK" }),
+  );
+};
+
+export const createRenewOrUpgrade = (req, res) => {
+  const { package_id, locationId, duration_months, total_price, action_type } =
+    req.body;
+  createRegistration(
+    {
+      customer_id: req.user.id,
+      package_id,
+      locationId,
+      duration_months,
+      total_price,
+      payment_status: "chờ thanh toán",
+      status: "đang hoạt động",
+      start_date: new Date(),
+      end_date: new Date(),
+    },
+    (err, result) =>
+      res.status(201).json({ message: "OK", registration: result }),
+  );
+};
+
+// ==========================================
+// PT SESSION MANAGEMENT
+// ==========================================
+
+export const getMyPtSessions = async (req, res) => {
+  try {
+    const regs = await new Promise((resolve, reject) => {
+      getUserPackages(req.user.id, (err, result) => {
+        if (err) reject(err);
+        else resolve(result);
+      });
+    });
+
+    for (const reg of regs) {
+      if (reg.payment_status === "chờ thanh toán" && reg.total_price > 0) {
+        const walletTx = await WalletTransaction.findOne({
+          customerId: req.user.id,
+          type: 'payment',
+          status: 'completed',
+          description: /^Thanh toán gói tập/
+        }).sort({ createdAt: -1 });
+
+        if (walletTx) {
+          await UserPackage.findByIdAndUpdate(reg._id, {
+            payment_status: "đã thanh toán",
+            payment_method: "wallet",
+            payment_date: walletTx.createdAt || new Date()
+          });
+          reg.payment_status = "đã thanh toán";
+        }
+      }
+    }
+
+    const now = new Date();
+    const currentMonth = now.getMonth() + 1;
+    const currentYear = now.getFullYear();
+    const result = [];
+
+    for (const reg of regs) {
+      if (reg.payment_status !== 'đã thanh toán') continue;
+      if (reg.status === 'hết hạn' || reg.status === 'đã hủy') continue;
+      if (reg.ptSessionsPerMonth <= 0 && !reg.isFullMonth) continue;
+
+      const monthly = (reg.monthlySessions || []).find(
+        m => m.month === currentMonth && m.year === currentYear
+      );
+
+      const remaining = monthly ? monthly.total - monthly.used : 0;
+
+      result.push({
+        registrationId: reg._id,
+        packageName: reg.package_id?.name || '',
+        ptSessionsPerMonth: reg.ptSessionsPerMonth,
+        isFullMonth: reg.isFullMonth,
+        currentMonthRemaining: reg.isFullMonth ? 999 : remaining,
+        currentMonth,
+        currentYear,
+        startDate: reg.start_date,
+        endDate: reg.end_date
+      });
+    }
+
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+export const deductPtSession = async (req, res) => {
+  const { registrationId, count } = req.body;
+  if (!registrationId) return res.status(400).json({ error: 'Thiếu registrationId!' });
+
+  try {
+    const reg = await UserPackage.findById(registrationId);
+    if (!reg) return res.status(404).json({ error: 'Không tìm thấy đăng ký!' });
+    if (String(reg.customer_id?._id || reg.customer_id) !== req.user.id) {
+      return res.status(403).json({ error: 'Không có quyền!' });
+    }
+
+    const now = new Date();
+    const currentMonth = now.getMonth() + 1;
+    const currentYear = now.getFullYear();
+
+    if (reg.isFullMonth) {
+      return res.json({ success: true, message: 'Full tháng - không cần trừ' });
+    }
+
+    const monthly = (reg.monthlySessions || []).find(
+      m => m.month === currentMonth && m.year === currentYear
+    );
+
+    if (!monthly) {
+      return res.status(400).json({ error: 'Không tìm thấy thông tin buổi tập tháng này!' });
+    }
+
+    const deductCount = count || 1;
+    if (monthly.used + deductCount > monthly.total) {
+      return res.status(400).json({ error: `Chỉ còn ${monthly.total - monthly.used} buổi trong tháng này!` });
+    }
+
+    await UserPackage.updateOne(
+      {
+        _id: registrationId,
+        'monthlySessions.month': currentMonth,
+        'monthlySessions.year': currentYear,
+      },
+      { $inc: { 'monthlySessions.$.used': deductCount } }
+    );
+
+    res.json({ success: true, remaining: monthly.total - monthly.used - deductCount });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// ==========================================
+// MEMBER TRANSACTION HISTORY
+// ==========================================
+
+export const transactionHistory = (req, res) => {
+  getTransactionHistory(req.user.id, (err, transactions) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(transactions);
+  });
+};
+
+// ==========================================
+// VNPAY INTEGRATION USING vnpay LIBRARY
+// ==========================================
+
+export const createVnPayUrl = (req, res) => {
+  const { id } = req.params;
+  getRegistrationById(id, (err, reg) => {
+    if (err || !reg)
+      return res.status(404).json({ error: "Không tìm thấy đơn!" });
+
+    if (reg.payment_status === "đã thanh toán")
+      return res.status(400).json({ error: "Đơn đã được thanh toán!" });
+
+    try {
+      const ipAddr =
+        req.headers["x-forwarded-for"]?.split(",")[0]?.trim() ||
+        req.ip ||
+        "127.0.0.1";
+
+      const amount = Math.floor(Number(reg.total_price));
+      const txnRef = `GYM${id.slice(-8).toUpperCase()}${Date.now()}`;
+      const returnUrl =
+        process.env.VNP_RETURN_URL ||
+        "http://localhost:5000/api/user-packages/vnpay-return";
+
+      const paymentUrl = vnpay.buildPaymentUrl({
+        vnp_Amount: amount,
+        vnp_IpAddr: ipAddr,
+        vnp_ReturnUrl: returnUrl,
+        vnp_TxnRef: txnRef,
+        vnp_OrderInfo: `Thanh toan goi tap ${reg.package_id?.name || ''}`,
+        vnp_Locale: 'vn',
+        vnp_BankCode: '',
+      });
+
+      updateVnpayTransactionRef(id, txnRef, (updateErr) => {
+        if (updateErr)
+          console.error("Lỗi lưu txnRef:", updateErr.message);
+      });
+
+      res.status(200).json({ paymentUrl });
+    } catch (error) {
+      res
+        .status(500)
+        .json({ error: "Lỗi tạo URL thanh toán: " + error.message });
+    }
+  });
+};
+
+export const vnpayReturn = (req, res) => {
+  let verify;
+  try {
+    verify = vnpay.verifyReturnUrl(req.query);
+  } catch (error) {
+    return res.redirect(
+      `${FRONTEND_URL}/dashboard/my-packages?vnpay_success=false&message=verify_error`,
+    );
+  }
+
+  if (!verify.isVerified) {
+    return res.redirect(
+      `${FRONTEND_URL}/dashboard/my-packages?vnpay_success=false&message=invalid_signature`,
+    );
+  }
+
+  const txnRef = req.query.vnp_TxnRef;
+  const responseCode = req.query.vnp_ResponseCode;
+  const transactionNo = req.query.vnp_TransactionNo;
+  const payDate = req.query.vnp_PayDate;
+  const bankCode = req.query.vnp_BankCode;
+
+  if (responseCode === "00") {
+    findRegistrationByTxnRef(txnRef, (err, reg) => {
+      if (err || !reg) {
+        console.error("Không tìm thấy đơn với txnRef:", txnRef);
+        return res.redirect(
+          `${FRONTEND_URL}/dashboard/my-packages?vnpay_success=false&message=order_not_found`,
+        );
+      }
+
+      if (reg.payment_status === "đã thanh toán") {
+        return res.redirect(
+          `${FRONTEND_URL}/dashboard/my-packages?vnpay_success=true&message=already_paid`,
+        );
+      }
+
+      updatePaymentStatus(
+        reg._id,
+        {
+          payment_status: "đã thanh toán",
+          payment_method: "vnpay",
+          vnpay_txn_ref: txnRef,
+          payment_date: new Date(),
+          vnpay_bank_code: bankCode,
+          vnpay_bank_tran_no: req.query.vnp_BankTranNo,
+          vnpay_card_type: req.query.vnp_CardType,
+          vnpay_transaction_no: transactionNo,
+        },
+        (updateErr) => {
+          if (updateErr)
+            console.error("Lỗi cập nhật thanh toán:", updateErr.message);
+        },
+      );
+
+      res.redirect(
+        `${FRONTEND_URL}/dashboard/my-packages?vnpay_success=true&transactionNo=${transactionNo}`,
+      );
+    });
+  } else {
+    res.redirect(
+      `${FRONTEND_URL}/dashboard/my-packages?vnpay_success=false&code=${responseCode}`,
+    );
+  }
+};
+
+
+export const vnpayIPN = (req, res) => {
+  let verify;
+  try {
+    verify = vnpay.verifyIpnCall(req.query);
+  } catch {
+    return res.status(200).json(IpnUnknownError);
+  }
+
+  if (!verify.isVerified) {
+    return res.status(200).json(IpnFailChecksum);
+  }
+
+  const txnRef = req.query.vnp_TxnRef;
+  const responseCode = req.query.vnp_ResponseCode;
+  const transactionAmount = Number(req.query.vnp_Amount) / 100;
+
+  findRegistrationByTxnRef(txnRef, (err, reg) => {
+    if (err || !reg) {
+      return res.status(200).json(IpnOrderNotFound);
+    }
+
+    if (reg.payment_status === "đã thanh toán") {
+      return res.status(200).json(IpnSuccess);
+    }
+
+    if (Math.floor(Number(reg.total_price)) !== transactionAmount) {
+      return res.status(200).json(IpnInvalidAmount);
+    }
+
+    if (responseCode === "00") {
+      updatePaymentStatus(
+        reg._id,
+        {
+          payment_status: "đã thanh toán",
+          payment_method: "vnpay",
+          vnpay_txn_ref: txnRef,
+          payment_date: new Date(),
+          vnpay_bank_code: req.query.vnp_BankCode,
+          vnpay_bank_tran_no: req.query.vnp_BankTranNo,
+          vnpay_card_type: req.query.vnp_CardType,
+          vnpay_transaction_no: req.query.vnp_TransactionNo,
+        },
+        (updateErr) => {
+          if (updateErr) {
+            return res.status(200).json(IpnUnknownError);
           }
 
-          const pdfFileName = await generateContractPDF({
-            registration: result,
-            pkg,
-            customer,
-            policies: Array.isArray(policies) ? policies : (policies?.data || [])
-          });
-
-          result.contract_pdf = pdfFileName;
-          await result.save();
-
-          res.status(201).json({
-            message: 'Đăng ký gói tập thành công! Vui lòng thanh toán trong vòng 24h.',
-            registration: {
-              id: result._id,
-              package_id: result.package_id,
-              start_date: result.start_date,
-              end_date: result.end_date,
-              status: result.status,
-              payment_status: result.payment_status,
-              payment_expires_at: result.payment_expires_at,
-              contract_pdf: pdfFileName
-            }
-          });
-        } catch (pdfErr) {
-          console.error('PDF generation error:', pdfErr);
-          res.status(201).json({
-            message: 'Đăng ký gói tập thành công!',
-            registration: {
-              id: result._id,
-              package_id: result.package_id,
-              start_date: result.start_date,
-              end_date: result.end_date,
-              status: result.status,
-              payment_status: 'pending',
-              payment_expires_at: result.payment_expires_at
-            }
-          });
-        }
-      });
-    })
-    .catch(err => res.status(500).json({ error: 'Lỗi hệ thống: ' + err.message }));
-};
-
-export const listMyPackages = (req, res) => {
-  const customer_id = req.user.id;
-
-  getUserPackages(customer_id, (err, registrations) => {
-    if (err) return res.status(500).json({ error: 'Lỗi lấy danh sách gói tập: ' + err.message });
-    res.status(200).json(registrations);
-  });
-};
-
-export const getRegistrationDetail = (req, res) => {
-  const { id } = req.params;
-
-  getRegistrationById(id, (err, reg) => {
-    if (err) return res.status(500).json({ error: 'Lỗi hệ thống: ' + err.message });
-    if (!reg) return res.status(404).json({ error: 'Không tìm thấy đăng ký!' });
-    res.status(200).json(reg);
-  });
-};
-
-export const adminRegisterPackage = (req, res) => {
-  const { customerId, package_id, locationId, duration_months, total_price, signature } = req.body;
-
-  if (!customerId || !package_id || !locationId || !duration_months || !total_price) {
-    return res.status(400).json({ error: 'Vui lòng cung cấp đầy đủ thông tin đăng ký!' });
-  }
-
-  Package.findById(package_id).exec()
-    .then(pkg => {
-      if (!pkg) return res.status(404).json({ error: 'Gói tập không tồn tại!' });
-      if (!pkg.is_active) return res.status(400).json({ error: 'Gói tập hiện không khả dụng!' });
-
-      const start_date = new Date();
-      const end_date = new Date(start_date);
-      end_date.setMonth(end_date.getMonth() + duration_months);
-
-      const registrationData = {
-        customer_id: customerId,
-        package_id, locationId,
-        duration_months, total_price,
-        signature: signature || '',
-        start_date, end_date,
-        payment_status: 'paid',
-        payment_expires_at: null,
-        status: 'chờ xác nhận'
-      };
-
-      createRegistration(registrationData, async (err, result) => {
-        if (err) return res.status(500).json({ error: 'Lỗi hệ thống khi đăng ký gói tập: ' + err.message });
-
-        try {
-          const customer = await Customer.findById(customerId);
-          const pdfFileName = await generateContractPDF({
-            registration: result,
-            pkg,
-            customer,
-            policies: []
-          });
-
-          result.contract_pdf = pdfFileName;
-          await result.save();
-
-          res.status(201).json({
-            message: 'Đăng ký gói tập cho hội viên thành công!',
-            registration: {
-              id: result._id,
-              contract_pdf: pdfFileName
-            }
-          });
-        } catch (pdfErr) {
-          console.error('PDF generation error:', pdfErr);
-          res.status(201).json({
-            message: 'Đăng ký gói tập cho hội viên thành công!'
-          });
-        }
-      });
-    })
-    .catch(err => res.status(500).json({ error: 'Lỗi hệ thống: ' + err.message }));
-};
-
-export const cancelRegistration = (req, res) => {
-  const { id } = req.params;
-
-  getRegistrationById(id, async (err, reg) => {
-    if (err) return res.status(500).json({ error: 'Lỗi hệ thống: ' + err.message });
-    if (!reg) return res.status(404).json({ error: 'Không tìm thấy đăng ký!' });
-
-    // Delete PDF file if exists
-    if (reg.contract_pdf) {
-      const pdfPath = path.resolve('uploads/contracts', reg.contract_pdf);
-      try {
-        if (fs.existsSync(pdfPath)) fs.unlinkSync(pdfPath);
-      } catch (e) {
-        console.error('Error deleting PDF:', e);
-      }
-    }
-
-    cancelRegistrationById(id, (err2, result) => {
-      if (err2) return res.status(500).json({ error: 'Lỗi hệ thống: ' + err2.message });
-      res.status(200).json({ message: 'Đã hủy đăng ký gói tập!', registration: result });
-    });
-  });
-};
-
-export const confirmPayment = (req, res) => {
-  const { id } = req.params;
-
-  getRegistrationById(id, (err, reg) => {
-    if (err) return res.status(500).json({ error: 'Lỗi hệ thống: ' + err.message });
-    if (!reg) return res.status(404).json({ error: 'Không tìm thấy đăng ký!' });
-    if (reg.payment_status === 'paid') return res.status(400).json({ error: 'Đơn hàng đã được thanh toán!' });
-    if (reg.payment_status === 'cancelled') return res.status(400).json({ error: 'Đơn hàng đã bị hủy!' });
-
-    updateRegistrationById(id, { payment_status: 'paid', payment_expires_at: null }, (err2, result) => {
-      if (err2) return res.status(500).json({ error: 'Lỗi hệ thống: ' + err2.message });
-      res.status(200).json({
-        message: 'Thanh toán thành công!',
-        registration: {
-          id: result._id,
-          payment_status: result.payment_status,
-          contract_pdf: result.contract_pdf
-        }
-      });
-    });
-  });
-};
-
-export const getContractPDF = (req, res) => {
-  const { id } = req.params;
-  const { token } = req.query;
-
-  // Support token in query param for opening in new tab
-  let authUser = req.user;
-  if (token && !authUser) {
-    try {
-      authUser = jwt.verify(token, JWT_SECRET);
-    } catch (e) {
-      return res.status(401).json({ error: 'Token không hợp lệ!' });
-    }
-  }
-
-  if (!authUser) {
-    return res.status(401).json({ error: 'Chưa xác thực!' });
-  }
-
-  getRegistrationById(id, (err, reg) => {
-    if (err) return res.status(500).json({ error: 'Lỗi hệ thống: ' + err.message });
-    if (!reg) return res.status(404).json({ error: 'Không tìm thấy đăng ký!' });
-    if (!reg.contract_pdf) return res.status(404).json({ error: 'Không tìm thấy hợp đồng PDF!' });
-
-    const isAdmin = authUser.isStaff || authUser.role === 'admin' || authUser.isAdmin;
-    const isOwner = reg.customer_id?._id?.toString() === authUser.id || reg.customer_id?.toString() === authUser.id;
-
-    if (!isAdmin && !isOwner) {
-      return res.status(403).json({ error: 'Bạn không có quyền xem hợp đồng này!' });
-    }
-
-    if (!isAdmin && isOwner) {
-      if (reg.payment_status !== 'paid') {
-        return res.status(403).json({ error: 'Hợp đồng chỉ khả dụng sau khi thanh toán!' });
-      }
-    }
-
-    const pdfPath = path.resolve('uploads/contracts', reg.contract_pdf);
-    if (!fs.existsSync(pdfPath)) {
-      return res.status(404).json({ error: 'File hợp đồng không tồn tại!' });
-    }
-
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `inline; filename="${reg.contract_pdf}"`);
-    fs.createReadStream(pdfPath).pipe(res);
-  });
-};
-
-export const adminListRegistrations = async (req, res) => {
-  try {
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 20;
-    const skip = (page - 1) * limit;
-
-    const [data, total] = await Promise.all([
-      UserPackage.find()
-        .populate('customer_id', 'fullName email phone account')
-        .populate('package_id', 'name unitPrice')
-        .populate('locationId', 'title')
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limit),
-      UserPackage.countDocuments()
-    ]);
-    res.status(200).json({ data, total, page, limit, totalPages: Math.ceil(total / limit) });
-  } catch (err) {
-    res.status(500).json({ error: 'Lỗi hệ thống: ' + err.message });
-  }
-};
-
-export const adminApproveRegistration = (req, res) => {
-  const { id } = req.params;
-  const { action } = req.body; // 'approve' or 'reject'
-
-  getRegistrationById(id, (err, reg) => {
-    if (err) return res.status(500).json({ error: 'Lỗi hệ thống: ' + err.message });
-    if (!reg) return res.status(404).json({ error: 'Không tìm thấy đăng ký!' });
-    if (reg.payment_status !== 'paid') {
-      return res.status(400).json({ error: 'Hội viên chưa thanh toán, không thể xác nhận!' });
-    }
-
-    if (action === 'approve') {
-      updateRegistrationById(id, { status: 'đang hoạt động' }, (err2, result) => {
-        if (err2) return res.status(500).json({ error: 'Lỗi hệ thống: ' + err2.message });
-        const customerId = reg.customer_id?._id || reg.customer_id;
-        res.status(200).json({
-          message: 'Đã xác nhận đăng ký gói tập!',
-          registration: result,
-          customerId: customerId?.toString()
-        });
-      });
-    } else if (action === 'reject') {
-      // Delete PDF
-      if (reg.contract_pdf) {
-        const pdfPath = path.resolve('uploads/contracts', reg.contract_pdf);
-        try { if (fs.existsSync(pdfPath)) fs.unlinkSync(pdfPath); } catch (e) {}
-      }
-      updateRegistrationById(id, { status: 'đã hủy', contract_pdf: '' }, (err2, result) => {
-        if (err2) return res.status(500).json({ error: 'Lỗi hệ thống: ' + err2.message });
-        res.status(200).json({ message: 'Đã từ chối đăng ký gói tập!', registration: result });
-      });
+          res.status(200).json(IpnSuccess);
+        },
+      );
     } else {
-      res.status(400).json({ error: 'Hành động không hợp lệ!' });
+      res.status(200).json(IpnSuccess);
     }
   });
 };

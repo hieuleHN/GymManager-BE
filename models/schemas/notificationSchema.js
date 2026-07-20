@@ -18,18 +18,18 @@ const notificationSchema = new mongoose.Schema({
     type: String,
     required: true
   },
-  type: {
+    type: {
     type: String,
-    enum: ['booking_request', 'booking_confirmed', 'booking_rejected', 'booking_cancelled', 'like', 'comment', 'report'],
+    enum: ['booking_request', 'booking_confirmed', 'booking_rejected', 'booking_cancelled', 'transfer_requested', 'transfer_approved', 'transfer_rejected', 'booking_transferred', 'wallet_topup', 'wallet_payment'],
     required: true
   },
   relatedBookingId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Booking'
   },
-  relatedPostId: {
+  relatedLockerIssueId: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'CommunityPost'
+    ref: 'LockerIssue'
   },
   read: {
     type: Boolean,

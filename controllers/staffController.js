@@ -1,12 +1,33 @@
 import {
-  createStaff, getAllStaff, getStaffById, updateStaffById, deleteStaffById, findStaffByAccount
+  createStaff, getAllStaff, getStaffById, updateStaffById, deleteStaffById, findStaffByAccount, getTrainers
 } from '../models/staffModel.js';
+import { findCustomerByAccount } from '../models/customerModel.js';
 import { getJobById } from '../models/jobModel.js';
 import { getPermissionsByJob } from '../models/permissionModel.js';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'Phong_Gym_Master_Key_2026';
+
+export const listTrainers = (req, res) => {
+  const { disciplineId, locationId, permission } = req.query;
+  getTrainers(permission, (err, trainers) => {
+      if (err) return res.status(500).json({ error: 'Lỗi lấy danh sách: ' + err.message });
+      let filtered = trainers;
+      if (disciplineId) {
+        filtered = filtered.filter(t =>
+          t.disciplineId?._id?.toString() === disciplineId ||
+          t.specialties?.some(s => s.toLowerCase().includes(
+            trainers.find(t2 => t2.disciplineId?._id?.toString() === disciplineId)?.disciplineId?.name?.toLowerCase() || ''
+          ))
+        );
+      }
+      if (locationId) {
+        filtered = filtered.filter(t => t.locationId?._id?.toString() === locationId);
+      }
+      res.json(filtered);
+  })
+}
 
 export const login = (req, res) => {
   const { account, password } = req.body;
@@ -22,6 +43,7 @@ export const login = (req, res) => {
 
       const jobId = staff.job?._id;
       const isAdmin = staff.job?.isAdmin === true;
+      const jobPermissions = staff.job?.permissions || [];
 
       getPermissionsByJob(jobId, (err, permission) => {
         let permissions = [];
@@ -32,7 +54,7 @@ export const login = (req, res) => {
         }
 
         const token = jwt.sign(
-          { id: staff._id, role: staff.job?.name || 'staff', username: staff.account, isStaff: true, jobId, isAdmin },
+          { id: staff._id, role: staff.job?.name || 'staff', username: staff.account, fullName: staff.fullName, isStaff: true, jobId, isAdmin },
           JWT_SECRET,
           { expiresIn: '3d' }
         );
@@ -48,7 +70,8 @@ export const login = (req, res) => {
             isStaff: true,
             isAdmin,
             locationId: staff.locationId || null,
-            permissions
+            permissions,
+            jobPermissions
           }
         });
       });
@@ -90,16 +113,26 @@ export const create = (req, res) => {
   if (!emailRegex.test(email)) {
     return res.status(400).json({ error: 'Email không hợp lệ!' });
   }
-  const staffData = { account, password, fullName, email, phone, gender, job, startDate, address, baseSalary, locationId };
-  createStaff(staffData, (err, result) => {
-    if (err) return res.status(400).json({ error: err.message || 'Lỗi thêm nhân viên!' });
-    res.status(201).json({ message: 'Thêm nhân viên thành công!', staffId: result.staffId });
+  findStaffByAccount(account, (err, existingStaff) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (existingStaff) return res.status(400).json({ error: 'Tên tài khoản đã tồn tại trong hệ thống!' });
+
+    findCustomerByAccount(account, (err, existingCustomer) => {
+      if (err) return res.status(500).json({ error: err.message });
+      if (existingCustomer) return res.status(400).json({ error: 'Tên tài khoản đã tồn tại trong hệ thống!' });
+
+      const staffData = { account, password, fullName, email, phone, gender, job, startDate, address, baseSalary, locationId };
+      createStaff(staffData, (err, result) => {
+        if (err) return res.status(400).json({ error: err.message || 'Lỗi thêm nhân viên!' });
+        res.status(201).json({ message: 'Thêm nhân viên thành công!', staffId: result.staffId });
+      });
+    });
   });
 };
 
 export const update = (req, res) => {
-  const { fullName, email, phone, gender, job, startDate, address, baseSalary, bonus, status } = req.body;
-  const data = { fullName, email, phone, gender, job, startDate, address, baseSalary, bonus, status };
+  const { fullName, email, phone, gender, job, startDate, address, baseSalary, bonus, status, avatar, coverImage, description, specialties, gallery, experience, certifications, disciplineId, pricePerSession } = req.body;
+  const data = { fullName, email, phone, gender, job, startDate, address, baseSalary, bonus, status, avatar, coverImage, description, specialties, gallery, experience, certifications, disciplineId, pricePerSession };
   Object.keys(data).forEach(k => data[k] === undefined && delete data[k]);
   updateStaffById(req.params.id, data, (err, staff) => {
     if (err) return res.status(400).json({ error: err.message || 'Lỗi cập nhật!' });

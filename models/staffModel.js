@@ -1,6 +1,25 @@
 import Staff from './schemas/staffSchema.js';
 import bcrypt from 'bcryptjs';
 
+
+export const getTrainers = async (permission, callback) => {
+  try {
+    if (typeof permission === 'function') { callback = permission; permission = null; }
+    const trainers = await Staff.find({ status: 'active' })
+      .populate('job', 'name description isAdmin permissions')
+      .populate('locationId', 'title address')
+      .populate('disciplineId', 'name')
+      .sort({ rating: -1 });
+    let filtered = trainers.filter(t => t.job && !t.job.isAdmin);
+    if (permission) {
+      filtered = filtered.filter(t => t.job?.permissions?.includes(permission));
+    }
+    callback(null, filtered);
+  } catch (error) {
+    callback(error);
+  }
+};
+
 export const createStaff = async (data, callback) => {
   try {
     const existing = await Staff.findOne({ $or: [{ account: data.account }, { email: data.email }] });
@@ -47,7 +66,9 @@ export const getAllStaff = async (page = 1, limit = 15, locationId, callback) =>
 
 export const getStaffById = async (id, callback) => {
   try {
-    const staff = await Staff.findById(id).populate('job', 'name salary');
+    const staff = await Staff.findById(id)
+      .populate('job', 'name salary')
+      .populate('disciplineId', 'name');
     if (!staff) return callback(null, null);
     callback(null, staff);
   } catch (err) {
@@ -70,6 +91,15 @@ export const updateStaffById = async (id, data, callback) => {
     if (data.baseSalary !== undefined) staff.baseSalary = data.baseSalary;
     if (data.bonus !== undefined) staff.bonus = data.bonus;
     if (data.status) staff.status = data.status;
+    if (data.avatar !== undefined) staff.avatar = data.avatar;
+    if (data.coverImage !== undefined) staff.coverImage = data.coverImage;
+    if (data.description !== undefined) staff.description = data.description;
+    if (data.specialties !== undefined) staff.specialties = data.specialties;
+    if (data.gallery !== undefined) staff.gallery = data.gallery;
+    if (data.experience !== undefined) staff.experience = data.experience;
+    if (data.certifications !== undefined) staff.certifications = data.certifications;
+    if (data.disciplineId !== undefined) staff.disciplineId = data.disciplineId;
+    if (data.pricePerSession !== undefined) staff.pricePerSession = data.pricePerSession;
 
     const saved = await staff.save();
     callback(null, saved);
@@ -90,7 +120,7 @@ export const deleteStaffById = async (id, callback) => {
 
 export const findStaffByAccount = async (account, callback) => {
   try {
-    const staff = await Staff.findOne({ account }).populate('job', 'name salary isAdmin');
+    const staff = await Staff.findOne({ account }).populate('job', 'name salary isAdmin permissions');
     callback(null, staff);
   } catch (err) {
     callback(err);

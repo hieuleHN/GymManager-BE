@@ -34,7 +34,7 @@ export const login = (req, res) => {
           role: 'member',
           isStaff: false,
           status: customer.status,
-          avatar: customer.avatar || ''
+          balance: customer.balance || 0
         }
       });
     });

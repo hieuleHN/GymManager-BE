@@ -1,29 +1,44 @@
-import express from 'express';
-import { authenticateToken } from '../middleware/authMiddleware.js';
+import express from "express";
 import {
-  registerPackage, listMyPackages, getRegistrationDetail,
-  cancelRegistration, confirmPayment, getContractPDF,
-  adminListRegistrations, adminApproveRegistration,
-  adminRegisterPackage
-} from '../controllers/userPackageController.js';
+  authenticateToken,
+  authorizeRoles,
+} from "../middleware/authMiddleware.js";
+import {
+  registerPackage,
+  listMyPackages,
+  getRegistrationDetail,
+  cancelRegistration,
+  listAllRegistrations,
+  confirmPayment,
+  setPaymentMethod,
+  createRenewOrUpgrade,
+  createVnPayUrl,
+  vnpayReturn,
+  vnpayIPN,
+  transactionHistory,
+  getMyPtSessions,
+  deductPtSession,
+} from "../controllers/userPackageController.js";
 
 const router = express.Router();
 
-const requireStaff = (req, res, next) => {
-  if (!req.user?.isStaff) {
-    return res.status(403).json({ error: 'Hành động bị từ chối! Bạn không đủ thẩm quyền.' });
-  }
-  next();
-};
+router.get("/payments/list", authenticateToken, listAllRegistrations);
+router.post("/register", authenticateToken, registerPackage);
+router.get("/my", authenticateToken, listMyPackages);
+router.get("/transactions", authenticateToken, transactionHistory);
+router.get("/pt-sessions", authenticateToken, getMyPtSessions);
+router.post("/pt-sessions/deduct", authenticateToken, deductPtSession);
+router.post("/renew-upgrade", authenticateToken, createRenewOrUpgrade);
 
-router.post('/register', authenticateToken, registerPackage);
-router.post('/admin-register', authenticateToken, requireStaff, adminRegisterPackage);
-router.get('/my', authenticateToken, listMyPackages);
-router.get('/all', authenticateToken, requireStaff, adminListRegistrations);
-router.post('/:id/approve', authenticateToken, requireStaff, adminApproveRegistration);
-router.get('/:id', authenticateToken, getRegistrationDetail);
-router.post('/:id/cancel', authenticateToken, cancelRegistration);
-router.post('/:id/confirm-payment', authenticateToken, confirmPayment);
-router.get('/:id/contract-pdf', getContractPDF);
+// API cho VNPAY
+router.get("/:id/vnpay-url", authenticateToken, createVnPayUrl); 
+router.get("/vnpay-return", vnpayReturn);
+router.get("/vnpay-ipn", vnpayIPN);
+router.post("/vnpay-ipn", vnpayIPN);
+
+router.get("/:id", authenticateToken, getRegistrationDetail);
+router.post("/:id/cancel", authenticateToken, cancelRegistration);
+router.patch("/:id/payment", authenticateToken, confirmPayment);
+router.patch("/:id/payment-method", authenticateToken, setPaymentMethod);
 
 export default router;
