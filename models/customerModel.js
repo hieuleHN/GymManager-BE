@@ -152,6 +152,15 @@ export const getPendingCustomers = async (callback) => {
   }
 };
 
+export const getAllCustomerIds = async (callback) => {
+  try {
+    const customers = await Customer.find({ status: 'approved' }).select('_id');
+    callback(null, customers.map(c => c._id));
+  } catch (err) {
+    callback(err);
+  }
+};
+
 export const getCustomersByDeadline = async (callback) => {
   try {
     const now = new Date();

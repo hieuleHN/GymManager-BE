@@ -29,6 +29,8 @@ import walletRoutes from "./routes/walletRoutes.js";
 import staffShiftRoutes from "./routes/staffShiftRoutes.js";
 import dashboardRoutes from "./routes/dashboardRoutes.js";
 import authRoutes from "./routes/authRoutes.js";
+import articleRoutes from "./routes/articleRoutes.js";
+
 import { autoCancelPendingBookings } from "./jobs/autoCancelBooking.js";
 import { autoCancelPendingPackages } from "./jobs/autoCancelPendingPackages.js";
 
@@ -72,6 +74,8 @@ app.use("/api/wallet", walletRoutes);
 app.use("/api/auth", authRoutes);
 app.use("/api/staff-shifts", staffShiftRoutes);
 app.use("/api/dashboard", dashboardRoutes);
+app.use("/api/articles", articleRoutes);
+
 
 initPackageStatusScheduler();
 
