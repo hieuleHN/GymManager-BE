@@ -58,6 +58,7 @@ export const createProduct = async (req, res) => {
   try {
     // Tạo một đối tượng dữ liệu mới từ body gửi lên
     const productData = { ...req.body };
+    productData.importQuantity = Number(req.body.quantity) || 0;
 
     // Kiểm tra xem Front-end có bấm chọn tệp và gửi file ảnh lên không
     if (req.file) {
@@ -111,6 +112,50 @@ export const deleteProduct = async (req, res) => {
     }
 
     res.status(200).json({ message: 'Xóa sản phẩm thành công!' });
+  } catch (error) {
+    res.status(500).json({ message: 'Lỗi server!', error: error.message });
+  }
+};
+
+// 6b. GHI NHẬN BÁN HÀNG: trừ tồn kho, cộng số lượng đã bán
+export const sellProduct = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { quantity } = req.body;
+    const qty = parseInt(quantity) || 1;
+
+    if (qty < 1) {
+      return res.status(400).json({ message: 'Số lượng bán phải lớn hơn 0!' });
+    }
+
+    const product = await Product.findById(id);
+    if (!product) {
+      return res.status(404).json({ message: 'Không tìm thấy sản phẩm!' });
+    }
+
+    if ((product.quantity || 0) < qty) {
+      return res.status(400).json({ message: `Không đủ tồn kho! Hiện còn ${product.quantity}` });
+    }
+
+    const updated = await Product.findByIdAndUpdate(
+      id,
+      {
+        $inc: { quantity: -qty, sold: qty },
+        $push: {
+          monthlySales: {
+            $each: [{
+              month: new Date().getMonth() + 1,
+              year: new Date().getFullYear(),
+              quantity: qty,
+              revenue: (product.price || 0) * qty
+            }]
+          }
+        }
+      },
+      { new: true }
+    );
+
+    res.status(200).json({ message: `Đã ghi nhận bán ${qty} ${product.name}`, data: updated });
   } catch (error) {
     res.status(500).json({ message: 'Lỗi server!', error: error.message });
   }
