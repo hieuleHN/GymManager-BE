@@ -99,6 +99,30 @@ const staffSchema = new mongoose.Schema({
     type: Number,
     default: 500000
   },
+  balance: {
+    type: Number,
+    default: 0
+  },
+  attendanceBonus: {
+    type: Number,
+    default: 0
+  },
+  latePenalty: {
+    type: Number,
+    default: 0
+  },
+  commissionPackage: {
+    type: Number,
+    default: 0
+  },
+  commissionPT: {
+    type: Number,
+    default: 0
+  },
+  revenueShare: {
+    type: Number,
+    default: 0
+  },
   createdAt: {
     type: Date,
     default: Date.now

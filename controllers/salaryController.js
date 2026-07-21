@@ -12,11 +12,11 @@ export const details = (req, res) => {
 };
 
 export const update = (req, res) => {
-  const { staffId, baseSalary } = req.body;
-  if (!staffId || !baseSalary || baseSalary <= 0) {
-    return res.status(400).json({ error: 'Vui lòng chọn nhân viên và nhập lương hợp lệ!' });
+  const { staffId, baseSalary, attendanceBonus, latePenalty, commissionPackage, commissionPT, revenueShare, bonus } = req.body;
+  if (!staffId) {
+    return res.status(400).json({ error: 'Vui lòng chọn nhân viên!' });
   }
-  updateSalary(staffId, baseSalary, (err, result) => {
+  updateSalary(staffId, { baseSalary, attendanceBonus, latePenalty, commissionPackage, commissionPT, revenueShare, bonus }, (err, result) => {
     if (err) return res.status(400).json({ error: err.message || 'Lỗi cập nhật lương!' });
     res.json({ message: 'Cập nhật lương thành công!' });
   });

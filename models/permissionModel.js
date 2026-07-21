@@ -55,7 +55,8 @@ const allFeatures = [
   { id: 'tasks', name: 'Quản lý công việc' },
   { id: 'payment', name: 'Quản lý thanh toán' },
   { id: 'training', name: 'Quản lý HLV / Lịch tập' },
-  { id: 'schedule', name: 'Xác nhận lịch tập' }
+  { id: 'schedule', name: 'Xác nhận lịch tập' },
+  { id: 'wallet', name: 'Ví điện tử nhân viên' }
 ];
 
 export const getAllFeatures = async (callback) => {

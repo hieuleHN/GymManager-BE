@@ -3,6 +3,7 @@ import CheckIn from "../models/schemas/checkInSchema.js";
 import UserPackage from "../models/schemas/userPackageSchema.js";
 import Staff from "../models/schemas/staffSchema.js";
 import Booking from "../models/schemas/bookingSchema.js";
+import Job from "../models/schemas/jobSchema.js";
 
 export const getAdminDashboardStats = async (req, res) => {
     try {
@@ -18,9 +19,9 @@ export const getAdminDashboardStats = async (req, res) => {
         let bookingStats = { today: 0, month: 0, year: 0 };
         try {
             const [todayCount, monthCount, yearCount] = await Promise.all([
-                Booking.countDocuments({ booking_date: { $gte: startOfToday, $lte: endOfToday } }),
-                Booking.countDocuments({ booking_date: { $gte: startOfMonth } }),
-                Booking.countDocuments({ booking_date: { $gte: startOfYear } })
+                Booking.countDocuments({ date: { $gte: startOfToday, $lte: endOfToday } }),
+                Booking.countDocuments({ date: { $gte: startOfMonth } }),
+                Booking.countDocuments({ date: { $gte: startOfYear } })
             ]);
             bookingStats = { today: todayCount, month: monthCount, year: yearCount };
         } catch (e) {
@@ -53,20 +54,21 @@ export const getAdminDashboardStats = async (req, res) => {
         // ==========================================================
         // 3. LIÊN KẾT HỘI VIÊN HOẠT ĐỘNG THEO MÔN (status: "đang hoạt động")
         // ==========================================================
-        const activePackages = await UserPackage.find({ status: "đang hoạt động" });
+        const activeRegs = await UserPackage.find({ status: "đang hoạt động" })
+            .populate({
+                path: "package_id",
+                populate: { path: "disciplineId", select: "name" }
+            });
         const sportDistributionMap = {};
 
-        activePackages.forEach(pkg => {
-            const name = (pkg.packageName || "").toLowerCase();
-            let category = "Gym & Fitness";
-
-            if (name.includes("yoga")) category = "Yoga";
-            else if (name.includes("boxing") || name.includes("võ")) category = "Kick Boxing";
-            else if (name.includes("zumba") || name.includes("dance")) category = "Dance / Zumba";
-            else if (name.includes("pilates")) category = "Pilates";
-
-            sportDistributionMap[category] = (sportDistributionMap[category] || 0) + 1;
-        });
+        for (const reg of activeRegs) {
+            const disciplineName = reg.package_id?.disciplineId?.name;
+            if (disciplineName) {
+                sportDistributionMap[disciplineName] = (sportDistributionMap[disciplineName] || 0) + 1;
+            } else {
+                sportDistributionMap["Khác"] = (sportDistributionMap["Khác"] || 0) + 1;
+            }
+        }
 
         const formattedSportDistribution = Object.keys(sportDistributionMap).map(key => ({
             name: key,
@@ -101,26 +103,23 @@ export const getAdminDashboardStats = async (req, res) => {
         const mondayFirstCheckins = [...formattedCheckInOfWeek.slice(1), formattedCheckInOfWeek[0]];
 
         // ==========================================================
-        // 5. LIÊN KẾT HIỆU SUẤT HLV (Sử dụng trường chuẩn assigned_guide_id)
+        // 5. LIÊN KẾT HIỆU SUẤT HLV
         // ==========================================================
         let trainerPerformance = [];
         try {
-            // Tìm tất cả nhân viên có vai trò liên quan đến PT hoặc Trainer
-            const trainers = await Staff.find({
-                $or: [
-                    { role: { $regex: /pt|trainer/i } },
-                    { role_id: { $exists: true } } // Nếu bạn dùng liên kết bảng role_id
-                ]
+            const trainerJobs = await Job.find({
+                name: { $regex: /huan luyen vien|trainer|pt/i }
             });
+            const trainerJobIds = trainerJobs.map(j => j._id);
+            const trainers = await Staff.find({ job: { $in: trainerJobIds } });
 
             trainerPerformance = await Promise.all(trainers.map(async (pt) => {
-                const completedSessions = await Booking.countDocuments({
-                    assigned_guide_id: pt._id, // Khớp chuẩn khóa ngoại của bảng bookings
-                    status: "completed"
+                const sessionCount = await Booking.countDocuments({
+                    trainerId: pt._id,
                 });
                 return {
                     name: pt.fullName,
-                    sessions: completedSessions
+                    sessions: sessionCount
                 };
             }));
         } catch (e) {

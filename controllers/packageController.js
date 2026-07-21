@@ -27,6 +27,8 @@ export const addPackage = (req, res) => {
     locationId,
     ptSessionsPerMonth,
     isFullMonth,
+    combo,
+    disciplines,
   } = req.body;
 
   if (!name) {
@@ -42,6 +44,8 @@ export const addPackage = (req, res) => {
     service_id,
     unitPrice,
     disciplineId,
+    combo: !!combo,
+    disciplines: disciplines || [],
     features,
     durations,
     contractA,
@@ -181,6 +185,8 @@ export const updatePackage = (req, res) => {
     locationId,
     ptSessionsPerMonth,
     isFullMonth,
+    combo,
+    disciplines,
   } = req.body;
 
   const payload = {
@@ -192,6 +198,8 @@ export const updatePackage = (req, res) => {
     service_id,
     unitPrice,
     disciplineId,
+    combo: !!combo,
+    disciplines: disciplines || [],
     features,
     durations,
     contractA,

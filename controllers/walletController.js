@@ -3,6 +3,7 @@ import { createWalletTransaction, getWalletTransactionByTxnRef, markTransactionC
 import { updateBookingPayment } from '../models/bookingModel.js';
 import { updatePaymentStatus } from '../models/userPackageModel.js';
 import { createNotification } from '../models/notificationModel.js';
+import { creditStaffWallets } from '../utils/staffWalletHelper.js';
 import vnpay from '../config/vnpayConfig.js';
 
 export const pay = async (req, res) => {
@@ -72,6 +73,8 @@ export const pay = async (req, res) => {
         : `Bạn đã thanh toán ${amount.toLocaleString('vi-VN')}₫ cho gói tập bằng Ví điện tử.`,
       type: 'wallet_payment',
     }, () => {});
+
+    creditStaffWallets(amount, `Thanh toán gói tập qua ví - ${amount.toLocaleString('vi-VN')}₫`);
 
     res.json({
       success: true,

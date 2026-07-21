@@ -20,6 +20,22 @@ export const generateQRToken =
 
     };
 
+export const generateStaffQRToken =
+    (staffId) => {
+
+        return jwt.sign(
+            {
+                staffId,
+                purpose: "staff-checkin"
+            },
+            QR_SECRET,
+            {
+                expiresIn: "30s"
+            }
+        );
+
+    };
+
 export const verifyQRToken =
     (token) => {
 

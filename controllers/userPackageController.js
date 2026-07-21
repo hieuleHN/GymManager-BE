@@ -21,6 +21,7 @@ import {
   IpnInvalidAmount,
   IpnUnknownError,
 } from "vnpay";
+import { creditStaffWallets, debitStaffWallets } from "../utils/staffWalletHelper.js";
 import { jsPDF } from "jspdf";
 import Policy from "../models/schemas/policySchema.js";
 import fs from "fs";
@@ -127,9 +128,14 @@ export const getRegistrationDetail = (req, res) => {
   getRegistrationById(req.params.id, (err, reg) => res.status(200).json(reg));
 };
 export const cancelRegistration = (req, res) => {
-  cancelRegistrationById(req.params.id, (err, result) =>
-    res.status(200).json({ message: "Đã hủy" }),
-  );
+  getRegistrationById(req.params.id, (err, reg) => {
+    if (!err && reg && reg.payment_status === "đã thanh toán") {
+      debitStaffWallets(Number(reg.total_price), `Hoàn tiền hủy đăng ký - ${Number(reg.total_price).toLocaleString('vi-VN')}₫`);
+    }
+    cancelRegistrationById(req.params.id, (err, result) =>
+      res.status(200).json({ message: "Đã hủy" }),
+    );
+  });
 };
 export const listAllRegistrations = (req, res) => {
   let { page, limit, payment_status, locationId, status } = req.query;
@@ -475,6 +481,8 @@ export const vnpayReturn = (req, res) => {
         },
       );
 
+      creditStaffWallets(Number(reg.total_price), `Thanh toán gói tập qua VNPay - ${Number(reg.total_price).toLocaleString('vi-VN')}₫`);
+
       res.redirect(
         `${FRONTEND_URL}/dashboard/my-packages?vnpay_success=true&transactionNo=${transactionNo}`,
       );
@@ -534,6 +542,7 @@ export const vnpayIPN = (req, res) => {
             return res.status(200).json(IpnUnknownError);
           }
 
+          creditStaffWallets(transactionAmount, `Thanh toán gói tập qua VNPay (IPN) - ${transactionAmount.toLocaleString('vi-VN')}₫`);
           res.status(200).json(IpnSuccess);
         },
       );
