@@ -8,6 +8,9 @@ export const createRegistration = async (data, callback) => {
       package_id,
       locationId,
       duration_months,
+      ptSessionsPerMonth,
+      isFullMonth,
+      monthlySessions,
       total_price,
       signature,
       start_date,
@@ -22,6 +25,9 @@ export const createRegistration = async (data, callback) => {
       package_id,
       locationId,
       duration_months,
+      ptSessionsPerMonth,
+      isFullMonth,
+      monthlySessions,
       total_price,
       signature,
       start_date,
@@ -46,8 +52,11 @@ export const getUserPackages = async (customerId, callback) => {
       // Chui sâu vào bảng gói tập để lấy thông tin cơ sở gốc phòng hờ hóa đơn bị khuyết dữ liệu
       .populate({
         path: "package_id",
-        select: "name unitPrice features durations locationId",
-        populate: { path: "locationId", select: "title name address" },
+        select: "name unitPrice features durations locationId disciplineId",
+        populate: [
+          { path: "locationId", select: "title name address" },
+          { path: "disciplineId", select: "name" }
+        ],
       })
       // Populate trực tiếp cơ sở gắn trên hóa đơn, bắt cả 2 trường title và name để tránh lệch cột DB
       .populate("locationId", "title name address")
@@ -63,8 +72,11 @@ export const getRegistrationById = async (id, callback) => {
     const reg = await UserPackage.findById(id)
       .populate({
         path: "package_id",
-        select: "name unitPrice features durations locationId",
-        populate: { path: "locationId", select: "title name address" },
+        select: "name unitPrice features durations locationId disciplineId",
+        populate: [
+          { path: "locationId", select: "title name address" },
+          { path: "disciplineId", select: "name" }
+        ],
       })
       .populate("locationId", "title name address")
       .populate("customer_id", "fullName email phone");

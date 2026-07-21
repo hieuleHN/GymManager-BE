@@ -20,25 +20,25 @@ export const detail = (req, res) => {
 };
 
 export const create = (req, res) => {
-  const { name, salary, description, isAdmin } = req.body;
+  const { name, salary, description, isAdmin, permissions } = req.body;
   if (!name || !salary) {
     return res.status(400).json({ error: 'Vui lòng nhập tên công việc và tiền lương!' });
   }
   if (salary <= 0) {
     return res.status(400).json({ error: 'Tiền lương phải lớn hơn 0!' });
   }
-  createJob({ name, salary: Number(salary), description, isAdmin }, (err, result) => {
+  createJob({ name, salary: Number(salary), description, isAdmin, permissions }, (err, result) => {
     if (err) return res.status(400).json({ error: err.message || 'Lỗi thêm công việc!' });
     res.status(201).json({ message: 'Thêm công việc thành công!', jobId: result.jobId });
   });
 };
 
 export const update = (req, res) => {
-  const { name, salary, description, isAdmin } = req.body;
+  const { name, salary, description, isAdmin, permissions } = req.body;
   if (salary !== undefined && salary <= 0) {
     return res.status(400).json({ error: 'Tiền lương phải lớn hơn 0!' });
   }
-  const data = { name, salary: salary !== undefined ? Number(salary) : undefined, description, isAdmin };
+  const data = { name, salary: salary !== undefined ? Number(salary) : undefined, description, isAdmin, permissions };
   Object.keys(data).forEach(k => data[k] === undefined && delete data[k]);
   updateJobById(req.params.id, data, (err, job) => {
     if (err) return res.status(400).json({ error: err.message || 'Lỗi cập nhật!' });

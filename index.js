@@ -25,6 +25,13 @@ import notificationRoutes from "./routes/notificationRoutes.js";
 import checkInRoutes from "./routes/checkInRoutes.js";
 import reviewRoutes from "./routes/reviewRoutes.js";
 import reportRoutes from "./routes/reportRoutes.js";
+import walletRoutes from "./routes/walletRoutes.js";
+import staffShiftRoutes from "./routes/staffShiftRoutes.js";
+import dashboardRoutes from "./routes/dashboardRoutes.js";
+import statisticsRoutes from "./routes/statisticsRoutes.js";
+import authRoutes from "./routes/authRoutes.js";
+import { autoCancelPendingBookings } from "./jobs/autoCancelBooking.js";
+import { autoCancelPendingPackages } from "./jobs/autoCancelPendingPackages.js";
 
 const app = express();
 app.use(cors());
@@ -62,8 +69,24 @@ app.use("/api/notifications", notificationRoutes);
 app.use("/api/checkin", checkInRoutes);
 app.use("/api/reviews", reviewRoutes);
 app.use("/api/reports", reportRoutes);
+app.use("/api/wallet", walletRoutes);
+app.use("/api/auth", authRoutes);
+app.use("/api/staff-shifts", staffShiftRoutes);
+app.use("/api/dashboard", dashboardRoutes);
+app.use("/api/statistics", statisticsRoutes);
 
 initPackageStatusScheduler();
+
+// Chạy sau khi MongoDB đã kết nối thành công
+setTimeout(async () => {
+  try {
+    console.log('[Startup] Đang xử lý các giao dịch chờ thanh toán quá hạn...');
+    await autoCancelPendingBookings();
+    await autoCancelPendingPackages();
+  } catch (err) {
+    console.error('[Startup] Lỗi:', err.message);
+  }
+}, 5000);
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {

@@ -1,7 +1,7 @@
 import express from "express";
 import {
   authenticateToken,
-  authorizeRoles,
+  requireAdmin,
 } from "../middleware/authMiddleware.js";
 import * as PackageController from "../controllers/packageController.js";
 
@@ -22,8 +22,10 @@ router.put("/:id", authenticateToken, PackageController.updatePackage);
 router.delete(
   "/:id",
   authenticateToken,
-  authorizeRoles("admin", "staff"),
+  requireAdmin,
   PackageController.deletePackage,
 );
 
 export default router;
+
+

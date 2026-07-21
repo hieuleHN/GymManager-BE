@@ -37,6 +37,9 @@ router.put('/:id', upload.single('image'), ProductController.updateProduct);
 // 6. Xóa sản phẩm
 router.delete('/:id', ProductController.deleteProduct);
 
+// 6b. Ghi nhận bán hàng (trừ tồn kho, cộng đã bán)
+router.post('/:id/sell', ProductController.sellProduct);
+
 // 7. Báo cáo sản phẩm
 router.post('/:id/report', ProductController.addReport);
 

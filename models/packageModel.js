@@ -17,6 +17,8 @@ export const createPackage = async (packageData, callback) => {
       contractB,
       contractTerms,
       locationId,
+      ptSessionsPerMonth,
+      isFullMonth,
     } = packageData;
     const pkg = new Package({
       name,
@@ -33,6 +35,8 @@ export const createPackage = async (packageData, callback) => {
       contractB,
       contractTerms,
       locationId,
+      ptSessionsPerMonth: ptSessionsPerMonth ?? 0,
+      isFullMonth: !!isFullMonth,
     });
     const result = await pkg.save();
     callback(null, result);
@@ -115,6 +119,8 @@ export const updatePackageById = async (id, packageData, callback) => {
       contractTerms,
       locationId,
       updatedAt,
+      ptSessionsPerMonth,
+      isFullMonth,
     } = packageData;
     const result = await Package.findByIdAndUpdate(
       id,
@@ -134,6 +140,8 @@ export const updatePackageById = async (id, packageData, callback) => {
         contractTerms,
         locationId,
         updatedAt,
+        ptSessionsPerMonth: ptSessionsPerMonth ?? 0,
+        isFullMonth: !!isFullMonth,
       },
       { new: true },
     );

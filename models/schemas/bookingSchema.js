@@ -42,14 +42,6 @@ const bookingSchema = new mongoose.Schema({
     ref: 'Staff',
     default: null
   },
-  pendingColleagueIds: [{
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'Staff'
-  }],
-  rejectedColleagueIds: [{
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'Staff'
-  }],
   transferredFromTrainerId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Staff',
@@ -67,9 +59,17 @@ const bookingSchema = new mongoose.Schema({
     type: String,
     default: ''
   },
+  transferFromDate: {
+    type: Date,
+    default: null
+  },
+  transferFromTime: {
+    type: String,
+    default: ''
+  },
   transferStatus: {
     type: String,
-    enum: ['none', 'pending_colleague', 'pending_approval', 'colleague_accepted', 'approved', 'rejected'],
+    enum: ['none', 'pending_approval', 'approved', 'rejected'],
     default: 'none'
   },
   transferApprovedBy: {
@@ -88,6 +88,10 @@ const bookingSchema = new mongoose.Schema({
   disciplineId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Discipline'
+  },
+  disciplineName: {
+    type: String,
+    default: ''
   },
   locationId: {
     type: mongoose.Schema.Types.ObjectId,
@@ -131,6 +135,10 @@ const bookingSchema = new mongoose.Schema({
     default: ''
   },
   payment_date: {
+    type: String,
+    default: ''
+  },
+  batchId: {
     type: String,
     default: ''
   },

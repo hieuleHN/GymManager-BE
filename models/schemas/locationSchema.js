@@ -48,6 +48,10 @@ const locationSchema = new mongoose.Schema({
     type: String,
     default: ''
   },
+  signature: {
+    type: String,
+    default: ''
+  },
   createdAt: {
     type: Date,
     default: Date.now

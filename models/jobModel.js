@@ -8,7 +8,8 @@ export const createJob = async (data, callback) => {
       name: data.name,
       salary: data.salary || 0,
       description: data.description || '',
-      isAdmin: data.isAdmin || false
+      isAdmin: data.isAdmin || false,
+      permissions: data.permissions || []
     });
     const saved = await job.save();
     callback(null, { jobId: saved._id });

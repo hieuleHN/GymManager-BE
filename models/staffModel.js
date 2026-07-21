@@ -2,14 +2,18 @@ import Staff from './schemas/staffSchema.js';
 import bcrypt from 'bcryptjs';
 
 
-export const getTrainers = async (callback) => {
+export const getTrainers = async (permission, callback) => {
   try {
+    if (typeof permission === 'function') { callback = permission; permission = null; }
     const trainers = await Staff.find({ status: 'active' })
-      .populate('job', 'name description isAdmin')
+      .populate('job', 'name description isAdmin permissions')
       .populate('locationId', 'title address')
       .populate('disciplineId', 'name')
       .sort({ rating: -1 });
-    const filtered = trainers.filter(t => t.job && !t.job.isAdmin);
+    let filtered = trainers.filter(t => t.job && !t.job.isAdmin);
+    if (permission) {
+      filtered = filtered.filter(t => t.job?.permissions?.includes(permission));
+    }
     callback(null, filtered);
   } catch (error) {
     callback(error);
@@ -116,7 +120,7 @@ export const deleteStaffById = async (id, callback) => {
 
 export const findStaffByAccount = async (account, callback) => {
   try {
-    const staff = await Staff.findOne({ account }).populate('job', 'name salary isAdmin');
+    const staff = await Staff.findOne({ account }).populate('job', 'name salary isAdmin permissions');
     callback(null, staff);
   } catch (err) {
     callback(err);

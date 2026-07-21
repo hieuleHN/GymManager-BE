@@ -10,11 +10,13 @@ export const createBooking = async (data, callback) => {
       startTime: data.startTime || undefined,
       endTime: data.endTime || undefined,
       disciplineId: data.disciplineId || undefined,
+      disciplineName: data.disciplineName || '',
       locationId: data.locationId,
       note: data.note || '',
       status: data.status || 'pending',
       price: data.price || 0,
-      paymentStatus: data.paymentStatus || 'pending'
+      paymentStatus: data.paymentStatus || 'pending',
+      batchId: data.batchId || undefined
     });
     const saved = await booking.save();
     callback(null, saved);
@@ -43,9 +45,11 @@ export const getBookingsByTrainer = async (trainerId, date, callback) => {
   }
 };
 
-export const getBookingsByCustomer = async (customerId, callback) => {
+export const getBookingsByCustomer = async (customerId, batchId, callback) => {
   try {
-    const bookings = await Booking.find({ customerId })
+    const filter = { customerId };
+    if (batchId) filter.batchId = batchId;
+    const bookings = await Booking.find(filter)
       .populate('trainerId', 'fullName phone disciplineId specialties')
       .populate('disciplineId', 'name')
       .populate('locationId', 'title address')
@@ -74,8 +78,6 @@ export const getBookingById = async (id, callback) => {
       .populate('trainerId', 'fullName phone avatar disciplineId specialties')
       .populate('disciplineId', 'name')
       .populate('locationId', 'title address')
-      .populate('pendingColleagueIds', 'fullName')
-      .populate('rejectedColleagueIds', 'fullName')
       .populate('transferredFromTrainerId', 'fullName');
     callback(null, booking);
   } catch (err) {
@@ -182,108 +184,36 @@ export const updateBookingStatus = async (id, status, rejectionReason = '', call
 
 export const updateTransferRequest = async (id, transferData, callback) => {
   try {
-    const transferStatus = transferData.transferType === 'to_colleague' ? 'pending_colleague' : 'pending_approval';
-    
-    if (transferData.transferType === 'to_colleague' && transferData.transferToTrainerId) {
-      const booking = await Booking.findById(id);
-      if (!booking) return callback({ message: 'Không tìm thấy lịch đặt!' });
-      
-      const setFields = {
-        transferType: 'to_colleague',
-        transferReason: transferData.transferReason || '',
-        transferStatus,
-        updatedAt: new Date()
-      };
-      if (!booking.transferredFromTrainerId) {
-        setFields.transferredFromTrainerId = booking.trainerId?._id || booking.trainerId;
-      }
-      
-      const updated = await Booking.findByIdAndUpdate(
-        id,
-        {
-          $addToSet: { pendingColleagueIds: transferData.transferToTrainerId },
-          $set: setFields
-        },
-        { new: true }
-      )
-        .populate('customerId', 'fullName phone email')
-        .populate('trainerId', 'fullName')
-        .populate('transferredFromTrainerId', 'fullName');
-      if (!updated) return callback({ message: 'Không tìm thấy lịch đặt!' });
-      callback(null, updated);
-    } else {
-      const update = {
-        transferType: transferData.transferType,
-        transferToTrainerId: transferData.transferToTrainerId || null,
-        transferReason: transferData.transferReason || '',
-        transferNewDate: transferData.transferNewDate || null,
-        transferNewTime: transferData.transferNewTime || '',
-        transferStatus,
-        transferApprovedBy: null,
-        transferApprovedAt: null,
-        transferRejectionReason: '',
-        updatedAt: new Date()
-      };
-      const booking = await Booking.findByIdAndUpdate(id, update, { new: true })
-        .populate('customerId', 'fullName phone email')
-        .populate('trainerId', 'fullName');
-      if (!booking) return callback({ message: 'Không tìm thấy lịch đặt!' });
-      callback(null, booking);
-    }
-  } catch (err) {
-    callback(err);
-  }
-};
-
-export const colleagueConfirmTransfer = async (id, accept, colleagueId, callback) => {
-  try {
+    const transferStatus = 'pending_approval';
     const booking = await Booking.findById(id);
     if (!booking) return callback({ message: 'Không tìm thấy lịch đặt!' });
 
-    if (accept) {
-      const update = {
-        trainerId: colleagueId,
-        transferToTrainerId: colleagueId,
-        pendingColleagueIds: [],
-        rejectedColleagueIds: [],
-        transferStatus: 'approved',
-        transferApprovedAt: new Date(),
-        updatedAt: new Date()
-      };
+    const setFields = {
+      transferType: transferData.transferType,
+      transferReason: transferData.transferReason || '',
+      transferStatus,
+      updatedAt: new Date()
+    };
 
-      const updated = await Booking.findByIdAndUpdate(id, update, { new: true })
-        .populate('customerId', 'fullName phone email')
-        .populate('trainerId', 'fullName')
-        .populate('transferredFromTrainerId', 'fullName');
-      callback(null, updated);
+    if (transferData.transferType === 'to_colleague') {
+      setFields.transferToTrainerId = transferData.transferToTrainerId;
+      if (!booking.transferredFromTrainerId) {
+        setFields.transferredFromTrainerId = booking.trainerId?._id || booking.trainerId;
+      }
     } else {
-      const pendingIds = booking.pendingColleagueIds || [];
-      const filtered = pendingIds.filter(id => id.toString() !== colleagueId.toString());
-
-      const update = {
-        pendingColleagueIds: filtered,
-        updatedAt: new Date()
-      };
-
-      const updated = await Booking.findByIdAndUpdate(
-        id,
-        {
-          $pull: { pendingColleagueIds: colleagueId },
-          $addToSet: { rejectedColleagueIds: colleagueId },
-          $set: {
-            transferStatus: filtered.length === 0 ? 'rejected' : 'pending_colleague',
-            transferRejectionReason: filtered.length === 0 ? 'Đồng nghiệp từ chối nhận chuyển lịch' : '',
-            updatedAt: new Date()
-          }
-        },
-        { new: true }
-      )
-        .populate('customerId', 'fullName phone email')
-        .populate('trainerId', 'fullName')
-        .populate('transferredFromTrainerId', 'fullName')
-        .populate('rejectedColleagueIds', 'fullName');
-      callback(null, updated);
+      setFields.transferNewDate = transferData.transferNewDate || null;
+      setFields.transferNewTime = transferData.transferNewTime || '';
+      setFields.transferFromDate = booking.date;
+      setFields.transferFromTime = booking.time || booking.startTime || '';
     }
+
+    const updated = await Booking.findByIdAndUpdate(id, { $set: setFields }, { new: true })
+      .populate('customerId', 'fullName phone email')
+      .populate('trainerId', 'fullName')
+      .populate('transferToTrainerId', 'fullName')
+      .populate('transferredFromTrainerId', 'fullName');
+    if (!updated) return callback({ message: 'Không tìm thấy lịch đặt!' });
+    callback(null, updated);
   } catch (err) {
     callback(err);
   }
@@ -301,15 +231,8 @@ export const approveTransferRequest = async (id, approvedBy, callback) => {
       updatedAt: new Date()
     };
 
-    if (booking.transferType === 'to_colleague') {
-      const targetTrainerId = booking.transferToTrainerId ||
-        (booking.pendingColleagueIds?.length > 0 ? booking.pendingColleagueIds[0] : null);
-      if (targetTrainerId) {
-        update.trainerId = targetTrainerId;
-        update.transferToTrainerId = targetTrainerId;
-        update.pendingColleagueIds = [];
-        update.rejectedColleagueIds = [];
-      }
+    if (booking.transferType === 'to_colleague' && booking.transferToTrainerId) {
+      update.trainerId = booking.transferToTrainerId;
     }
     if (booking.transferType === 'to_another_day') {
       if (booking.transferNewDate) update.date = booking.transferNewDate;
@@ -337,12 +260,8 @@ export const rejectTransferRequest = async (id, rejectionReason, callback) => {
     const update = {
       transferStatus: 'rejected',
       transferRejectionReason: rejectionReason || '',
-      transferType: 'none',
-      transferToTrainerId: null,
-      pendingColleagueIds: [],
-      rejectedColleagueIds: [],
-      transferNewDate: null,
-      transferNewTime: '',
+      transferApprovedBy: null,
+      transferApprovedAt: null,
       updatedAt: new Date()
     };
     const booking = await Booking.findByIdAndUpdate(id, update, { new: true })
@@ -378,16 +297,13 @@ export const getTrainerBookings = async (trainerId, dateFrom, dateTo, callback) 
     const bookings = await Booking.find({
       $or: [
         { trainerId, status: { $in: ['pending', 'confirmed'] }, ...(hasDateFilter ? { date: dateFilter } : {}) },
-        { transferToTrainerId: trainerId, transferStatus: { $in: ['pending_colleague', 'colleague_accepted'] }, ...(hasDateFilter ? { date: dateFilter } : {}) },
-        { pendingColleagueIds: trainerId, transferStatus: 'pending_colleague', ...(hasDateFilter ? { date: dateFilter } : {}) },
+        { transferToTrainerId: trainerId, transferStatus: 'approved', ...(hasDateFilter ? { date: dateFilter } : {}) },
         { transferredFromTrainerId: trainerId, transferStatus: 'approved', ...(hasDateFilter ? { date: dateFilter } : {}) }
       ]
     })
       .populate('customerId', 'fullName phone email avatar')
       .populate('trainerId', 'fullName')
       .populate('transferToTrainerId', 'fullName')
-      .populate('pendingColleagueIds', 'fullName')
-      .populate('rejectedColleagueIds', 'fullName')
       .populate('transferredFromTrainerId', 'fullName')
       .sort({ date: 1, time: 1 });
     callback(null, bookings);
