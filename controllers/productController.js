@@ -58,6 +58,7 @@ export const createProduct = async (req, res) => {
   try {
     // Tạo một đối tượng dữ liệu mới từ body gửi lên
     const productData = { ...req.body };
+    productData.importQuantity = Number(req.body.quantity) || 0;
 
     // Kiểm tra xem Front-end có bấm chọn tệp và gửi file ảnh lên không
     if (req.file) {
@@ -138,7 +139,19 @@ export const sellProduct = async (req, res) => {
 
     const updated = await Product.findByIdAndUpdate(
       id,
-      { $inc: { quantity: -qty, sold: qty } },
+      {
+        $inc: { quantity: -qty, sold: qty },
+        $push: {
+          monthlySales: {
+            $each: [{
+              month: new Date().getMonth() + 1,
+              year: new Date().getFullYear(),
+              quantity: qty,
+              revenue: (product.price || 0) * qty
+            }]
+          }
+        }
+      },
       { new: true }
     );
 

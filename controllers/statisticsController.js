@@ -120,12 +120,55 @@ export const getFinanceStatistics = async (req, res) => {
     const realCashInPrev = prevPaidSum + prevWalletSum;
 
     // ============ 2. DOANH THU GHI NHẬN (kỳ này vs kỳ trước) ============
-    const accrualThis = await sumBetween(
-      UserPackage, "total_price", "createdAt", start, new Date(), locFilter
-    );
-    const accrualPrev = await sumBetween(
-      UserPackage, "total_price", "createdAt", prevStart, prevEnd, locFilter
-    );
+    // 2a. Doanh thu sản phẩm theo tháng = price × sold trong tháng
+    const allProducts = await Product.find({ ...(locationId ? { location_id: locationId } : {}) });
+
+    function calcProductRevenue(start, end) {
+      let total = 0;
+      allProducts.forEach(p => {
+        (p.monthlySales || []).forEach(s => {
+          const saleDate = new Date(s.year, s.month - 1, 1);
+          if (saleDate >= start && saleDate <= end) {
+            total += s.revenue || 0;
+          }
+        });
+      });
+      return total;
+    }
+    const productRevThis = calcProductRevenue(start, new Date());
+    const productRevPrev = calcProductRevenue(prevStart, prevEnd);
+
+    // 2b. Doanh thu gói tập phân bổ theo thời hạn (chỉ gói đã thanh toán)
+    function calcPackageRevenue(start, end) {
+      let total = 0;
+      return UserPackage.find({
+        ...locFilter,
+        payment_status: "đã thanh toán",
+        start_date: { $lte: end },
+        end_date: { $gte: start }
+      }).then(pkgs => {
+        pkgs.forEach(up => {
+          const duration = up.duration_months || 1;
+          const monthlyRev = (up.total_price || 0) / duration;
+
+          // Số tháng giao nhau giữa gói và kỳ
+          const pkgStart = new Date(up.start_date);
+          const pkgEnd = new Date(up.end_date);
+          const overlapStart = pkgStart > start ? pkgStart : start;
+          const overlapEnd = pkgEnd < end ? pkgEnd : end;
+
+          const months = (overlapEnd.getFullYear() - overlapStart.getFullYear()) * 12
+            + (overlapEnd.getMonth() - overlapStart.getMonth()) + 1;
+          total += monthlyRev * Math.max(0, months);
+        });
+        return total;
+      });
+    }
+    const packageRevThis = await calcPackageRevenue(start, new Date());
+    const packageRevPrev = await calcPackageRevenue(prevStart, prevEnd);
+
+    const accrualThis = productRevThis + packageRevThis;
+    const accrualPrev = productRevPrev + packageRevPrev;
 
     // ============ 3. TỔNG CHI PHÍ (kỳ này vs kỳ trước) ============
     const expenseFilter = locationId ? { locationId } : {};
@@ -136,12 +179,13 @@ export const getFinanceStatistics = async (req, res) => {
       Expense, "amount", "date", prevStart, prevEnd, expenseFilter
     );
 
-    // ============ 3b. TIỀN NHẬP HÀNG (COGS - chỉ tính hàng đã bán) ============
+    // ============ 3b. COGS & TIỀN NHẬP HÀNG ============
     const productFilter = locationId ? { location_id: locationId } : {};
     const products = await Product.find(productFilter);
-    const importCostThis = products.reduce((sum, p) => sum + (p.costPrice || 0) * (p.sold || 0), 0);
+    const cogsThis = products.reduce((sum, p) => sum + (p.costPrice || 0) * (p.sold || 0), 0);
+    const totalImportCost = products.reduce((sum, p) => sum + (p.costPrice || 0) * (p.importQuantity || p.quantity || 0), 0);
 
-    // Tiền nhập hàng theo tháng (dựa trên importDate, chỉ tính phần đã bán)
+    // Tiền nhập hàng theo tháng (dựa trên importDate, COGS)
     const importByMonth = await Product.aggregate([
       { $match: { ...productFilter, importDate: { $gte: new Date(new Date().getFullYear(), 0, 1) } } },
       { $project: { month: { $month: "$importDate" }, cost: { $multiply: ["$costPrice", "$sold"] } } },
@@ -153,7 +197,7 @@ export const getFinanceStatistics = async (req, res) => {
     });
 
     // ============ 4. LỢI NHUẬN ============
-    const totalExpenseThis = expenseThis + importCostThis;
+    const totalExpenseThis = expenseThis + cogsThis;
     const totalExpensePrev = expensePrev; // kỳ trước không có import cost đã bán
     const profitThis = accrualThis - totalExpenseThis;
     const profitPrev = accrualPrev - totalExpensePrev;
@@ -163,7 +207,7 @@ export const getFinanceStatistics = async (req, res) => {
       accrualRevenue: accrualThis,
       totalExpense: totalExpenseThis,
       totalProfit: profitThis,
-      importCost: importCostThis,
+      importCost: cogsThis,
       profitMargin: accrualThis ? Math.round((profitThis / accrualThis) * 100) : 0,
       change: {
         realCashIn: pctChange(realCashInThis, realCashInPrev),
@@ -178,14 +222,46 @@ export const getFinanceStatistics = async (req, res) => {
       UserPackage, "total_price", "payment_date",
       { ...locFilter, payment_status: "đã thanh toán" }
     );
-    const accrualSeries = await monthlySeries(
-      UserPackage, "total_price", "createdAt", locFilter
-    );
+
+    // Doanh thu ghi nhận theo tháng
+    const now = new Date();
+    const yearStart = new Date(now.getFullYear(), 0, 1);
+    const accrualByMonth = await UserPackage.find({
+      ...locFilter,
+      payment_status: "đã thanh toán",
+      start_date: { $lte: now },
+      end_date: { $gte: yearStart }
+    });
+    const accrualMonthly = MONTHS.map((_, i) => {
+      const month = i + 1;
+      let total = 0;
+      // Sản phẩm bán trong tháng
+      allProducts.forEach(p => {
+        (p.monthlySales || []).forEach(s => {
+          if (s.month === month && s.year === now.getFullYear()) {
+            total += s.revenue || 0;
+          }
+        });
+      });
+      // Gói tập phân bổ trong tháng
+      accrualByMonth.forEach(up => {
+        const duration = up.duration_months || 1;
+        const monthlyRev = (up.total_price || 0) / duration;
+        const monthStart = new Date(now.getFullYear(), month - 1, 1);
+        const monthEnd = new Date(now.getFullYear(), month, 0, 23, 59, 59, 999);
+        const pkgStart = new Date(up.start_date);
+        const pkgEnd = new Date(up.end_date);
+        if (pkgStart <= monthEnd && pkgEnd >= monthStart) {
+          total += monthlyRev;
+        }
+      });
+      return { month: MONTHS[i], value: total };
+    });
 
     const cashFlowData = MONTHS.map((m, i) => ({
       month: m,
       cash: cashSeries[i].value,
-      revenue: accrualSeries[i].value,
+      revenue: accrualMonthly[i].value,
     }));
 
     // ============ CHI PHÍ & LÃI ============
@@ -194,7 +270,7 @@ export const getFinanceStatistics = async (req, res) => {
     );
 
     const profitData = MONTHS.map((m, i) => {
-      const rev = accrualSeries[i].value;
+      const rev = accrualMonthly[i].value;
       const exp = expenseSeries[i].value + importSeries[i].value;
       return { month: m, revenue: rev, expense: exp, profit: rev - exp };
     });
@@ -214,8 +290,8 @@ export const getFinanceStatistics = async (req, res) => {
       name: categoryLabel[e._id] || e._id,
       value: e.value,
     }));
-    if (importCostThis > 0) {
-      expenseStructure.push({ name: "Tiền nhập hàng", value: importCostThis });
+    if (totalImportCost > 0) {
+      expenseStructure.push({ name: "Tiền nhập hàng", value: totalImportCost });
     }
 
     // ============ DOANH SỐ THEO GÓI & TỈ LỆ THAM GIA ============
@@ -259,7 +335,6 @@ export const getFinanceStatistics = async (req, res) => {
     );
 
     // ============ TOP SẢN PHẨM ============
-    const allProducts = await Product.find({ ...(locationId ? { location_id: locationId } : {}) });
     const productSales = allProducts.map((p) => ({
       name: p.name,
       price: p.price,

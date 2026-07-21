@@ -21,10 +21,22 @@ const productSchema = new mongoose.Schema({
     default: 0
   },
 
+  importQuantity: {
+    type: Number,
+    default: 0
+  },
+
   sold: {
     type: Number,
     default: 0
   },
+
+  monthlySales: [{
+    month: Number,
+    year: Number,
+    quantity: { type: Number, default: 0 },
+    revenue: { type: Number, default: 0 }
+  }],
 
   description: {
     type: String,
