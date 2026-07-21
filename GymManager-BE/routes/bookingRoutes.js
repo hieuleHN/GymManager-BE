@@ -7,7 +7,6 @@ import {
   detail,
   getByTrainer,
   getByCustomer,
-  getByCustomerDateRange,
   confirmBooking,
   rejectBooking,
   checkConflict,
@@ -30,7 +29,6 @@ router.post('/', authenticateToken, create);
 router.post('/bulk', authenticateToken, createBulk);
 router.get('/', authenticateToken, list);
 router.get('/my', authenticateToken, getByCustomer);
-router.get('/my-date-range', authenticateToken, getByCustomerDateRange);
 router.get('/my-trainer', authenticateToken, getMyTrainerBookings);
 router.get('/transfer-requests', authenticateToken, listTransferRequests);
 router.get('/check-conflict', authenticateToken, checkConflict);

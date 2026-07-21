@@ -351,28 +351,9 @@ export const checkCustomerConflict = async (customerId, date, time, excludeBooki
     if (excludeBookingId) {
       query._id = { $ne: excludeBookingId };
     }
-    const existingBooking = await Booking.findOne(query);
+    const existingBooking = await Booking.findOne(query)
+      .populate('trainerId', 'fullName');
     callback(null, existingBooking);
-  } catch (err) {
-    callback(err);
-  }
-};
-
-export const getCustomerBookingsByDateRange = async (customerId, dateFrom, dateTo, callback) => {
-  try {
-    const query = {
-      customerId,
-      status: { $in: ['pending', 'confirmed'] }
-    };
-    if (dateFrom || dateTo) {
-      query.date = {};
-      if (dateFrom) query.date.$gte = new Date(dateFrom);
-      if (dateTo) query.date.$lte = new Date(dateTo);
-    }
-    const bookings = await Booking.find(query)
-      .select('date time startTime endTime status')
-      .sort({ date: 1, time: 1 });
-    callback(null, bookings);
   } catch (err) {
     callback(err);
   }

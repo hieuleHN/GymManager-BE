@@ -11,7 +11,6 @@ import {
   updateBookingPayment,
   checkTrainerConflict,
   checkCustomerConflict,
-  getCustomerBookingsByDateRange,
   getBookingsByLocation,
   updateBookingVnpayTransactionRef,
   getBookingByVnpayTxnRef,
@@ -84,16 +83,21 @@ export const create = async (req, res) => {
     price: price || 0
   };
 
-  if (trainerId) {
-    checkCustomerConflict(customerId, date, time, null, (err, customerConflict) => {
-      if (err) return res.status(500).json({ error: 'Lỗi kiểm tra lịch: ' + err.message });
-      if (customerConflict) {
-        return res.status(409).json({
-          error: 'Bạn đã có lịch vào thời gian này! Vui lòng chọn thời gian khác.',
-          conflict: customerConflict
-        });
-      }
+  checkCustomerConflict(customerId, date, time, null, (err, customerConflict) => {
+    if (err) {
+      console.log('[BOOKING] Lỗi checkCustomerConflict:', err.message);
+      return res.status(500).json({ error: 'Lỗi kiểm tra lịch: ' + err.message });
+    }
+    if (customerConflict) {
+      console.log('[BOOKING] TRÚNG LỊCH KHÁCH HÀNG:', customerId, date, time);
+      return res.status(409).json({
+        error: 'Bạn đã có lịch vào thời gian này! Vui lòng chọn thời gian khác.',
+        conflict: customerConflict
+      });
+    }
+    console.log('[BOOKING] Không trùng lịch khách hàng, tiếp tục...');
 
+    if (trainerId) {
       checkTrainerConflict(trainerId, date, time, null, (err, conflict) => {
         if (err) return res.status(500).json({ error: 'Lỗi kiểm tra lịch: ' + err.message });
         if (conflict) {
@@ -121,17 +125,7 @@ export const create = async (req, res) => {
           });
         });
       });
-    });
-  } else {
-    checkCustomerConflict(customerId, date, time, null, (err, customerConflict) => {
-      if (err) return res.status(500).json({ error: 'Lỗi kiểm tra lịch: ' + err.message });
-      if (customerConflict) {
-        return res.status(409).json({
-          error: 'Bạn đã có lịch vào thời gian này! Vui lòng chọn thời gian khác.',
-          conflict: customerConflict
-        });
-      }
-
+    } else {
       const personalBookingData = {
         ...bookingData,
         paymentStatus: 'paid',
@@ -144,8 +138,8 @@ export const create = async (req, res) => {
           booking
         });
       });
-    });
-  }
+    }
+  });
 };
 
 export const list = (req, res) => {
@@ -209,16 +203,6 @@ export const getByCustomer = (req, res) => {
   const { batchId } = req.query;
 
   getBookingsByCustomer(customerId, batchId || null, (err, bookings) => {
-    if (err) return res.status(500).json({ error: err.message });
-    res.json(bookings);
-  });
-};
-
-export const getByCustomerDateRange = (req, res) => {
-  const customerId = req.user.id;
-  const { dateFrom, dateTo } = req.query;
-
-  getCustomerBookingsByDateRange(customerId, dateFrom || null, dateTo || null, (err, bookings) => {
     if (err) return res.status(500).json({ error: err.message });
     res.json(bookings);
   });
@@ -563,6 +547,16 @@ export const createBulk = async (req, res) => {
       price: price || 0
     };
 
+    const customerConflict = await new Promise((resolve) => {
+      checkCustomerConflict(customerId, slot.date, slot.time, null, (err, conflict) => {
+        resolve(err ? null : conflict);
+      });
+    });
+    if (customerConflict) {
+      errors.push({ date: slot.date, time: slot.time, error: 'Bạn đã có lịch vào thời gian này!' });
+      continue;
+    }
+
     if (trainerId) {
       const conflict = await new Promise((resolve) => {
         checkTrainerConflict(trainerId, slot.date, slot.time, null, (err, conflict) => {
@@ -573,16 +567,6 @@ export const createBulk = async (req, res) => {
         errors.push({ date: slot.date, time: slot.time, error: 'HLV đã có lịch vào thời gian này!' });
         continue;
       }
-    }
-
-    const customerConflict = await new Promise((resolve) => {
-      checkCustomerConflict(customerId, slot.date, slot.time, null, (err, conflict) => {
-        resolve(err ? null : conflict);
-      });
-    });
-    if (customerConflict) {
-      errors.push({ date: slot.date, time: slot.time, error: 'Bạn đã có lịch vào thời gian này!' });
-      continue;
     }
 
     const booking = await new Promise((resolve, reject) => {
@@ -616,15 +600,44 @@ export const createBulk = async (req, res) => {
 };
 
 export const checkConflict = (req, res) => {
-  const { trainerId, date, time } = req.query;
+  const { trainerId, customerId, date, time } = req.query;
 
-  if (!trainerId || !date || !time) {
+  if (!date || !time) {
     return res.status(400).json({ error: 'Thiếu thông tin kiểm tra!' });
   }
 
-  checkTrainerConflict(trainerId, date, time, null, (err, conflict) => {
-    if (err) return res.status(500).json({ error: err.message });
-    res.json({ hasConflict: !!conflict, conflict });
+  if (!trainerId && !customerId) {
+    return res.status(400).json({ error: 'Thiếu thông tin kiểm tra!' });
+  }
+
+  const checks = {};
+
+  const checkTrainer = new Promise((resolve) => {
+    if (!trainerId) return resolve();
+    checkTrainerConflict(trainerId, date, time, null, (err, conflict) => {
+      checks.trainerConflict = !err && !!conflict;
+      checks.trainerConflictData = conflict || null;
+      resolve();
+    });
+  });
+
+  const checkCustomer = new Promise((resolve) => {
+    if (!customerId) return resolve();
+    checkCustomerConflict(customerId, date, time, null, (err, conflict) => {
+      checks.customerConflict = !err && !!conflict;
+      checks.customerConflictData = conflict || null;
+      resolve();
+    });
+  });
+
+  Promise.all([checkTrainer, checkCustomer]).then(() => {
+    const hasConflict = checks.trainerConflict || checks.customerConflict;
+    res.json({
+      hasConflict,
+      trainerConflict: checks.trainerConflict || false,
+      customerConflict: checks.customerConflict || false,
+      conflict: checks.trainerConflictData || checks.customerConflictData || null
+    });
   });
 };
 
