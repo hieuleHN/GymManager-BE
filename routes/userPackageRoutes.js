@@ -12,6 +12,7 @@ import {
   confirmPayment,
   setPaymentMethod,
   createRenewOrUpgrade,
+  calculateUpgrade,
   createVnPayUrl,
   vnpayReturn,
   vnpayIPN,
@@ -31,6 +32,7 @@ router.get("/my", authenticateToken, listMyPackages);
 router.get("/transactions", authenticateToken, transactionHistory);
 router.get("/pt-sessions", authenticateToken, getMyPtSessions);
 router.post("/pt-sessions/deduct", authenticateToken, deductPtSession);
+router.post("/calculate-upgrade", authenticateToken, calculateUpgrade);
 router.post("/renew-upgrade", authenticateToken, createRenewOrUpgrade);
 
 // API cho VNPAY

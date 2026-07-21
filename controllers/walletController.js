@@ -34,21 +34,19 @@ export const pay = async (req, res) => {
       updatedAt: new Date()
     });
 
-    await new Promise((resolve) => {
-      createWalletTransaction({
-        customerId,
-        type: 'payment',
-        amount: -amount,
-        balanceBefore: balance,
-        balanceAfter: balance - amount,
-        status: 'completed',
-        description: type === 'booking'
-          ? `Thanh toán đặt lịch (${ids.length} buổi) - ${amount.toLocaleString('vi-VN')}₫`
-          : `Thanh toán gói tập - ${amount.toLocaleString('vi-VN')}₫`
-      }, () => resolve(null));
-    });
-
     if (type === 'booking') {
+      await new Promise((resolve) => {
+        createWalletTransaction({
+          customerId,
+          type: 'payment',
+          amount: -amount,
+          balanceBefore: balance,
+          balanceAfter: balance - amount,
+          status: 'completed',
+          description: `Thanh toán đặt lịch (${ids.length} buổi) - ${amount.toLocaleString('vi-VN')}₫`
+        }, () => resolve(null));
+      });
+
       for (const id of ids) {
         await new Promise((resolve) => {
           updateBookingPayment(id, 'wallet', (err) => resolve(null));

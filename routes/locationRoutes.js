@@ -13,6 +13,7 @@ router.put('/:id', uploadDynamic('locations').array('images', 10), LocationContr
 
 router.patch('/:id/payment', LocationController.updatePaymentInfo);
 router.post('/:id/qr', uploadDynamic('locations').single('qrImage'), LocationController.uploadQR);
+router.post('/:id/signature', LocationController.uploadSignature);
 
 router.delete('/:id', LocationController.deleteLocation);
 
