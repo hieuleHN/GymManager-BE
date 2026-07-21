@@ -142,6 +142,18 @@ export const updatePaymentInfo = (req, res) => {
   });
 };
 
+// Upload chữ ký đại diện cho cơ sở
+export const uploadSignature = (req, res) => {
+  const { signature } = req.body;
+  if (!signature) {
+    return res.status(400).json({ error: 'Vui lòng cung cấp ảnh chữ ký!' });
+  }
+  LocationModel.updateSignature(req.params.id, signature, (err, result) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json({ message: 'Cập nhật chữ ký thành công!', signature });
+  });
+};
+
 // Upload mã QR cho cơ sở
 export const uploadQR = (req, res) => {
   if (!req.file) {
