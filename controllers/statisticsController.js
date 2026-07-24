@@ -214,44 +214,88 @@ export const getFinanceStatistics = async (req, res) => {
       })
       .reduce((sum, p) => sum + (p.costPrice || 0) * (p.importQuantity || p.quantity || 0), 0);
 
-    // ============ 3c. TIỀN THIẾT BỊ ============
+    // ============ 3c. KHẤU HAO THIẾT BỊ (Nguyên giá / 60 tháng = 5 năm) ============
+    const DEPRECIATION_MONTHS = 60;
     const equipmentFilter = locationId ? { location_id: locationId } : {};
     const equipments = await Equipment.find(equipmentFilter);
-    const equipmentCostThis = equipments
-      .filter(e => {
-        const created = new Date(e.createdAt);
-        return created >= start && created <= new Date();
-      })
-      .reduce((sum, e) => sum + (e.total || 0), 0);
+    const now = new Date();
 
-    // Tổng tiền thiết bị năm (dùng cho expenseStructure pie chart)
-    const totalEquipmentCost = equipments
-      .filter(e => {
-        const created = new Date(e.createdAt);
-        const yearStart = new Date(new Date().getFullYear(), 0, 1);
-        return created >= yearStart && created <= new Date();
-      })
-      .reduce((sum, e) => sum + (e.total || 0), 0);
+    // Tính khấu hao cho 1 thiết bị trong khoảng [periodStart, periodEnd]
+    function calcDepreciation(eq, periodStart, periodEnd) {
+      const total = eq.total || 0;
+      if (total <= 0) return 0;
+      const monthlyDepr = total / DEPRECIATION_MONTHS;
+      const eqStart = new Date(eq.createdAt);
+      // Số tháng thiết bị tồn tại đến hết kỳ
+      const monthsToEnd = (periodEnd.getFullYear() - eqStart.getFullYear()) * 12
+        + (periodEnd.getMonth() - eqStart.getMonth()) + 1;
+      if (monthsToEnd <= 0) return 0;
+      // Số tháng bắt đầu từ kỳ này
+      const monthsToStart = (periodStart.getFullYear() - eqStart.getFullYear()) * 12
+        + (periodStart.getMonth() - eqStart.getMonth());
+      const activeMonths = Math.max(0, monthsToEnd - Math.max(0, monthsToStart));
+      // Không vượt quá 60 tháng và không vượt quá nguyên giá
+      const totalDepreciated = monthlyDepr * Math.min(activeMonths, DEPRECIATION_MONTHS);
+      return Math.min(totalDepreciated, total);
+    }
+
+    // Khấu hao kỳ này
+    const equipmentCostThis = equipments.reduce((sum, e) => sum + calcDepreciation(e, start, now), 0);
+
+    // Khấu hao năm (dùng cho expenseStructure pie chart)
+    const yearStart = new Date(now.getFullYear(), 0, 1);
+    const totalEquipmentCost = equipments.reduce((sum, e) => sum + calcDepreciation(e, yearStart, now), 0);
+
+    // Khấu hao theo tháng trong năm
+    const equipmentSeries = MONTHS.map((_, i) => {
+      const mStart = new Date(now.getFullYear(), i, 1);
+      const mEnd = new Date(now.getFullYear(), i + 1, 0, 23, 59, 59, 999);
+      const value = equipments.reduce((sum, e) => {
+        const total = e.total || 0;
+        if (total <= 0) return sum;
+        const monthlyDepr = total / DEPRECIATION_MONTHS;
+        const eqStart = new Date(e.createdAt);
+        // Kiểm tra thiết bị có hoạt động trong tháng này không
+        if (eqStart > mEnd) return sum;
+        const monthsFromStart = (mEnd.getFullYear() - eqStart.getFullYear()) * 12
+          + (mEnd.getMonth() - eqStart.getMonth()) + 1;
+        if (monthsFromStart <= 0) return sum;
+        // Đã khấu hao hết chưa?
+        const totalDepreciatedSoFar = monthlyDepr * Math.min(monthsFromStart, DEPRECIATION_MONTHS);
+        if (totalDepreciatedSoFar > total) return sum;
+        return sum + monthlyDepr;
+      }, 0);
+      return { month: MONTHS[i], value: Math.round(value) };
+    });
+
+    // Chi tiết khấu hao từng thiết bị (dùng cho Excel export)
+    const depreciationDetail = equipments.filter(e => (e.total || 0) > 0).map(e => {
+      const total = e.total || 0;
+      const monthlyDepr = total / DEPRECIATION_MONTHS;
+      const eqStart = new Date(e.createdAt);
+      const monthsActive = Math.min(
+        DEPRECIATION_MONTHS,
+        Math.max(0, (now.getFullYear() - eqStart.getFullYear()) * 12 + (now.getMonth() - eqStart.getMonth()) + 1)
+      );
+      const totalDepreciated = Math.min(monthlyDepr * monthsActive, total);
+      return {
+        name: e.name,
+        total,
+        monthlyDepreciation: Math.round(monthlyDepr),
+        monthsActive,
+        totalDepreciated: Math.round(totalDepreciated),
+        remainingValue: Math.round(total - totalDepreciated),
+      };
+    });
 
     // Tiền nhập hàng theo tháng (dựa trên importDate)
     const importByMonth = await Product.aggregate([
-      { $match: { ...productFilter, importDate: { $gte: new Date(new Date().getFullYear(), 0, 1) } } },
+      { $match: { ...productFilter, importDate: { $gte: new Date(now.getFullYear(), 0, 1) } } },
       { $project: { month: { $month: "$importDate" }, cost: { $multiply: ["$costPrice", "$importQuantity"] } } },
       { $group: { _id: "$month", value: { $sum: "$cost" } } },
     ]);
     const importSeries = MONTHS.map((label, idx) => {
       const found = importByMonth.find((r) => r._id === idx + 1);
-      return { month: label, value: found ? found.value : 0 };
-    });
-
-    // Tiền thiết bị theo tháng (dựa trên createdAt)
-    const equipmentByMonth = await Equipment.aggregate([
-      { $match: { ...equipmentFilter, createdAt: { $gte: new Date(new Date().getFullYear(), 0, 1) } } },
-      { $project: { month: { $month: "$createdAt" }, cost: "$total" } },
-      { $group: { _id: "$month", value: { $sum: "$cost" } } },
-    ]);
-    const equipmentSeries = MONTHS.map((label, idx) => {
-      const found = equipmentByMonth.find((r) => r._id === idx + 1);
       return { month: label, value: found ? found.value : 0 };
     });
 
@@ -298,8 +342,6 @@ export const getFinanceStatistics = async (req, res) => {
     }
 
     // Doanh thu ghi nhận theo tháng
-    const now = new Date();
-    const yearStart = new Date(now.getFullYear(), 0, 1);
     const accrualByMonth = await UserPackage.find({
       ...locFilter,
       payment_status: "đã thanh toán",
@@ -361,8 +403,8 @@ export const getFinanceStatistics = async (req, res) => {
       { $group: { _id: "$category", value: { $sum: "$amount" } } },
     ]);
     const categoryLabel = {
-      equipment: "Thiết bị",
-      utilities: "Tiện ích",
+      equipment: "Sửa thiết bị",
+      utilities: "Điện, nước, internet",
       tax: "Thuế/Phí",
       other: "Khác",
     };
@@ -438,6 +480,7 @@ export const getFinanceStatistics = async (req, res) => {
       expenseStructure,
       participation,
       topProducts,
+      depreciationDetail,
     });
   } catch (err) {
     return res.status(500).json({ error: err.message });
