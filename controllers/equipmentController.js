@@ -74,10 +74,14 @@ export const deleteEquipment = async (req, res) => {
 export const reportEquipment = async (req, res) => {
   try {
     const { id } = req.params;
-    const { statusType, reason } = req.body;
+    const { statusType, reason, affectedQuantity } = req.body;
     if (!reason) return res.status(400).json({ message: 'Vui lòng nhập lý do!' });
+    const eq = await Equipment.findById(id);
+    if (!eq) return res.status(404).json({ message: 'Không tìm thấy thiết bị!' });
+    const maxQty = eq.quantity || 1;
+    const qty = Math.max(1, Math.min(parseInt(affectedQuantity) || 1, maxQty));
     const equipment = await Equipment.findByIdAndUpdate(id, {
-      $push: { reports: { statusType: statusType || 'hoạt động', reason, reportedAt: new Date(), status: 'pending' } }
+      $push: { reports: { statusType: statusType || 'hoạt động', affectedQuantity: qty, reason, reportedAt: new Date(), status: 'pending' } }
     }, { new: true });
     if (!equipment) return res.status(404).json({ message: 'Không tìm thấy thiết bị!' });
     res.status(200).json({ message: 'Đã gửi báo cáo!', data: equipment });
