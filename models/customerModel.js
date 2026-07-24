@@ -76,6 +76,7 @@ export const submitPersonalInfo = async (id, data, files, callback) => {
       email: data.email,
       address: data.address || '',
       idNumber: data.idNumber || '',
+      bio: data.bio || '',
       status: 'pending_approval',
       infoFilledAt: new Date(),
       updatedAt: new Date()
@@ -146,6 +147,15 @@ export const getPendingCustomers = async (callback) => {
   try {
     const customers = await Customer.find({ status: { $in: ['pending', 'pending_approval'] } }).sort({ createdAt: -1 });
     callback(null, customers);
+  } catch (err) {
+    callback(err);
+  }
+};
+
+export const getAllCustomerIds = async (callback) => {
+  try {
+    const customers = await Customer.find({ status: 'approved' }).select('_id');
+    callback(null, customers.map(c => c._id));
   } catch (err) {
     callback(err);
   }

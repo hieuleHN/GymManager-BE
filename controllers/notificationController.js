@@ -8,7 +8,7 @@ import {
 } from '../models/notificationModel.js';
 
 export const create = (req, res) => {
-  const { recipientId, recipientRole, title, message, type, relatedBookingId } = req.body;
+  const { recipientId, recipientRole, title, message, type, relatedBookingId, relatedArticleId, relatedPostId } = req.body;
 
   if (!recipientId || !recipientRole || !title || !message || !type) {
     return res.status(400).json({ error: 'Thiếu thông tin thông báo!' });
@@ -20,7 +20,9 @@ export const create = (req, res) => {
     title,
     message,
     type,
-    relatedBookingId
+    relatedBookingId,
+    relatedArticleId,
+    relatedPostId
   }, (err, notification) => {
     if (err) return res.status(400).json({ error: err.message });
     res.status(201).json(notification);

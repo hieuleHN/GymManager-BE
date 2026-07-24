@@ -32,6 +32,8 @@ import statisticsRoutes from "./routes/statisticsRoutes.js";
 import staffWalletRoutes from "./routes/staffWalletRoutes.js";
 import staffAttendanceRoutes from "./routes/staffAttendanceRoutes.js";
 import authRoutes from "./routes/authRoutes.js";
+import articleRoutes from "./routes/articleRoutes.js";
+
 import { autoCancelPendingBookings } from "./jobs/autoCancelBooking.js";
 import { autoCancelPendingPackages } from "./jobs/autoCancelPendingPackages.js";
 
@@ -78,6 +80,8 @@ app.use("/api/wallet", walletRoutes);
 app.use("/api/auth", authRoutes);
 app.use("/api/staff-shifts", staffShiftRoutes);
 app.use("/api/dashboard", dashboardRoutes);
+app.use("/api/articles", articleRoutes);
+
 app.use("/api/statistics", statisticsRoutes);
 app.use("/api/staff-wallet", staffWalletRoutes);
 app.use("/api/staff-attendance", staffAttendanceRoutes);

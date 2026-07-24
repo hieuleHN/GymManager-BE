@@ -8,7 +8,9 @@ export const createNotification = async (data, callback) => {
       title: data.title,
       message: data.message,
       type: data.type,
-      relatedBookingId: data.relatedBookingId
+      relatedBookingId: data.relatedBookingId,
+      relatedArticleId: data.relatedArticleId,
+      relatedPostId: data.relatedPostId
     });
     const saved = await notification.save();
     callback(null, saved);
@@ -23,7 +25,6 @@ export const getNotificationsByRecipient = async (recipientId, recipientRole, pa
     const query = { recipientId, recipientRole };
     const [data, total] = await Promise.all([
       Notification.find(query)
-        .populate('relatedBookingId')
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit),
