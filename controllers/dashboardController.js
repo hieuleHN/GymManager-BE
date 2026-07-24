@@ -108,7 +108,7 @@ export const getAdminDashboardStats = async (req, res) => {
         let trainerPerformance = [];
         try {
             const trainerJobs = await Job.find({
-                name: { $regex: /huan luyen vien|trainer|pt/i }
+                name: { $regex: /huấn luyện viên|trainer|pt|hlv/i }
             });
             const trainerJobIds = trainerJobs.map(j => j._id);
             const trainers = await Staff.find({ job: { $in: trainerJobIds } });
