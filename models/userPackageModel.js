@@ -52,10 +52,11 @@ export const getUserPackages = async (customerId, callback) => {
       // Chui sâu vào bảng gói tập để lấy thông tin cơ sở gốc phòng hờ hóa đơn bị khuyết dữ liệu
       .populate({
         path: "package_id",
-        select: "name unitPrice features durations locationId disciplineId",
+        select: "name unitPrice features durations locationId disciplineId disciplines",
         populate: [
           { path: "locationId", select: "title name address" },
-          { path: "disciplineId", select: "name" }
+          { path: "disciplineId", select: "name" },
+          { path: "disciplines", select: "name" }
         ],
       })
       // Populate trực tiếp cơ sở gắn trên hóa đơn, bắt cả 2 trường title và name để tránh lệch cột DB
@@ -72,10 +73,11 @@ export const getRegistrationById = async (id, callback) => {
     const reg = await UserPackage.findById(id)
       .populate({
         path: "package_id",
-        select: "name unitPrice features durations locationId disciplineId",
+        select: "name unitPrice features durations locationId disciplineId disciplines",
         populate: [
           { path: "locationId", select: "title name address" },
-          { path: "disciplineId", select: "name" }
+          { path: "disciplineId", select: "name" },
+          { path: "disciplines", select: "name" }
         ],
       })
       .populate("locationId", "title name address")

@@ -53,19 +53,21 @@ const checkFreePtSession = async (customerId) => {
   }
 };
 
-const deductPtSession = async (customerId) => {
+const deductPtSession = async (customerId, registrationId) => {
   try {
     const now = new Date();
     const month = now.getMonth() + 1;
     const year = now.getFullYear();
 
-    const userPkg = await UserPackage.findOne({
+    const match = {
       customer_id: customerId,
       payment_status: 'đã thanh toán',
       status: { $in: ['đang hoạt động', 'còn 10 ngày'] },
       end_date: { $gt: new Date() }
-    });
+    };
+    if (registrationId) match._id = registrationId;
 
+    const userPkg = await UserPackage.findOne(match);
     if (!userPkg || userPkg.isFullMonth) return;
 
     await UserPackage.updateOne(
@@ -158,16 +160,15 @@ export const create = async (req, res) => {
 
         if (usedFreeSession) {
           await deductPtSession(customerId);
+          createNotification({
+            recipientId: trainerId,
+            recipientRole: 'staff',
+            title: 'Lịch tập mới',
+            message: `Học viên ${req.user.fullName || 'Hội viên'} đã đặt lịch tập với bạn`,
+            type: 'booking_request',
+            relatedBookingId: booking._id
+          }, () => {});
         }
-
-        createNotification({
-          recipientId: trainerId,
-          recipientRole: 'staff',
-          title: 'Lịch tập mới',
-          message: `Học viên ${req.user.fullName || 'Hội viên'} đã đặt lịch tập với bạn`,
-          type: 'booking_request',
-          relatedBookingId: booking._id
-        }, () => {});
 
         res.status(201).json({
           message: usedFreeSession ? 'Đặt lịch thành công! (Buổi tập miễn phí)' : 'Đặt lịch thành công! Chờ HLV xác nhận.',
@@ -345,15 +346,38 @@ export const rejectBooking = (req, res) => {
           const now = new Date();
           const month = now.getMonth() + 1;
           const year = now.getFullYear();
-          await UserPackage.findOneAndUpdate(
-            {
+          const bookingDiscId = booking.disciplineId
+            ? (booking.disciplineId._id || booking.disciplineId).toString()
+            : null;
+
+          if (bookingDiscId) {
+            const userPkgs = await UserPackage.find({
               customer_id: customerId,
               payment_status: 'đã thanh toán',
-              monthlySessions: { $elemMatch: { month, year, used: { $gt: 0 } } }
-            },
-            { $inc: { 'monthlySessions.$.used': -1 } },
-            { new: true }
-          );
+              status: { $in: ['đang hoạt động', 'còn 10 ngày'] }
+            }).populate({
+              path: 'package_id',
+              select: 'disciplineId disciplines'
+            });
+
+            const matched = userPkgs.find(r => {
+              const pkg = r.package_id || {};
+              const discId = pkg.disciplineId ? (pkg.disciplineId._id || pkg.disciplineId).toString() : null;
+              const comboIds = (pkg.disciplines || []).map(d => (d._id || d).toString());
+              return (discId && bookingDiscId && discId === bookingDiscId) || comboIds.includes(bookingDiscId);
+            });
+
+            if (matched) {
+              await UserPackage.updateOne(
+                {
+                  _id: matched._id,
+                  'monthlySessions.month': month,
+                  'monthlySessions.year': year
+                },
+                { $inc: { 'monthlySessions.$.used': -1 } }
+              );
+            }
+          }
         } catch {}
       }
 
@@ -574,35 +598,51 @@ export const createBulk = async (req, res) => {
     return res.status(400).json({ error: 'Vui lòng chọn ít nhất một ngày!' });
   }
 
-  // Kiểm tra số buổi tập miễn phí từ gói
+  const batchId = `BATCH${Date.now()}${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+  const resolved = await resolveDiscipline(disciplineId);
+
+  // Kiểm tra số buổi tập miễn phí từ gói khớp với bộ môn
   let freeSessionsRemaining = 0;
-  if (trainerId) {
+  let ptRegistrationId = null;
+  if (trainerId && resolved.disciplineId) {
     const now = new Date();
     const month = now.getMonth() + 1;
     const year = now.getFullYear();
-    const userPkg = await UserPackage.findOne({
+
+    const userPkgs = await UserPackage.find({
       customer_id: customerId,
       payment_status: 'đã thanh toán',
       status: { $in: ['đang hoạt động', 'còn 10 ngày'] },
       end_date: { $gt: new Date() }
+    }).populate({
+      path: 'package_id',
+      select: 'disciplineId disciplines'
     });
-    if (userPkg) {
-      if (userPkg.isFullMonth) {
+
+    const targetDiscId = resolved.disciplineId ? resolved.disciplineId.toString() : null;
+    const matched = userPkgs.find(r => {
+      const pkg = r.package_id || {};
+      const discId = pkg.disciplineId ? (pkg.disciplineId._id || pkg.disciplineId).toString() : null;
+      const comboIds = (pkg.disciplines || []).map(d => (d._id || d).toString());
+      return (discId && targetDiscId && discId === targetDiscId) || comboIds.includes(targetDiscId);
+    });
+
+    if (matched) {
+      ptRegistrationId = matched._id.toString();
+      if (matched.isFullMonth) {
         freeSessionsRemaining = Infinity;
       } else {
-        const monthly = (userPkg.monthlySessions || []).find(m => m.month === month && m.year === year);
+        const monthly = (matched.monthlySessions || []).find(m => m.month === month && m.year === year);
         if (monthly) {
           freeSessionsRemaining = monthly.total - monthly.used;
         }
       }
     }
+
     if (typeof freeToUse === 'number' && freeToUse > 0 && freeToUse < freeSessionsRemaining) {
       freeSessionsRemaining = freeToUse;
     }
   }
-
-  const batchId = `BATCH${Date.now()}${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
-  const resolved = await resolveDiscipline(disciplineId);
 
   const created = [];
   const errors = [];
@@ -654,10 +694,7 @@ export const createBulk = async (req, res) => {
     });
 
     if (isFree) {
-      await deductPtSession(customerId);
-    }
-
-    if (trainerId) {
+      await deductPtSession(customerId, ptRegistrationId);
       createNotification({
         recipientId: trainerId,
         recipientRole: 'staff',
@@ -882,10 +919,21 @@ export const bookingsVnpayReturn = (req, res) => {
           cardType: vnp_CardType,
           transactionNo: vnp_TransactionNo,
           paymentDate: vnp_PayDate,
-        }, (updateErr) => {
+        }, (updateErr, updated) => {
           if (updateErr) {
             const redirectUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/payment?vnpay_success=false&message=update_failed`;
             return res.redirect(redirectUrl);
+          }
+          if (updated?.trainerId) {
+            const trainerId = updated.trainerId._id || updated.trainerId;
+            createNotification({
+              recipientId: trainerId,
+              recipientRole: 'staff',
+              title: 'Lịch tập mới',
+              message: `Học viên đã đặt lịch tập với bạn (đã thanh toán)`,
+              type: 'booking_request',
+              relatedBookingId: updated._id
+            }, () => {});
           }
           const redirectUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/payment?vnpay_success=true&transactionNo=${vnp_TransactionNo}&bookingId=${bookingId}`;
           return res.redirect(redirectUrl);
@@ -912,12 +960,24 @@ export const bookingsVnpayReturn = (req, res) => {
         };
 
         try {
-          await new Promise((resolve, reject) => {
-            updateBookingPaymentVnpay(id, payData, (updateErr) => {
+          const updated = await new Promise((resolve, reject) => {
+            updateBookingPaymentVnpay(id, payData, (updateErr, booking) => {
               if (updateErr) reject(updateErr);
-              else resolve(null);
+              else resolve(booking);
             });
           });
+
+          if (updated?.trainerId) {
+            const trainerId = updated.trainerId._id || updated.trainerId;
+            createNotification({
+              recipientId: trainerId,
+              recipientRole: 'staff',
+              title: 'Lịch tập mới',
+              message: `Học viên đã đặt lịch tập với bạn (đã thanh toán)`,
+              type: 'booking_request',
+              relatedBookingId: updated._id
+            }, () => {});
+          }
         } catch {}
       }
 

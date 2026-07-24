@@ -237,24 +237,34 @@ export const getMyPtSessions = async (req, res) => {
     for (const reg of regs) {
       if (reg.payment_status !== 'đã thanh toán') continue;
       if (reg.status === 'hết hạn' || reg.status === 'đã hủy') continue;
-      if (reg.ptSessionsPerMonth <= 0 && !reg.isFullMonth) continue;
+      const pkg = reg.package_id || {};
+      const disc = pkg.disciplineId || null;
+      const comboDiscs = pkg.disciplines || [];
 
-      const monthly = (reg.monthlySessions || []).find(
+      const monthlyEntry = (reg.monthlySessions || []).find(
         m => m.month === currentMonth && m.year === currentYear
       );
 
-      const remaining = monthly ? monthly.total - monthly.used : 0;
+      let remaining = 0;
+      if (reg.isFullMonth) {
+        remaining = 999;
+      } else if (reg.ptSessionsPerMonth > 0) {
+        remaining = monthlyEntry ? monthlyEntry.total - monthlyEntry.used : reg.ptSessionsPerMonth;
+      }
 
       result.push({
         registrationId: reg._id,
-        packageName: reg.package_id?.name || '',
+        packageName: pkg.name || '',
         ptSessionsPerMonth: reg.ptSessionsPerMonth,
         isFullMonth: reg.isFullMonth,
-        currentMonthRemaining: reg.isFullMonth ? 999 : remaining,
+        currentMonthRemaining: remaining,
         currentMonth,
         currentYear,
         startDate: reg.start_date,
-        endDate: reg.end_date
+        endDate: reg.end_date,
+        disciplineId: disc ? (disc._id || disc).toString() : null,
+        disciplineName: disc?.name || '',
+        comboDisciplineIds: comboDiscs.map(d => (d._id || d).toString()),
       });
     }
 
