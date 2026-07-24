@@ -35,6 +35,9 @@ import authRoutes from "./routes/authRoutes.js";
 import { autoCancelPendingBookings } from "./jobs/autoCancelBooking.js";
 import { autoCancelPendingPackages } from "./jobs/autoCancelPendingPackages.js";
 
+// Khai báo route cấu hình trang chủ mới thêm
+import siteSettingRoutes from "./routes/siteSettingRoutes.js";
+
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: "50mb" }));
@@ -78,6 +81,9 @@ app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/statistics", statisticsRoutes);
 app.use("/api/staff-wallet", staffWalletRoutes);
 app.use("/api/staff-attendance", staffAttendanceRoutes);
+
+// Cắm route cấu hình trang chủ vào hệ thống
+app.use("/api/settings", siteSettingRoutes);
 
 initPackageStatusScheduler();
 
