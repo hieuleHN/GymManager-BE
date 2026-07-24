@@ -16,6 +16,7 @@ const equipmentSchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now },
   reports: [{
     statusType: { type: String, enum: ['hoạt động', 'bảo trì', 'hỏng hóc', 'thiếu linh kiện'], default: 'hoạt động' },
+    affectedQuantity: { type: Number, default: 1, min: 1 },
     reason: { type: String, required: true },
     reportedAt: { type: Date, default: Date.now },
     status: { type: String, enum: ['pending', 'resolved'], default: 'pending' }

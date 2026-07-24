@@ -107,11 +107,11 @@ export const getFinanceStatistics = async (req, res) => {
       { ...locFilter, payment_status: "đã thanh toán" }
     );
 
-    const thisWalletSum = await sumBetween(
+    const thisWalletSum = locationId ? 0 : await sumBetween(
       WalletTransaction, "amount", "createdAt", start, new Date(),
       { type: "topup", status: "completed" }
     );
-    const prevWalletSum = await sumBetween(
+    const prevWalletSum = locationId ? 0 : await sumBetween(
       WalletTransaction, "amount", "createdAt", prevStart, prevEnd,
       { type: "topup", status: "completed" }
     );
@@ -182,13 +182,61 @@ export const getFinanceStatistics = async (req, res) => {
     // ============ 3b. COGS & TIỀN NHẬP HÀNG ============
     const productFilter = locationId ? { location_id: locationId } : {};
     const products = await Product.find(productFilter);
-    const cogsThis = products.reduce((sum, p) => sum + (p.costPrice || 0) * (p.sold || 0), 0);
-    const totalImportCost = products.reduce((sum, p) => sum + (p.costPrice || 0) * (p.importQuantity || p.quantity || 0), 0);
 
-    // Tiền nhập hàng theo tháng (dựa trên importDate, COGS)
+    let cogsThis = 0;
+    if (period === "week") {
+      // Tuần: COGS = costPrice × số lượng đã bán trong khoảng thời gian (dựa trên monthlySales)
+      cogsThis = products.reduce((sum, p) => {
+        const soldInPeriod = (p.monthlySales || [])
+          .filter(s => {
+            const saleDate = new Date(s.year, s.month - 1, 1);
+            return saleDate >= start && saleDate <= new Date();
+          })
+          .reduce((mSum, s) => mSum + (s.quantity || 0), 0);
+        return sum + (p.costPrice || 0) * soldInPeriod;
+      }, 0);
+    } else {
+      // Tháng/quý/năm: tổng tiền nhập hàng (dựa trên importDate)
+      cogsThis = products
+        .filter(p => {
+          const impDate = new Date(p.importDate);
+          return impDate >= start && impDate <= new Date();
+        })
+        .reduce((sum, p) => sum + (p.costPrice || 0) * (p.importQuantity || p.quantity || 0), 0);
+    }
+
+    // Tổng tiền nhập hàng năm (dùng cho expenseStructure pie chart)
+    const totalImportCost = products
+      .filter(p => {
+        const impDate = new Date(p.importDate);
+        const yearStart = new Date(new Date().getFullYear(), 0, 1);
+        return impDate >= yearStart && impDate <= new Date();
+      })
+      .reduce((sum, p) => sum + (p.costPrice || 0) * (p.importQuantity || p.quantity || 0), 0);
+
+    // ============ 3c. TIỀN THIẾT BỊ ============
+    const equipmentFilter = locationId ? { location_id: locationId } : {};
+    const equipments = await Equipment.find(equipmentFilter);
+    const equipmentCostThis = equipments
+      .filter(e => {
+        const created = new Date(e.createdAt);
+        return created >= start && created <= new Date();
+      })
+      .reduce((sum, e) => sum + (e.total || 0), 0);
+
+    // Tổng tiền thiết bị năm (dùng cho expenseStructure pie chart)
+    const totalEquipmentCost = equipments
+      .filter(e => {
+        const created = new Date(e.createdAt);
+        const yearStart = new Date(new Date().getFullYear(), 0, 1);
+        return created >= yearStart && created <= new Date();
+      })
+      .reduce((sum, e) => sum + (e.total || 0), 0);
+
+    // Tiền nhập hàng theo tháng (dựa trên importDate)
     const importByMonth = await Product.aggregate([
       { $match: { ...productFilter, importDate: { $gte: new Date(new Date().getFullYear(), 0, 1) } } },
-      { $project: { month: { $month: "$importDate" }, cost: { $multiply: ["$costPrice", "$sold"] } } },
+      { $project: { month: { $month: "$importDate" }, cost: { $multiply: ["$costPrice", "$importQuantity"] } } },
       { $group: { _id: "$month", value: { $sum: "$cost" } } },
     ]);
     const importSeries = MONTHS.map((label, idx) => {
@@ -196,8 +244,19 @@ export const getFinanceStatistics = async (req, res) => {
       return { month: label, value: found ? found.value : 0 };
     });
 
+    // Tiền thiết bị theo tháng (dựa trên createdAt)
+    const equipmentByMonth = await Equipment.aggregate([
+      { $match: { ...equipmentFilter, createdAt: { $gte: new Date(new Date().getFullYear(), 0, 1) } } },
+      { $project: { month: { $month: "$createdAt" }, cost: "$total" } },
+      { $group: { _id: "$month", value: { $sum: "$cost" } } },
+    ]);
+    const equipmentSeries = MONTHS.map((label, idx) => {
+      const found = equipmentByMonth.find((r) => r._id === idx + 1);
+      return { month: label, value: found ? found.value : 0 };
+    });
+
     // ============ 4. LỢI NHUẬN ============
-    const totalExpenseThis = expenseThis + cogsThis;
+    const totalExpenseThis = expenseThis + cogsThis + equipmentCostThis;
     const totalExpensePrev = expensePrev; // kỳ trước không có import cost đã bán
     const profitThis = accrualThis - totalExpenseThis;
     const profitPrev = accrualPrev - totalExpensePrev;
@@ -222,6 +281,21 @@ export const getFinanceStatistics = async (req, res) => {
       UserPackage, "total_price", "payment_date",
       { ...locFilter, payment_status: "đã thanh toán" }
     );
+
+    // Thêm tiền nạp ví theo tháng vào cashSeries (chỉ khi không lọc theo location)
+    if (!locationId) {
+      const walletByMonth = await WalletTransaction.aggregate([
+        { $match: { type: "topup", status: "completed", createdAt: { $gte: new Date(new Date().getFullYear(), 0, 1) } } },
+        { $project: { month: { $month: "$createdAt" }, amount: "$amount" } },
+        { $group: { _id: "$month", value: { $sum: "$amount" } } },
+      ]);
+      walletByMonth.forEach(w => {
+        const idx = w._id - 1;
+        if (idx >= 0 && idx < 12) {
+          cashSeries[idx].value += w.value;
+        }
+      });
+    }
 
     // Doanh thu ghi nhận theo tháng
     const now = new Date();
@@ -258,20 +332,26 @@ export const getFinanceStatistics = async (req, res) => {
       return { month: MONTHS[i], value: total };
     });
 
-    const cashFlowData = MONTHS.map((m, i) => ({
-      month: m,
-      cash: cashSeries[i].value,
-      revenue: accrualMonthly[i].value,
-    }));
-
     // ============ CHI PHÍ & LÃI ============
     const expenseSeries = await monthlySeries(
       Expense, "amount", "date", expenseFilter
     );
 
+    const cashFlowData = MONTHS.map((m, i) => {
+      const rev = accrualMonthly[i].value;
+      const exp = expenseSeries[i].value + importSeries[i].value + equipmentSeries[i].value;
+      return {
+        month: m,
+        cash: cashSeries[i].value,
+        revenue: rev,
+        expense: exp,
+        profit: rev - exp,
+      };
+    });
+
     const profitData = MONTHS.map((m, i) => {
       const rev = accrualMonthly[i].value;
-      const exp = expenseSeries[i].value + importSeries[i].value;
+      const exp = expenseSeries[i].value + importSeries[i].value + equipmentSeries[i].value;
       return { month: m, revenue: rev, expense: exp, profit: rev - exp };
     });
 
@@ -292,6 +372,9 @@ export const getFinanceStatistics = async (req, res) => {
     }));
     if (totalImportCost > 0) {
       expenseStructure.push({ name: "Tiền nhập hàng", value: totalImportCost });
+    }
+    if (totalEquipmentCost > 0) {
+      expenseStructure.push({ name: "Tiền thiết bị", value: totalEquipmentCost });
     }
 
     // ============ DOANH SỐ THEO GÓI & TỈ LỆ THAM GIA ============
@@ -370,17 +453,51 @@ export const getOperationsStatistics = async (req, res) => {
 
     const statusMap = {};
     const reportsByType = {};
+    const reportDetails = [];
     let totalReports = 0;
     let pendingReports = 0;
 
     equipments.forEach((eq) => {
-      const st = eq.status || "active";
-      statusMap[st] = (statusMap[st] || 0) + 1;
+      const totalQty = eq.quantity || 1;
+      const eqPendingReports = (eq.reports || []).filter(r => r.status === "pending");
+
+      if (eqPendingReports.length > 0) {
+        // Tổng số máy bị ảnh hưởng từ tất cả báo cáo pending
+        let pendingAffected = 0;
+        eqPendingReports.forEach(r => {
+          pendingAffected += r.affectedQuantity || 1;
+        });
+        const affected = Math.min(pendingAffected, totalQty);
+
+        // Lấy statusType từ report pending gần nhất để xác định loại sự cố
+        const latestReport = eqPendingReports[eqPendingReports.length - 1];
+        const reportStatusType = latestReport.statusType || "hoạt động";
+        let affectedStatus = "maintenance";
+        if (reportStatusType === "hỏng hóc" || reportStatusType === "thiếu linh kiện") affectedStatus = "broken";
+        else if (reportStatusType === "bảo trì") affectedStatus = "maintenance";
+
+        statusMap[affectedStatus] = (statusMap[affectedStatus] || 0) + affected;
+        // Phần còn lại vẫn hoạt động
+        if (totalQty > affected) {
+          statusMap["active"] = (statusMap["active"] || 0) + (totalQty - affected);
+        }
+      } else {
+        statusMap["active"] = (statusMap["active"] || 0) + totalQty;
+      }
+
       (eq.reports || []).forEach((r) => {
         totalReports += 1;
         if (r.status === "pending") pendingReports += 1;
         const t = r.statusType || "other";
         reportsByType[t] = (reportsByType[t] || 0) + 1;
+        reportDetails.push({
+          equipmentName: eq.name,
+          statusType: r.statusType || "other",
+          affectedQuantity: r.affectedQuantity || 1,
+          reason: r.reason,
+          reportedAt: r.reportedAt,
+          status: r.status,
+        });
       });
     });
 
@@ -421,11 +538,16 @@ export const getOperationsStatistics = async (req, res) => {
     const now = new Date();
     const needMaintenance = equipments
       .filter((e) => e.status === "maintenance" || (e.reports || []).some((r) => r.status === "pending"))
-      .map((e) => ({
-        name: e.name,
-        status: e.status,
-        reports: (e.reports || []).filter((r) => r.status === "pending").length,
-        warrantyLeft:
+      .map((e) => {
+        const pendingRpts = (e.reports || []).filter((r) => r.status === "pending");
+        const affectedQty = pendingRpts.reduce((sum, r) => sum + (r.affectedQuantity || 1), 0);
+        return {
+          name: e.name,
+          quantity: e.quantity || 1,
+          affectedQuantity: Math.min(affectedQty, e.quantity || 1),
+          status: e.status,
+          reports: pendingRpts.length,
+          warrantyLeft:
           e.warranty_period && e.createdAt
             ? Math.max(
                 0,
@@ -433,13 +555,15 @@ export const getOperationsStatistics = async (req, res) => {
                   Math.floor((now - new Date(e.createdAt)) / (1000 * 60 * 60 * 24 * 30))
               )
             : null,
-      }))
+        };
+      })
       .sort((a, b) => b.reports - a.reports)
       .slice(0, 8);
 
     return res.status(200).json({
       equipmentStatus,
       equipmentReports,
+      reportDetails,
       totalQuantity,
       totalValue,
       totalReports,
