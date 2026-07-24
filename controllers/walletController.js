@@ -3,6 +3,7 @@ import { createWalletTransaction, getWalletTransactionByTxnRef, markTransactionC
 import { updateBookingPayment } from '../models/bookingModel.js';
 import { updatePaymentStatus } from '../models/userPackageModel.js';
 import { createNotification } from '../models/notificationModel.js';
+import { creditStaffWallets } from '../utils/staffWalletHelper.js';
 import vnpay from '../config/vnpayConfig.js';
 
 export const pay = async (req, res) => {
@@ -34,21 +35,19 @@ export const pay = async (req, res) => {
       updatedAt: new Date()
     });
 
-    await new Promise((resolve) => {
-      createWalletTransaction({
-        customerId,
-        type: 'payment',
-        amount: -amount,
-        balanceBefore: balance,
-        balanceAfter: balance - amount,
-        status: 'completed',
-        description: type === 'booking'
-          ? `Thanh toán đặt lịch (${ids.length} buổi) - ${amount.toLocaleString('vi-VN')}₫`
-          : `Thanh toán gói tập - ${amount.toLocaleString('vi-VN')}₫`
-      }, () => resolve(null));
-    });
-
     if (type === 'booking') {
+      await new Promise((resolve) => {
+        createWalletTransaction({
+          customerId,
+          type: 'payment',
+          amount: -amount,
+          balanceBefore: balance,
+          balanceAfter: balance - amount,
+          status: 'completed',
+          description: `Thanh toán đặt lịch (${ids.length} buổi) - ${amount.toLocaleString('vi-VN')}₫`
+        }, () => resolve(null));
+      });
+
       for (const id of ids) {
         await new Promise((resolve) => {
           updateBookingPayment(id, 'wallet', (err) => resolve(null));
@@ -74,6 +73,8 @@ export const pay = async (req, res) => {
         : `Bạn đã thanh toán ${amount.toLocaleString('vi-VN')}₫ cho gói tập bằng Ví điện tử.`,
       type: 'wallet_payment',
     }, () => {});
+
+    creditStaffWallets(amount, `Thanh toán gói tập qua ví - ${amount.toLocaleString('vi-VN')}₫`);
 
     res.json({
       success: true,

@@ -28,11 +28,17 @@ import reportRoutes from "./routes/reportRoutes.js";
 import walletRoutes from "./routes/walletRoutes.js";
 import staffShiftRoutes from "./routes/staffShiftRoutes.js";
 import dashboardRoutes from "./routes/dashboardRoutes.js";
+import statisticsRoutes from "./routes/statisticsRoutes.js";
+import staffWalletRoutes from "./routes/staffWalletRoutes.js";
+import staffAttendanceRoutes from "./routes/staffAttendanceRoutes.js";
 import authRoutes from "./routes/authRoutes.js";
 import articleRoutes from "./routes/articleRoutes.js";
 
 import { autoCancelPendingBookings } from "./jobs/autoCancelBooking.js";
 import { autoCancelPendingPackages } from "./jobs/autoCancelPendingPackages.js";
+
+// Khai báo route cấu hình trang chủ mới thêm
+import siteSettingRoutes from "./routes/siteSettingRoutes.js";
 
 const app = express();
 app.use(cors());
@@ -76,6 +82,12 @@ app.use("/api/staff-shifts", staffShiftRoutes);
 app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/articles", articleRoutes);
 
+app.use("/api/statistics", statisticsRoutes);
+app.use("/api/staff-wallet", staffWalletRoutes);
+app.use("/api/staff-attendance", staffAttendanceRoutes);
+
+// Cắm route cấu hình trang chủ vào hệ thống
+app.use("/api/settings", siteSettingRoutes);
 
 initPackageStatusScheduler();
 

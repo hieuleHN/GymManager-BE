@@ -19,6 +19,8 @@ export const createPackage = async (packageData, callback) => {
       locationId,
       ptSessionsPerMonth,
       isFullMonth,
+      combo,
+      disciplines,
     } = packageData;
     const pkg = new Package({
       name,
@@ -29,6 +31,8 @@ export const createPackage = async (packageData, callback) => {
       service_id,
       unitPrice,
       disciplineId,
+      combo: !!combo,
+      disciplines: disciplines || [],
       features,
       durations,
       contractA,
@@ -61,6 +65,7 @@ export const getAllPackages = async (
       Package.find(filter)
         .populate("service_id", "name")
         .populate("disciplineId", "name")
+        .populate("disciplines", "name")
         .skip(skip)
         .limit(limit),
       Package.countDocuments(filter),
@@ -81,7 +86,8 @@ export const getPackagesByDiscipline = async (disciplineId, callback) => {
   try {
     const packages = await Package.find({ disciplineId })
       .populate("service_id", "name")
-      .populate("disciplineId", "name");
+      .populate("disciplineId", "name")
+      .populate("disciplines", "name");
     callback(null, packages);
   } catch (err) {
     callback(err);
@@ -121,6 +127,8 @@ export const updatePackageById = async (id, packageData, callback) => {
       updatedAt,
       ptSessionsPerMonth,
       isFullMonth,
+      combo,
+      disciplines,
     } = packageData;
     const result = await Package.findByIdAndUpdate(
       id,
@@ -133,6 +141,8 @@ export const updatePackageById = async (id, packageData, callback) => {
         service_id,
         unitPrice,
         disciplineId,
+        combo: !!combo,
+        disciplines: disciplines || [],
         features,
         durations,
         contractA,

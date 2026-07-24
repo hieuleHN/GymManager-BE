@@ -14,6 +14,26 @@ const salarySchema = new mongoose.Schema({
     type: Number,
     default: 0
   },
+  attendanceBonus: {
+    type: Number,
+    default: 0
+  },
+  latePenalty: {
+    type: Number,
+    default: 0
+  },
+  commissionPackage: {
+    type: Number,
+    default: 0
+  },
+  commissionPT: {
+    type: Number,
+    default: 0
+  },
+  revenueShare: {
+    type: Number,
+    default: 0
+  },
   totalSalary: {
     type: Number,
     default: 0
@@ -48,7 +68,7 @@ const salarySchema = new mongoose.Schema({
 });
 
 salarySchema.pre('save', function(next) {
-  this.totalSalary = this.baseSalary + this.bonus;
+  this.totalSalary = this.baseSalary + this.bonus + this.attendanceBonus + this.commissionPackage + this.commissionPT + this.revenueShare - this.latePenalty;
   this.updatedAt = new Date();
   next();
 });

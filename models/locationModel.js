@@ -117,7 +117,22 @@ export const updateQR = async (id, qrImage, callback) => {
   }
 };
 
-// 7. Xóa cơ sở (Xóa dữ liệu DB và trả về danh sách file để controller xóa vật lý)
+// 7. Cập nhật chữ ký đại diện cho cơ sở
+export const updateSignature = async (id, signature, callback) => {
+  try {
+    const location = await Location.findByIdAndUpdate(
+      id,
+      { signature },
+      { new: true }
+    );
+    if (!location) return callback(new Error('NotFound'));
+    callback(null, { affectedRows: 1, signature });
+  } catch (err) {
+    callback(err);
+  }
+};
+
+// 8. Xóa cơ sở (Xóa dữ liệu DB và trả về danh sách file để controller xóa vật lý)
 export const remove = async (id, callback) => {
   try {
     const location = await Location.findById(id);

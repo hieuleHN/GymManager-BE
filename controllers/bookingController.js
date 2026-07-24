@@ -27,6 +27,58 @@ import Customer from '../models/schemas/customerSchema.js';
 import UserPackage from '../models/schemas/userPackageSchema.js';
 import vnpay from "../config/vnpayConfig.js";
 
+const checkFreePtSession = async (customerId) => {
+  try {
+    const now = new Date();
+    const month = now.getMonth() + 1;
+    const year = now.getFullYear();
+
+    const userPkg = await UserPackage.findOne({
+      customer_id: customerId,
+      payment_status: 'đã thanh toán',
+      status: { $in: ['đang hoạt động', 'còn 10 ngày'] },
+      end_date: { $gt: new Date() }
+    });
+
+    if (!userPkg) return false;
+    if (userPkg.isFullMonth) return true;
+
+    const monthly = (userPkg.monthlySessions || []).find(
+      m => m.month === month && m.year === year
+    );
+
+    return monthly && monthly.used < monthly.total;
+  } catch {
+    return false;
+  }
+};
+
+const deductPtSession = async (customerId) => {
+  try {
+    const now = new Date();
+    const month = now.getMonth() + 1;
+    const year = now.getFullYear();
+
+    const userPkg = await UserPackage.findOne({
+      customer_id: customerId,
+      payment_status: 'đã thanh toán',
+      status: { $in: ['đang hoạt động', 'còn 10 ngày'] },
+      end_date: { $gt: new Date() }
+    });
+
+    if (!userPkg || userPkg.isFullMonth) return;
+
+    await UserPackage.updateOne(
+      {
+        _id: userPkg._id,
+        'monthlySessions.month': month,
+        'monthlySessions.year': year
+      },
+      { $inc: { 'monthlySessions.$.used': 1 } }
+    );
+  } catch {}
+};
+
 const resolveDiscipline = async (disciplineId) => {
   if (!disciplineId) return { disciplineId: null, disciplineName: '' };
 
@@ -68,6 +120,14 @@ export const create = async (req, res) => {
 
   const resolved = await resolveDiscipline(disciplineId);
 
+  // Kiểm tra buổi tập miễn phí từ gói
+  let finalPrice = price || 0;
+  let usedFreeSession = false;
+  if (trainerId && (await checkFreePtSession(customerId))) {
+    finalPrice = 0;
+    usedFreeSession = true;
+  }
+
   const bookingData = {
     customerId,
     trainerId: trainerId || null,
@@ -79,7 +139,8 @@ export const create = async (req, res) => {
     disciplineName: resolved.disciplineName,
     locationId,
     note,
-    price: price || 0
+    price: finalPrice,
+    paymentStatus: usedFreeSession ? 'paid' : 'pending'
   };
 
   if (trainerId) {
@@ -92,8 +153,12 @@ export const create = async (req, res) => {
         });
       }
 
-      createBooking(bookingData, (err, booking) => {
+      createBooking(bookingData, async (err, booking) => {
         if (err) return res.status(400).json({ error: err.message || 'Lỗi tạo lịch đặt!' });
+
+        if (usedFreeSession) {
+          await deductPtSession(customerId);
+        }
 
         createNotification({
           recipientId: trainerId,
@@ -105,7 +170,7 @@ export const create = async (req, res) => {
         }, () => {});
 
         res.status(201).json({
-          message: 'Đặt lịch thành công! Chờ HLV xác nhận.',
+          message: usedFreeSession ? 'Đặt lịch thành công! (Buổi tập miễn phí)' : 'Đặt lịch thành công! Chờ HLV xác nhận.',
           booking
         });
       });
@@ -478,7 +543,7 @@ export const getMyTrainerBookings = (req, res) => {
 };
 
 export const createBulk = async (req, res) => {
-  const { trainerId, slots, dates, time, startTime, endTime, disciplineId, locationId, note, price } = req.body;
+  const { trainerId, slots, dates, time, startTime, endTime, disciplineId, locationId, note, price, freeToUse } = req.body;
   const customerId = req.user.id;
 
   let bookingSlots;
@@ -509,13 +574,50 @@ export const createBulk = async (req, res) => {
     return res.status(400).json({ error: 'Vui lòng chọn ít nhất một ngày!' });
   }
 
+  // Kiểm tra số buổi tập miễn phí từ gói
+  let freeSessionsRemaining = 0;
+  if (trainerId) {
+    const now = new Date();
+    const month = now.getMonth() + 1;
+    const year = now.getFullYear();
+    const userPkg = await UserPackage.findOne({
+      customer_id: customerId,
+      payment_status: 'đã thanh toán',
+      status: { $in: ['đang hoạt động', 'còn 10 ngày'] },
+      end_date: { $gt: new Date() }
+    });
+    if (userPkg) {
+      if (userPkg.isFullMonth) {
+        freeSessionsRemaining = Infinity;
+      } else {
+        const monthly = (userPkg.monthlySessions || []).find(m => m.month === month && m.year === year);
+        if (monthly) {
+          freeSessionsRemaining = monthly.total - monthly.used;
+        }
+      }
+    }
+    if (typeof freeToUse === 'number' && freeToUse > 0 && freeToUse < freeSessionsRemaining) {
+      freeSessionsRemaining = freeToUse;
+    }
+  }
+
   const batchId = `BATCH${Date.now()}${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
   const resolved = await resolveDiscipline(disciplineId);
 
   const created = [];
   const errors = [];
+  let freeSlotIndex = 0;
 
   for (const slot of bookingSlots) {
+    let slotPrice = price || 0;
+    let isFree = false;
+
+    if (trainerId && freeSlotIndex < freeSessionsRemaining) {
+      slotPrice = 0;
+      isFree = true;
+      freeSlotIndex++;
+    }
+
     const bookingData = {
       batchId,
       customerId,
@@ -528,7 +630,8 @@ export const createBulk = async (req, res) => {
       disciplineName: resolved.disciplineName,
       locationId,
       note,
-      price: price || 0
+      price: slotPrice,
+      paymentStatus: isFree ? 'paid' : 'pending'
     };
 
     if (trainerId) {
@@ -550,6 +653,10 @@ export const createBulk = async (req, res) => {
       });
     });
 
+    if (isFree) {
+      await deductPtSession(customerId);
+    }
+
     if (trainerId) {
       createNotification({
         recipientId: trainerId,
@@ -564,12 +671,14 @@ export const createBulk = async (req, res) => {
     created.push(booking);
   }
 
+  const freeCount = Math.min(freeSlotIndex, bookingSlots.length);
   res.status(201).json({
     message: errors.length > 0
-      ? `Đã đặt ${created.length} buổi thành công! ${errors.length} buổi bị lỗi.`
-      : `Đã đặt ${created.length} buổi thành công!`,
+      ? `Đã đặt ${created.length} buổi thành công! ${errors.length} buổi bị lỗi.${freeCount ? ` (${freeCount} buổi miễn phí)` : ''}`
+      : `Đã đặt ${created.length} buổi thành công!${freeCount ? ` (${freeCount} buổi miễn phí)` : ''}`,
     bookings: created,
-    errors
+    errors,
+    freeSessionsUsed: freeCount
   });
 };
 

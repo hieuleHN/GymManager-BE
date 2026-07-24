@@ -30,6 +30,14 @@ const packageSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Discipline'
   },
+  combo: {
+    type: Boolean,
+    default: false
+  },
+  disciplines: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Discipline'
+  }],
   features: [{
     type: String
   }],

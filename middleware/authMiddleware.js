@@ -5,7 +5,9 @@ const JWT_SECRET = process.env.JWT_SECRET || 'Phong_Gym_Master_Key_2026';
 // Middleware 1: Xác thực xem người dùng đã đăng nhập chưa (Authentication)
 export const authenticateToken = (req, res, next) => {
   const authHeader = req.headers.authorization;
-  const token = authHeader && authHeader.split('Bearer ')[1]; // Lấy token từ chuỗi 'Bearer <token>'
+  const token = authHeader
+    ? authHeader.split('Bearer ')[1]
+    : req.query.token; // fallback: token từ query param (dùng cho PDF, file)
 
   if (!token) {
     return res.status(401).json({ error: 'Bạn chưa đăng nhập. Hãy đính kèm token!' });
