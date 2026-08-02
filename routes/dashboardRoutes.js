@@ -1,10 +1,13 @@
 import express from "express";
-import { getAdminDashboardStats } from "../controllers/dashboardController.js";
-import { authenticateToken } from "../middleware/authMiddleware.js"; // Đảm bảo đúng file middleware của bạn
+import { getAdminDashboardStats, getMonthlyDetail, getCheckinDetail, getSportDetail, getTrainerDetail } from "../controllers/dashboardController.js";
+import { authenticateToken } from "../middleware/authMiddleware.js";
 
 const router = express.Router();
 
-// Chỉ những ai đã đăng nhập tài khoản nhân viên/admin có token hợp lệ mới được gọi API này
 router.get("/admin-stats", authenticateToken, getAdminDashboardStats);
+router.get("/admin-stats/monthly-detail", authenticateToken, getMonthlyDetail);
+router.get("/admin-stats/checkin-detail", authenticateToken, getCheckinDetail);
+router.get("/admin-stats/sport-detail", authenticateToken, getSportDetail);
+router.get("/admin-stats/trainer-detail", authenticateToken, getTrainerDetail);
 
 export default router;

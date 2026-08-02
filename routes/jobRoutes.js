@@ -6,10 +6,11 @@ import {
 
 const router = express.Router();
 
-router.get('/', authenticateToken, list);
+router.get('/', list);
 router.get('/:id', authenticateToken, detail);
 router.post('/', authenticateToken, create);
 router.put('/:id', authenticateToken, update);
 router.delete('/:id', authenticateToken, remove);
 
 export default router;
+
