@@ -375,3 +375,189 @@ export const calculateUpgrade = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
+
+// ==========================================
+// MEMBER TRANSACTION HISTORY
+// ==========================================
+
+export const transactionHistory = (req, res) => {
+  getTransactionHistory(req.user.id, (err, transactions) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(transactions);
+  });
+};
+
+// ==========================================
+// VNPAY INTEGRATION USING vnpay LIBRARY
+// ==========================================
+
+export const createVnPayUrl = (req, res) => {
+  const { id } = req.params;
+  getRegistrationById(id, (err, reg) => {
+    if (err || !reg)
+      return res.status(404).json({ error: "Không tìm thấy đơn!" });
+
+    if (reg.payment_status === "đã thanh toán")
+      return res.status(400).json({ error: "Đơn đã được thanh toán!" });
+
+    try {
+      const ipAddr =
+        req.headers["x-forwarded-for"]?.split(",")[0]?.trim() ||
+        req.ip ||
+        "127.0.0.1";
+
+      const amount = Math.floor(Number(reg.total_price));
+      const txnRef = `GYM${id.slice(-8).toUpperCase()}${Date.now()}`;
+      const returnUrl =
+        process.env.VNP_RETURN_URL ||
+        "http://localhost:5000/api/user-packages/vnpay-return";
+
+      const paymentUrl = vnpay.buildPaymentUrl({
+        vnp_Amount: amount,
+        vnp_IpAddr: ipAddr,
+        vnp_ReturnUrl: returnUrl,
+        vnp_TxnRef: txnRef,
+        vnp_OrderInfo: `Thanh toan goi tap ${reg.package_id?.name || ''}`,
+        vnp_Locale: 'vn',
+        vnp_BankCode: '',
+      });
+
+      updateVnpayTransactionRef(id, txnRef, (updateErr) => {
+        if (updateErr)
+          console.error("Lỗi lưu txnRef:", updateErr.message);
+      });
+
+      res.status(200).json({ paymentUrl });
+    } catch (error) {
+      res
+        .status(500)
+        .json({ error: "Lỗi tạo URL thanh toán: " + error.message });
+    }
+  });
+};
+
+export const vnpayReturn = (req, res) => {
+  let verify;
+  try {
+    verify = vnpay.verifyReturnUrl(req.query);
+  } catch (error) {
+    return res.redirect(
+      `${FRONTEND_URL}/dashboard/my-packages?vnpay_success=false&message=verify_error`,
+    );
+  }
+
+  if (!verify.isVerified) {
+    return res.redirect(
+      `${FRONTEND_URL}/dashboard/my-packages?vnpay_success=false&message=invalid_signature`,
+    );
+  }
+
+  const txnRef = req.query.vnp_TxnRef;
+  const responseCode = req.query.vnp_ResponseCode;
+  const transactionNo = req.query.vnp_TransactionNo;
+  const payDate = req.query.vnp_PayDate;
+  const bankCode = req.query.vnp_BankCode;
+
+  if (responseCode === "00") {
+    findRegistrationByTxnRef(txnRef, (err, reg) => {
+      if (err || !reg) {
+        console.error("Không tìm thấy đơn với txnRef:", txnRef);
+        return res.redirect(
+          `${FRONTEND_URL}/dashboard/my-packages?vnpay_success=false&message=order_not_found`,
+        );
+      }
+
+      if (reg.payment_status === "đã thanh toán") {
+        return res.redirect(
+          `${FRONTEND_URL}/dashboard/my-packages?vnpay_success=true&message=already_paid`,
+        );
+      }
+
+      updatePaymentStatus(
+        reg._id,
+        {
+          payment_status: "đã thanh toán",
+          payment_method: "vnpay",
+          vnpay_txn_ref: txnRef,
+          payment_date: new Date(),
+          vnpay_bank_code: bankCode,
+          vnpay_bank_tran_no: req.query.vnp_BankTranNo,
+          vnpay_card_type: req.query.vnp_CardType,
+          vnpay_transaction_no: transactionNo,
+        },
+        (updateErr) => {
+          if (updateErr)
+            console.error("Lỗi cập nhật thanh toán:", updateErr.message);
+        },
+      );
+
+      creditStaffWallets(Number(reg.total_price), `Thanh toán gói tập qua VNPay - ${Number(reg.total_price).toLocaleString('vi-VN')}₫`);
+
+      res.redirect(
+        `${FRONTEND_URL}/dashboard/my-packages?vnpay_success=true&transactionNo=${transactionNo}`,
+      );
+    });
+  } else {
+    res.redirect(
+      `${FRONTEND_URL}/dashboard/my-packages?vnpay_success=false&code=${responseCode}`,
+    );
+  }
+};
+
+
+export const vnpayIPN = (req, res) => {
+  let verify;
+  try {
+    verify = vnpay.verifyIpnCall(req.query);
+  } catch {
+    return res.status(200).json(IpnUnknownError);
+  }
+
+  if (!verify.isVerified) {
+    return res.status(200).json(IpnFailChecksum);
+  }
+
+  const txnRef = req.query.vnp_TxnRef;
+  const responseCode = req.query.vnp_ResponseCode;
+  const transactionAmount = Number(req.query.vnp_Amount) / 100;
+
+  findRegistrationByTxnRef(txnRef, (err, reg) => {
+    if (err || !reg) {
+      return res.status(200).json(IpnOrderNotFound);
+    }
+
+    if (reg.payment_status === "đã thanh toán") {
+      return res.status(200).json(IpnSuccess);
+    }
+
+    if (Math.floor(Number(reg.total_price)) !== transactionAmount) {
+      return res.status(200).json(IpnInvalidAmount);
+    }
+
+    if (responseCode === "00") {
+      updatePaymentStatus(
+        reg._id,
+        {
+          payment_status: "đã thanh toán",
+          payment_method: "vnpay",
+          vnpay_txn_ref: txnRef,
+          payment_date: new Date(),
+          vnpay_bank_code: req.query.vnp_BankCode,
+          vnpay_bank_tran_no: req.query.vnp_BankTranNo,
+          vnpay_card_type: req.query.vnp_CardType,
+          vnpay_transaction_no: req.query.vnp_TransactionNo,
+        },
+        (updateErr) => {
+          if (updateErr) {
+            return res.status(200).json(IpnUnknownError);
+          }
+
+          creditStaffWallets(transactionAmount, `Thanh toán gói tập qua VNPay (IPN) - ${transactionAmount.toLocaleString('vi-VN')}₫`);
+          res.status(200).json(IpnSuccess);
+        },
+      );
+    } else {
+      res.status(200).json(IpnSuccess);
+    }
+  });
+};
