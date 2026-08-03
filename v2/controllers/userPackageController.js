@@ -561,3 +561,92 @@ export const vnpayIPN = (req, res) => {
     }
   });
 };
+
+// ==========================================
+// SCHEDULE CONFLICT CHECK
+// ==========================================
+
+export const checkScheduleConflict = async (req, res) => {
+  try {
+    const customerId = req.user.id;
+    const { disciplineId } = req.query;
+
+    const now = new Date();
+
+    const activePackages = await UserPackage.find({
+      customer_id: customerId,
+      status: { $in: ["đang hoạt động", "còn 10 ngày"] },
+      payment_status: "đã thanh toán",
+      end_date: { $gt: now },
+    }).populate("package_id", "name disciplineId ptSessionsPerMonth isFullMonth");
+
+    if (!activePackages || activePackages.length === 0) {
+      return res.json({ hasConflict: false, conflicts: [] });
+    }
+
+    const conflictingPackages = activePackages.filter((up) => {
+      if (!up.package_id) return false;
+      const pkgDiscipline = up.package_id.disciplineId;
+      if (!pkgDiscipline || !disciplineId) return true;
+      return pkgDiscipline.toString() === disciplineId;
+    });
+
+    if (conflictingPackages.length === 0) {
+      return res.json({ hasConflict: false, conflicts: [] });
+    }
+
+    const now2 = new Date();
+    const upcomingBookings = await Booking.find({
+      customerId,
+      date: { $gte: now2 },
+      status: { $in: ["pending", "confirmed"] },
+    }).populate("trainerId", "fullName")
+      .populate("disciplineId", "name")
+      .sort({ date: 1, time: 1 })
+      .limit(10);
+
+    const conflicts = conflictingPackages.map((up) => ({
+      packageId: up.package_id?._id,
+      packageName: up.package_id?.name || "Gói tập",
+      endDate: up.end_date,
+      ptSessionsPerMonth: up.package_id?.ptSessionsPerMonth || 0,
+      isFullMonth: up.package_id?.isFullMonth || false,
+      remainingSessions: up.monthlySessions?.find(
+        (m) => m.month === now.getMonth() + 1 && m.year === now.getFullYear()
+      ),
+      upcomingBookingsCount: upcomingBookings.length,
+    }));
+
+    res.json({
+      hasConflict: true,
+      conflicts,
+      upcomingBookings: upcomingBookings.map((b) => ({
+        date: b.date,
+        time: b.time || b.startTime,
+        trainer: b.trainerId?.fullName || "",
+        discipline: b.disciplineId?.name || b.disciplineName || "",
+      })),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// ==========================================
+// CONTRACT PDF GENERATION
+// ==========================================
+
+const addVietnameseText = (doc, text, x, y, options = {}) => {
+  const {
+    fontSize = 11,
+    fontStyle = "normal",
+    maxWidth = 170,
+  } = options;
+
+  doc.setFontSize(fontSize);
+  doc.setFont("NotoSans", fontStyle);
+
+  const lines = doc.splitTextToSize(text, maxWidth);
+  doc.text(lines, x, y);
+  return lines.length;
+};
