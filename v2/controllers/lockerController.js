@@ -1,26 +1,32 @@
-const validateLockerCode = (code) => {
-    if (!code || typeof code !== 'string') return false;
-    // Mã tủ đồ chuẩn có dạng L-001 hoặc LK001
-    return /^LK?-\d{3,4}$/i.test(code.trim());
+const validateVietnamesePhone = (phone) => {
+    if (!phone) return false;
+    // Kiểm tra định dạng số điện thoại Việt Nam (10 chữ số, bắt đầu bằng 03, 05, 07, 08, 09)
+    return /(84|0[3|5|7|8|9])+([0-9]{8})\b/.test(phone.trim());
 };
 
-const formatLockerStatus = (status) => {
-    const statusMap = {
-        AVAILABLE: 'Trống',
-        OCCUPIED: 'Đang sử dụng',
-        MAINTENANCE: 'Bảo trì / Hỏng',
-        RESERVED: 'Đã đặt trước'
-    };
-    return statusMap[status?.toUpperCase()] || 'Không xác định';
+const calculateMembershipStatus = (expiryDate) => {
+    if (!expiryDate) return 'EXPIRED';
+    const today = new Date();
+    const expiry = new Date(expiryDate);
+    const diffDays = Math.ceil((expiry - today) / (1000 * 60 * 60 * 24));
+
+    if (diffDays < 0) return 'EXPIRED';
+    if (diffDays <= 7) return 'WARNING_EXPIRING_SOON';
+    return 'ACTIVE';
 };
 
-const getLockerUsageRate = (totalLockers, occupiedLockers) => {
-    if (!totalLockers || totalLockers <= 0) return 0;
-    return Math.round((occupiedLockers / totalLockers) * 100);
+const formatCustomerName = (fullName) => {
+    if (!fullName) return '';
+    return fullName
+        .trim()
+        .toLowerCase()
+        .split(' ')
+        .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+        .join(' ');
 };
 
 module.exports = {
-    validateLockerCode,
-    formatLockerStatus,
-    getLockerUsageRate
+    validateVietnamesePhone,
+    calculateMembershipStatus,
+    formatCustomerName
 };
