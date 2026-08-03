@@ -5,6 +5,8 @@ import Package from "../models/schemas/packageSchema.js";
 import Product from "../models/schemas/productSchema.js";
 import Equipment from "../models/schemas/equipmentSchema.js";
 import CheckIn from "../models/schemas/checkInSchema.js";
+import Booking from "../models/schemas/bookingSchema.js";
+import Customer from "../models/schemas/customerSchema.js";
 
 const MONTHS = ["T1", "T2", "T3", "T4", "T5", "T6", "T7", "T8", "T9", "T10", "T11", "T12"];
 
@@ -116,8 +118,18 @@ export const getFinanceStatistics = async (req, res) => {
       { type: "topup", status: "completed" }
     );
 
-    const realCashInThis = thisPaidSum + thisWalletSum;
-    const realCashInPrev = prevPaidSum + prevWalletSum;
+    // Tiền book lịch tập riêng HLV đã thanh toán
+    const thisBookingSum = await sumBetween(
+      Booking, "price", "createdAt", start, new Date(),
+      { ...locFilter, paymentStatus: "paid", trainerId: { $ne: null } }
+    );
+    const prevBookingSum = await sumBetween(
+      Booking, "price", "createdAt", prevStart, prevEnd,
+      { ...locFilter, paymentStatus: "paid", trainerId: { $ne: null } }
+    );
+
+    const realCashInThis = thisPaidSum + thisWalletSum + thisBookingSum;
+    const realCashInPrev = prevPaidSum + prevWalletSum + prevBookingSum;
 
     // ============ 2. DOANH THU GHI NHẬN (kỳ này vs kỳ trước) ============
     // 2a. Doanh thu sản phẩm theo tháng = price × sold trong tháng
@@ -341,6 +353,19 @@ export const getFinanceStatistics = async (req, res) => {
       });
     }
 
+    // Thêm tiền book lịch tập riêng HLV theo tháng vào cashSeries
+    const bookingByMonth = await Booking.aggregate([
+      { $match: { ...locFilter, paymentStatus: "paid", trainerId: { $ne: null }, createdAt: { $gte: new Date(new Date().getFullYear(), 0, 1) } } },
+      { $project: { month: { $month: "$createdAt" }, amount: "$price" } },
+      { $group: { _id: "$month", value: { $sum: "$amount" } } },
+    ]);
+    bookingByMonth.forEach(b => {
+      const idx = b._id - 1;
+      if (idx >= 0 && idx < 12) {
+        cashSeries[idx].value += b.value;
+      }
+    });
+
     // Doanh thu ghi nhận theo tháng
     const accrualByMonth = await UserPackage.find({
       ...locFilter,
@@ -473,6 +498,78 @@ export const getFinanceStatistics = async (req, res) => {
       .sort((a, b) => b.revenue - a.revenue)
       .slice(0, 6);
 
+    // ============ DOANH THU CHI TIẾT ============
+    const revenueDetails = [];
+
+    // 1. Đăng ký gói tập
+    const paidPackages = await UserPackage.find({
+      ...locFilter,
+      payment_status: "đã thanh toán",
+      payment_date: { $gte: start.toISOString().slice(0, 10), $lte: new Date().toISOString().slice(0, 10) },
+    }).populate("package_id", "name").populate("customer_id", "fullName account");
+    paidPackages.forEach(up => {
+      revenueDetails.push({
+        date: up.payment_date || up.createdAt,
+        type: "Đăng ký gói tập",
+        name: up.package_id?.name || "Gói tập",
+        customerName: up.customer_id?.fullName || up.customer_id?.account || "Khách hàng",
+        amount: up.total_price || 0,
+      });
+    });
+
+    // 2. Book lịch tập riêng HLV
+    const paidBookings = await Booking.find({
+      ...locFilter,
+      paymentStatus: "paid",
+      trainerId: { $ne: null },
+      createdAt: { $gte: start, $lte: new Date() },
+    }).populate("trainerId", "name").populate("customerId", "fullName account");
+    paidBookings.forEach(b => {
+      revenueDetails.push({
+        date: b.createdAt,
+        type: "Book lịch tập riêng HLV",
+        name: `PT: ${b.trainerId?.name || 'HLV'}`,
+        customerName: b.customerId?.fullName || b.customerId?.account || "Khách hàng",
+        amount: b.price || 0,
+      });
+    });
+
+    // 3. Mua sản phẩm shop
+    allProducts.forEach(p => {
+      (p.monthlySales || []).forEach(s => {
+        const saleDate = new Date(s.year, s.month - 1, 1);
+        if (saleDate >= start && saleDate <= new Date()) {
+          revenueDetails.push({
+            date: saleDate,
+            type: "Mua sản phẩm shop",
+            name: p.name,
+            customerName: "Khách hàng",
+            amount: s.revenue || 0,
+          });
+        }
+      });
+    });
+
+    // 4. Tiền nạp ví
+    const topupTransactions = await WalletTransaction.find({
+      ...locFilter,
+      type: "topup",
+      status: "completed",
+      createdAt: { $gte: start, $lte: new Date() },
+    }).populate("customerId", "fullName account");
+    topupTransactions.forEach(t => {
+      revenueDetails.push({
+        date: t.createdAt,
+        type: "Nạp tiền vào ví",
+        name: `Nạp ${Number(t.amount || 0).toLocaleString('vi-VN')}đ`,
+        customerName: t.customerId?.fullName || t.customerId?.account || "Khách hàng",
+        amount: t.amount || 0,
+      });
+    });
+
+    // Sắp xếp theo ngày mới nhất
+    revenueDetails.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
     return res.status(200).json({
       summary,
       cashFlowData,
@@ -481,6 +578,7 @@ export const getFinanceStatistics = async (req, res) => {
       participation,
       topProducts,
       depreciationDetail,
+      revenueDetails,
     });
   } catch (err) {
     return res.status(500).json({ error: err.message });
