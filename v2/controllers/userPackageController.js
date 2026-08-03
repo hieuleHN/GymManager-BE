@@ -320,3 +320,58 @@ export const deductPtSession = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
+
+// ==========================================
+// UPGRADE CALCULATION
+// ==========================================
+
+export const calculateUpgrade = async (req, res) => {
+  try {
+    const { currentRegistrationId, newPackageId } = req.body;
+    if (!currentRegistrationId || !newPackageId) {
+      return res.status(400).json({ error: 'Thiếu thông tin!' });
+    }
+
+    const currentReg = await UserPackage.findById(currentRegistrationId)
+      .populate('package_id');
+    if (!currentReg) return res.status(404).json({ error: 'Không tìm thấy đăng ký hiện tại!' });
+
+    const newPkg = await Package.findById(newPackageId);
+    if (!newPkg) return res.status(404).json({ error: 'Không tìm thấy gói tập mới!' });
+
+    const now = new Date();
+    const startDate = new Date(currentReg.start_date);
+    const endDate = new Date(currentReg.end_date);
+
+    if (now >= endDate) {
+      return res.status(400).json({ error: 'Gói tập hiện tại đã hết hạn!' });
+    }
+
+    const totalDays = Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24));
+    const usedDays = Math.max(0, Math.ceil((now - startDate) / (1000 * 60 * 60 * 24)));
+    const remainingDays = Math.max(0, totalDays - usedDays);
+
+    const currentDailyRate = currentReg.total_price / totalDays;
+    const remainingValue = Math.floor(currentDailyRate * remainingDays);
+
+    const newDailyRate = (newPkg.unitPrice || newPkg.price) / 30;
+    const newPackageCost = Math.floor(newDailyRate * remainingDays);
+
+    const diff = remainingValue - newPackageCost;
+
+    res.json({
+      remainingDays,
+      totalDays,
+      usedDays,
+      remainingValue,
+      newPackageCost,
+      amountToPay: diff < 0 ? Math.abs(diff) : 0,
+      refundAmount: diff > 0 ? diff : 0,
+      refundPercentage: diff > 0 ? Math.round((diff / newPackageCost) * 100) : 0,
+      currentPackage: { name: currentReg.package_id?.name, unitPrice: currentReg.package_id?.unitPrice },
+      newPackage: { name: newPkg.name, unitPrice: newPkg.unitPrice },
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
