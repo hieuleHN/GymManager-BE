@@ -15,6 +15,7 @@ const {
     toDateKey,
     formatDateLabel,
     addDays,
+    validateVietnamesePhone,
     generateEquipmentCode,
     generateReportCode,
     computeAvailable,
@@ -120,6 +121,9 @@ const createEquipment = async (req, res) => {
         if (qty < 1) {
             return res.status(400).json({ success: false, message: 'Số lượng phải lớn hơn 0!' });
         }
+        if (supplierPhone && !validateVietnamesePhone(supplierPhone)) {
+            return res.status(400).json({ success: false, message: 'Số điện thoại nhà cung cấp không hợp lệ!' });
+        }
 
         const equipmentCode = await generateEquipmentCode();
         const item = await EquipmentV2.create({
@@ -168,10 +172,18 @@ const updateEquipment = async (req, res) => {
         }
 
         const {
-            name, category, brand, model, unitPrice, supplier, supplierPhone,
+            name, category, brand, model, quantity, inUse, damaged, underMaintenance,
+            unitPrice, supplier, supplierPhone,
             supplierAddress, purchaser, purchaseDate, warrantyMonths, location,
             status, condition, lastMaintenanceDate, nextMaintenanceDate, description
         } = req.body;
+
+        if (name !== undefined && !String(name).trim()) {
+            return res.status(400).json({ success: false, message: 'Vui lòng nhập tên thiết bị!' });
+        }
+        if (supplierPhone !== undefined && supplierPhone && !validateVietnamesePhone(supplierPhone)) {
+            return res.status(400).json({ success: false, message: 'Số điện thoại nhà cung cấp không hợp lệ!' });
+        }
 
         if (name !== undefined) item.name = String(name).trim();
         if (category !== undefined && Object.values(EQUIPMENT_CATEGORY).includes(category)) item.category = category;
@@ -190,6 +202,39 @@ const updateEquipment = async (req, res) => {
         if (lastMaintenanceDate !== undefined) item.lastMaintenanceDate = lastMaintenanceDate ? new Date(lastMaintenanceDate) : null;
         if (nextMaintenanceDate !== undefined) item.nextMaintenanceDate = nextMaintenanceDate ? new Date(nextMaintenanceDate) : null;
         if (description !== undefined) item.description = description;
+
+        const wantsQuantityChange = quantity !== undefined || inUse !== undefined || damaged !== undefined || underMaintenance !== undefined;
+        if (wantsQuantityChange) {
+            const newQty = quantity !== undefined ? parseInt(quantity) : item.quantity;
+            const newInUse = inUse !== undefined ? parseInt(inUse) : item.inUse;
+            const newDamaged = damaged !== undefined ? parseInt(damaged) : item.damaged;
+            const newMaint = underMaintenance !== undefined ? parseInt(underMaintenance) : item.underMaintenance;
+
+            if (isNaN(newQty) || newQty < 1) {
+                return res.status(400).json({ success: false, message: 'Tổng số lượng không hợp lệ!' });
+            }
+            if (isNaN(newInUse) || isNaN(newDamaged) || isNaN(newMaint) || newInUse < 0 || newDamaged < 0 || newMaint < 0) {
+                return res.status(400).json({ success: false, message: 'Số lượng không thể âm!' });
+            }
+            if (newInUse + newDamaged + newMaint > newQty) {
+                return res.status(400).json({
+                    success: false,
+                    message: `Tổng đang dùng/hỏng/bảo trì (${newInUse + newDamaged + newMaint}) vượt quá tổng số lượng (${newQty})!`
+                });
+            }
+
+            item.quantity = newQty;
+            item.inUse = newInUse;
+            item.damaged = newDamaged;
+            item.underMaintenance = newMaint;
+
+            if (item.damaged > 0 && item.condition === EQUIPMENT_CONDITION.GOOD) {
+                item.condition = EQUIPMENT_CONDITION.DAMAGED;
+            }
+            if (item.damaged === 0 && item.condition === EQUIPMENT_CONDITION.DAMAGED) {
+                item.condition = EQUIPMENT_CONDITION.GOOD;
+            }
+        }
 
         const saved = await item.save();
         return res.status(200).json({
@@ -283,7 +328,7 @@ const adjustQuantity = async (req, res) => {
         if (isNaN(newQty) || newQty < 1) {
             return res.status(400).json({ success: false, message: 'Tổng số lượng không hợp lệ!' });
         }
-        if (newInUse < 0 || newDamaged < 0 || newMaint < 0) {
+        if (isNaN(newInUse) || isNaN(newDamaged) || isNaN(newMaint) || newInUse < 0 || newDamaged < 0 || newMaint < 0) {
             return res.status(400).json({ success: false, message: 'Số lượng không thể âm!' });
         }
         if (newInUse + newDamaged + newMaint > newQty) {
@@ -340,7 +385,7 @@ const addReport = async (req, res) => {
         if (qty < 1) {
             return res.status(400).json({ success: false, message: 'Số lượng báo cáo phải lớn hơn 0!' });
         }
-        if (qty > computeAvailable(item)) {
+        if ((reportType === REPORT_TYPE.DAMAGE || reportType === REPORT_TYPE.MAINTENANCE) && qty > computeAvailable(item)) {
             return res.status(400).json({ success: false, message: 'Số lượng báo cáo vượt quá số lượng sẵn sàng!' });
         }
 

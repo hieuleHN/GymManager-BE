@@ -1,5 +1,11 @@
 const { EquipmentV2, EQUIPMENT_STATUS, EQUIPMENT_CONDITION, REPORT_STATUS } = require('../models/equipmentModel');
 
+// Kiểm tra số điện thoại Việt Nam: bắt đầu bằng 0 và theo sau là 9-10 chữ số
+const validateVietnamesePhone = (phone) => {
+    if (!phone) return false;
+    return /^0\d{9,10}$/.test(String(phone).trim());
+};
+
 const toDateKey = (dateInput) => {
     if (!dateInput) return '';
     const date = new Date(dateInput);
@@ -148,6 +154,7 @@ module.exports = {
     EQUIPMENT_STATUS,
     EQUIPMENT_CONDITION,
     REPORT_STATUS,
+    validateVietnamesePhone,
     toDateKey,
     formatDateLabel,
     addDays,
