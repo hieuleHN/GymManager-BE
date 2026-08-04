@@ -1,3 +1,4 @@
+
 const mongoose = require('mongoose');
 
 const CHECKIN_STATUS = {
@@ -110,4 +111,5 @@ module.exports = {
     CHECKIN_METHOD,
     CHECKIN_METHOD_LABELS,
     AttendanceV2: mongoose.models.AttendanceV2 || mongoose.model('AttendanceV2', attendanceSchemaV2)
+
 };

@@ -48,3 +48,4 @@ router.put('/:id', updateAttendance);
 router.delete('/:id', deleteAttendance);
 
 module.exports = router;
+

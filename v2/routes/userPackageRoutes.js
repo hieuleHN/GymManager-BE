@@ -59,3 +59,4 @@ router.post('/:id/pt-sessions/deduct', deductPtSession);
 router.delete('/:id', deleteMembership);
 
 module.exports = router;
+

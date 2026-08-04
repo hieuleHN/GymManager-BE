@@ -139,4 +139,5 @@ module.exports = {
     summarizeAttendance,
     buildTrend,
     filterAttendance
+
 };
