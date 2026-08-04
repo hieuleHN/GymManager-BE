@@ -5,6 +5,12 @@ const {
     EXPIRING_SOON_DAYS
 } = require('../models/userPackageModel');
 
+// Kiểm tra số điện thoại Việt Nam: bắt đầu bằng 0 và theo sau là 9-10 chữ số
+const validateVietnamesePhone = (phone) => {
+    if (!phone) return false;
+    return /^0\d{9,10}$/.test(String(phone).trim());
+};
+
 const getRemainingDays = (membership, now = new Date()) => {
     if (!membership || !membership.endDate) return 0;
     const end = new Date(membership.endDate);
@@ -106,6 +112,7 @@ module.exports = {
     MEMBERSHIP_STATUS,
     PAYMENT_STATUS,
     EXPIRING_SOON_DAYS,
+    validateVietnamesePhone,
     getRemainingDays,
     computeStatus,
     isActive,

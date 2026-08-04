@@ -169,6 +169,10 @@ userPackageSchemaV2.virtual('paymentStatusLabel').get(function () {
     return PAYMENT_STATUS_LABELS[this.paymentStatus] || this.paymentStatus;
 });
 
+userPackageSchemaV2.virtual('paymentMethodLabel').get(function () {
+    return PAYMENT_METHOD_LABELS[this.paymentMethod] || this.paymentMethod;
+});
+
 userPackageSchemaV2.set('toJSON', { virtuals: true });
 userPackageSchemaV2.set('toObject', { virtuals: true });
 
