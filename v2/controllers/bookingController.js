@@ -23,11 +23,13 @@ const {
     filterBooking,
     summarizeBookings,
     buildTrend,
-    buildTrainerWorkSlots
+    buildTrainerWorkSlots,
+    validateVietnamesePhone
 } = require('../services/bookingService');
 const { UserPackageV2, MEMBERSHIP_STATUS, PAYMENT_STATUS: UP_PAYMENT_STATUS } = require('../models/userPackageModel');
+const { computeStatus } = require('../services/membershipService');
 const { StaffV2 } = require('../models/staffModel');
-const { CustomerV2 } = require('../models/customerModel');
+const CustomerV2 = require('../models/customerModel');
 
 const formatPrice = (value) => {
     const num = Number(value) || 0;
@@ -134,6 +136,9 @@ const createBooking = async (req, res) => {
         if (!customerPhone || !String(customerPhone).trim()) {
             return res.status(400).json({ success: false, message: 'Vui lòng nhập số điện thoại khách hàng!' });
         }
+        if (!validateVietnamesePhone(customerPhone)) {
+            return res.status(400).json({ success: false, message: 'Số điện thoại không hợp lệ (phải bắt đầu bằng 0 và có 10-11 chữ số)!' });
+        }
         if (!date || !startTime || !endTime) {
             return res.status(400).json({ success: false, message: 'Vui lòng nhập đầy đủ ngày và giờ đặt lịch!' });
         }
@@ -222,8 +227,13 @@ const updateBooking = async (req, res) => {
             trainerId, trainerName, date, startTime, endTime, note, price, paymentStatus, paymentMethod
         } = req.body;
 
-        if (customerName !== undefined) booking.customerName = String(customerName).trim();
-        if (customerPhone !== undefined) booking.customerPhone = String(customerPhone).trim();
+        if (customerName !== undefined && String(customerName).trim()) booking.customerName = String(customerName).trim();
+        if (customerPhone !== undefined) {
+            if (!String(customerPhone).trim() || !validateVietnamesePhone(customerPhone)) {
+                return res.status(400).json({ success: false, message: 'Số điện thoại không hợp lệ (phải bắt đầu bằng 0 và có 10-11 chữ số)!' });
+            }
+            booking.customerPhone = String(customerPhone).trim();
+        }
         if (userPackageId !== undefined) booking.userPackageId = userPackageId;
         if (packageName !== undefined) booking.packageName = packageName;
         if (sessionType !== undefined && Object.values(SESSION_TYPE).includes(sessionType)) booking.sessionType = sessionType;
@@ -323,6 +333,9 @@ const confirmBooking = async (req, res) => {
         if (booking.status === BOOKING_STATUS.COMPLETED) {
             return res.status(400).json({ success: false, message: 'Lịch đặt đã hoàn thành!' });
         }
+        if (booking.status === BOOKING_STATUS.CONFIRMED) {
+            return res.status(400).json({ success: false, message: 'Lịch đặt đã được xác nhận trước đó!' });
+        }
         if (booking.status === BOOKING_STATUS.CANCELLED || booking.status === BOOKING_STATUS.REJECTED) {
             return res.status(400).json({ success: false, message: 'Lịch đặt đã bị hủy, không thể xác nhận!' });
         }
@@ -415,6 +428,9 @@ const completeBooking = async (req, res) => {
                 message: 'Không tìm thấy lịch đặt V2!'
             });
         }
+        if (booking.status === BOOKING_STATUS.COMPLETED) {
+            return res.status(400).json({ success: false, message: 'Lịch đặt đã hoàn thành!' });
+        }
         if (booking.status === BOOKING_STATUS.CANCELLED || booking.status === BOOKING_STATUS.REJECTED) {
             return res.status(400).json({ success: false, message: 'Lịch đặt đã bị hủy, không thể hoàn thành!' });
         }
@@ -480,8 +496,8 @@ const requestTransfer = async (req, res) => {
             }
             const startMin = toMinutes(newTime);
             const endMin = startMin === null ? null : startMin + (booking.duration || 60);
-            if (startMin === null) {
-                return res.status(400).json({ success: false, message: 'Giờ dời lịch không hợp lệ!' });
+            if (startMin === null || endMin === null || endMin > 1440) {
+                return res.status(400).json({ success: false, message: 'Khung giờ dời lịch không hợp lệ!' });
             }
             const newEnd = `${String(Math.floor(endMin / 60)).padStart(2, '0')}:${String(endMin % 60).padStart(2, '0')}`;
             const conflicts = await findConflictingBookings({
@@ -767,6 +783,9 @@ const lookupMember = async (req, res) => {
         if (!phone || !String(phone).trim()) {
             return res.status(400).json({ success: false, message: 'Vui lòng nhập số điện thoại!' });
         }
+        if (!validateVietnamesePhone(phone)) {
+            return res.status(400).json({ success: false, message: 'Số điện thoại không hợp lệ (phải bắt đầu bằng 0 và có 10-11 chữ số)!' });
+        }
         const phoneStr = String(phone).trim();
 
         const customer = await CustomerV2.findOne({ phoneNumber: phoneStr }).select('fullName phoneNumber email membershipPackage status');
@@ -796,7 +815,8 @@ const lookupMember = async (req, res) => {
                     status: m.status,
                     remainingDays: m.remainingDays,
                     endDate: m.endDate,
-                    valid: m.status !== MEMBERSHIP_STATUS.CANCELLED && new Date(m.endDate) >= new Date()
+                    valid: m.status !== MEMBERSHIP_STATUS.CANCELLED &&
+                        (computeStatus(m) === MEMBERSHIP_STATUS.ACTIVE || computeStatus(m) === MEMBERSHIP_STATUS.EXPIRING_SOON)
                 }))
             }
         });
