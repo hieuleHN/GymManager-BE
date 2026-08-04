@@ -14,7 +14,8 @@ const {
     buildMembershipCode,
     summarizeMemberships,
     filterMembership,
-    refreshStatuses
+    refreshStatuses,
+    validateVietnamesePhone
 } = require('../services/membershipService');
 const { PackageV2 } = require('../models/packageModel');
 
@@ -33,10 +34,16 @@ const getMembershipList = async (req, res) => {
             .populate('customerId', 'fullName phoneNumber email')
             .populate('packageId', 'name type')
             .sort({ createdAt: -1 });
-        const total = allMemberships.length;
 
-        const filtered = allMemberships.filter(membership => filterMembership(membership, { search, status, paymentStatus }));
+        // Trạng thái gói hội viên tính tự động theo thời gian hiện tại
+        const membershipsWithStatus = allMemberships.map(membership => {
+            membership.status = computeStatus(membership);
+            return membership;
+        });
 
+        const filtered = membershipsWithStatus.filter(membership => filterMembership(membership, { search, status, paymentStatus }));
+
+        const total = filtered.length;
         const skip = (page - 1) * limit;
         const data = filtered.slice(skip, skip + limit);
 
@@ -86,6 +93,7 @@ const getMembershipById = async (req, res) => {
                 message: 'Không tìm thấy gói hội viên V2!'
             });
         }
+        membership.status = computeStatus(membership);
         return res.status(200).json({
             success: true,
             message: 'Lấy thông tin gói hội viên V2 thành công',
@@ -105,6 +113,9 @@ const getCustomerMemberships = async (req, res) => {
         const memberships = await UserPackageV2.find({ customerId: req.params.customerId })
             .populate('packageId', 'name type price')
             .sort({ createdAt: -1 });
+        memberships.forEach(membership => {
+            membership.status = computeStatus(membership);
+        });
         return res.status(200).json({
             success: true,
             message: 'Lấy danh sách gói của hội viên V2 thành công',
@@ -147,6 +158,12 @@ const registerMembership = async (req, res) => {
                 message: 'Vui lòng nhập số điện thoại hội viên!'
             });
         }
+        if (!validateVietnamesePhone(customerPhone)) {
+            return res.status(400).json({
+                success: false,
+                message: 'Số điện thoại hội viên không đúng định dạng Việt Nam (VD: 0912345678)!'
+            });
+        }
 
         let packageName = '';
         let packageType = 'STANDARD';
@@ -174,6 +191,9 @@ const registerMembership = async (req, res) => {
         const start = startDate ? new Date(startDate) : new Date();
         const end = computeEndDate(start, finalDuration);
 
+        // Trạng thái ban đầu tính tự động theo thời gian
+        const initialStatus = computeStatus({ startDate: start, endDate: end, status: MEMBERSHIP_STATUS.ACTIVE });
+
         const membership = await UserPackageV2.create({
             customerId: customerId || null,
             customerName: customerName.trim(),
@@ -191,7 +211,7 @@ const registerMembership = async (req, res) => {
             paymentMethod: Object.values(PAYMENT_METHOD).includes(paymentMethod) ? paymentMethod : PAYMENT_METHOD.CASH,
             paidAt: paymentStatus === PAYMENT_STATUS.PAID ? new Date() : null,
             note: note || '',
-            status: MEMBERSHIP_STATUS.ACTIVE
+            status: initialStatus
         });
 
         membership.membershipCode = buildMembershipCode(membership);
