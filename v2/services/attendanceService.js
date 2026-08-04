@@ -1,5 +1,12 @@
 const { AttendanceV2, CHECKIN_STATUS } = require('../models/attendanceModel');
 const { UserPackageV2, MEMBERSHIP_STATUS, PAYMENT_STATUS } = require('../models/userPackageModel');
+const { computeStatus } = require('./membershipService');
+
+// Kiểm tra số điện thoại Việt Nam: bắt đầu bằng 0 và theo sau là 9-10 chữ số
+const validateVietnamesePhone = (phone) => {
+    if (!phone) return false;
+    return /^0\d{9,10}$/.test(String(phone).trim());
+};
 
 const getDayRange = (dateInput) => {
     const date = dateInput ? new Date(dateInput) : new Date();
@@ -32,16 +39,35 @@ const hasCheckedInToday = async (customerPhone, dateInput) => {
     });
 };
 
-const findActiveMembership = async ({ customerId, customerPhone } = {}) => {
-    const filter = {
-        status: { $in: [MEMBERSHIP_STATUS.ACTIVE, MEMBERSHIP_STATUS.EXPIRING_SOON] },
+// Lấy danh sách gói membership đang còn hiệu lực (ACTIVE/EXPIRING_SOON),
+// trạng thái được tính theo thời gian thực để tránh dữ liệu cũ
+const findActiveMemberships = async (filter = {}) => {
+    const query = {
+        status: { $ne: MEMBERSHIP_STATUS.CANCELLED },
         paymentStatus: PAYMENT_STATUS.PAID,
-        endDate: { $gte: new Date() }
+        ...filter
     };
+    const candidates = await UserPackageV2.find(query);
+    return candidates.filter(membership => {
+        const status = computeStatus(membership);
+        return status === MEMBERSHIP_STATUS.ACTIVE || status === MEMBERSHIP_STATUS.EXPIRING_SOON;
+    });
+};
+
+// Lấy gói hiệu lực gần hết hạn nhất của một hội viên
+const findActiveMembership = async ({ customerId, customerPhone } = {}) => {
+    const filter = {};
     if (customerId) filter.customerId = customerId;
     if (customerPhone) filter.customerPhone = customerPhone;
+    const memberships = await findActiveMemberships(filter);
+    memberships.sort((a, b) => new Date(b.endDate) - new Date(a.endDate));
+    return memberships[0] || null;
+};
 
-    return UserPackageV2.findOne(filter).sort({ endDate: -1 });
+// Đếm số gói membership đang còn hiệu lực
+const countActiveMembers = async () => {
+    const memberships = await findActiveMemberships();
+    return memberships.length;
 };
 
 const summarizeAttendance = (records, activeMembersCount = 0) => {
@@ -102,11 +128,14 @@ const filterAttendance = (record, { search, date, status }) => {
 
 module.exports = {
     CHECKIN_STATUS,
+    validateVietnamesePhone,
     getDayRange,
     toDateKey,
     formatTimeLabel,
     hasCheckedInToday,
+    findActiveMemberships,
     findActiveMembership,
+    countActiveMembers,
     summarizeAttendance,
     buildTrend,
     filterAttendance

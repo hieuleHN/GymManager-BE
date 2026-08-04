@@ -10,24 +10,19 @@ const {
     toDateKey,
     formatTimeLabel,
     hasCheckedInToday,
+    findActiveMemberships,
     findActiveMembership,
+    countActiveMembers,
     summarizeAttendance,
     buildTrend,
-    filterAttendance
+    filterAttendance,
+    validateVietnamesePhone
 } = require('../services/attendanceService');
 const { UserPackageV2, MEMBERSHIP_STATUS, PAYMENT_STATUS } = require('../models/userPackageModel');
 
 const formatPrice = (value) => {
     const num = Number(value) || 0;
     return num.toLocaleString('vi-VN');
-};
-
-const countActiveMembers = async () => {
-    return UserPackageV2.countDocuments({
-        status: { $in: [MEMBERSHIP_STATUS.ACTIVE, MEMBERSHIP_STATUS.EXPIRING_SOON] },
-        paymentStatus: PAYMENT_STATUS.PAID,
-        endDate: { $gte: new Date() }
-    });
 };
 
 const getAttendanceList = async (req, res) => {
@@ -40,9 +35,9 @@ const getAttendanceList = async (req, res) => {
             .populate('customerId', 'fullName phoneNumber email')
             .populate('userPackageId', 'packageName durationMonths')
             .sort({ checkInTime: -1 });
-        const total = allRecords.length;
 
         const filtered = allRecords.filter(record => filterAttendance(record, { search, date, status }));
+        const total = filtered.length;
 
         const skip = (page - 1) * limit;
         const data = filtered.slice(skip, skip + limit);
@@ -138,11 +133,8 @@ const getAttendanceTrend = async (req, res) => {
 
 const getMembersStatus = async (req, res) => {
     try {
-        const activeMemberships = await UserPackageV2.find({
-            status: { $in: [MEMBERSHIP_STATUS.ACTIVE, MEMBERSHIP_STATUS.EXPIRING_SOON] },
-            paymentStatus: PAYMENT_STATUS.PAID,
-            endDate: { $gte: new Date() }
-        }).sort({ endDate: 1 });
+        const activeMemberships = await findActiveMemberships();
+        activeMemberships.sort((a, b) => new Date(a.endDate) - new Date(b.endDate));
 
         const { start, end } = getDayRange();
         const todayRecords = await AttendanceV2.find({
@@ -191,6 +183,12 @@ const lookupMembership = async (req, res) => {
             return res.status(400).json({
                 success: false,
                 message: 'Vui lòng nhập số điện thoại!'
+            });
+        }
+        if (!validateVietnamesePhone(phone)) {
+            return res.status(400).json({
+                success: false,
+                message: 'Số điện thoại không hợp lệ (phải bắt đầu bằng 0 và có 10-11 chữ số)!'
             });
         }
 
@@ -243,7 +241,18 @@ const checkIn = async (req, res) => {
         if (customerId) {
             activeMembership = await findActiveMembership({ customerId });
         } else if (phone) {
+            if (!validateVietnamesePhone(phone)) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Số điện thoại không hợp lệ (phải bắt đầu bằng 0 và có 10-11 chữ số)!'
+                });
+            }
             activeMembership = await findActiveMembership({ customerPhone: phone });
+        } else {
+            return res.status(400).json({
+                success: false,
+                message: 'Vui lòng cung cấp customerId hoặc số điện thoại!'
+            });
         }
 
         if (!activeMembership) {
