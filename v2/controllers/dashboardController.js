@@ -1,5 +1,10 @@
 exports.getOverviewStats = async (req, res) => {
   try {
+    const mockStats = {
+      totalRevenue: 125000000,
+      totalCustomers: 1420,
+      activeBookings: 320,
+    };
     return res.status(200).json({
       success: true,
       message: "API thống kê V2 ok",
