@@ -1,5 +1,11 @@
 const { BookingV2, BOOKING_STATUS } = require('../models/bookingModel');
 
+// Kiểm tra số điện thoại Việt Nam: bắt đầu bằng 0 và theo sau là 9-10 chữ số
+const validateVietnamesePhone = (phone) => {
+    if (!phone) return false;
+    return /^0\d{9,10}$/.test(String(phone).trim());
+};
+
 const getDayRange = (dateInput) => {
     const date = dateInput ? new Date(dateInput) : new Date();
     const start = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0);
@@ -175,6 +181,7 @@ const buildTrainerWorkSlots = (workSchedule) => {
 
 module.exports = {
     BOOKING_STATUS,
+    validateVietnamesePhone,
     getDayRange,
     toDateKey,
     parseLocalDate,
