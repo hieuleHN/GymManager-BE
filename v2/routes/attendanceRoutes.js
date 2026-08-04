@@ -1,26 +1,51 @@
-import express from 'express';
-import { authenticateToken, requireAdmin } from '../middleware/authMiddleware.js';
-import { uploadDynamic } from '../middleware/uploadMiddleware.js';
-import {
-  create, list, detail, update, remove, view, related, publish, unpublish
-} from '../controllers/articleController.js';
-
+const express = require('express');
 const router = express.Router();
-const uploadArticle = uploadDynamic('articles');
+const {
+    getAttendanceList,
+    getAttendanceSummary,
+    getTodayAttendance,
+    getAttendanceTrend,
+    getMembersStatus,
+    lookupMembership,
+    checkIn,
+    getMemberHistory,
+    updateAttendance,
+    deleteAttendance,
+    getAttendanceMeta
+} = require('../controllers/attendanceController');
 
-router.get('/', list);
-router.get('/:id', detail);
-router.get('/:id/related', related);
-router.post('/:id/view', view);
+// GET /api/v2/attendance/meta - Danh sách trạng thái & phương thức điểm danh
+router.get('/meta', getAttendanceMeta);
 
-router.post('/', authenticateToken, uploadArticle.single('image'), create);
-router.put('/:id', authenticateToken, uploadArticle.single('image'), update);
-router.delete('/:id', authenticateToken, remove);
-router.put('/:id/publish', authenticateToken, publish);
-router.put('/:id/unpublish', authenticateToken, unpublish);
-router.post('/upload-image', authenticateToken, uploadArticle.single('image'), (req, res) => {
-  if (!req.file) return res.status(400).json({ error: 'Không có file!' });
-  res.json({ url: `/uploads/articles/${req.file.filename}` });
-});
+// GET /api/v2/attendance/summary - Tổng quan điểm danh hôm nay
+router.get('/summary', getAttendanceSummary);
 
-export default router;
+// GET /api/v2/attendance/trend - Thống kê điểm danh theo ngày
+router.get('/trend', getAttendanceTrend);
+
+// GET /api/v2/attendance/today - Danh sách điểm danh hôm nay
+router.get('/today', getTodayAttendance);
+
+// GET /api/v2/attendance/members-status - Trạng thái điểm danh của hội viên đang hoạt động
+router.get('/members-status', getMembersStatus);
+
+// GET /api/v2/attendance/history - Lịch sử điểm danh của một hội viên (?customerId= hoặc ?phone=)
+router.get('/history', getMemberHistory);
+
+// POST /api/v2/attendance/lookup - Tra cứu hội viên theo số điện thoại
+router.post('/lookup', lookupMembership);
+
+// POST /api/v2/attendance/check-in - Điểm danh hội viên
+router.post('/check-in', checkIn);
+
+// GET /api/v2/attendance - Danh sách điểm danh (lọc theo ngày/trạng thái/tìm kiếm)
+router.get('/', getAttendanceList);
+
+// PUT /api/v2/attendance/:id - Cập nhật bản ghi điểm danh
+router.put('/:id', updateAttendance);
+
+// DELETE /api/v2/attendance/:id - Xóa bản ghi điểm danh
+router.delete('/:id', deleteAttendance);
+
+module.exports = router;
+

@@ -1,0 +1,7 @@
+{
+    "name": "gym-manager-be-v2",
+    "version": "2.0.0",
+    "description": "Backend V2 - Node.js + Express + MongoDB (Mongoose), viết theo CommonJS",
+    "type": "commonjs",
+    "private": true
+}

@@ -1,87 +1,115 @@
-import Article from './schemas/articleSchema.js';
 
-export const createArticle = async (data, callback) => {
-  try {
-    const article = new Article(data);
-    const saved = await article.save();
-    callback(null, saved);
-  } catch (err) {
-    callback(err);
-  }
+const mongoose = require('mongoose');
+
+const CHECKIN_STATUS = {
+    SUCCESS: 'SUCCESS',
+    FAILED: 'FAILED',
+    MANUAL: 'MANUAL'
 };
 
-export const getAllArticles = async (page = 1, limit = 12, filter = {}, sort = 'newest', callback) => {
-  try {
-    const skip = (page - 1) * limit;
-    const query = { ...filter };
-
-    let sortObj = { publishedAt: -1, createdAt: -1 };
-    if (sort === 'most_viewed') sortObj = { views: -1, publishedAt: -1, createdAt: -1 };
-    else if (sort === 'popular') sortObj = { views: -1, publishedAt: -1, createdAt: -1 };
-
-    const [data, total] = await Promise.all([
-      Article.find(query)
-        .sort(sortObj)
-        .skip(skip)
-        .limit(limit),
-      Article.countDocuments(query)
-    ]);
-    callback(null, { data, total, page, limit, totalPages: Math.ceil(total / limit) });
-  } catch (err) {
-    callback(err);
-  }
+const CHECKIN_METHOD = {
+    QR: 'QR',
+    MANUAL: 'MANUAL'
 };
 
-export const getArticleById = async (id, callback) => {
-  try {
-    const article = await Article.findById(id);
-    if (!article) return callback(null, null);
-    callback(null, article);
-  } catch (err) {
-    callback(err);
-  }
+const CHECKIN_STATUS_LABELS = {
+    [CHECKIN_STATUS.SUCCESS]: 'Điểm danh thành công',
+    [CHECKIN_STATUS.FAILED]: 'Không hợp lệ',
+    [CHECKIN_STATUS.MANUAL]: 'Điểm danh thủ công'
 };
 
-export const updateArticle = async (id, data, callback) => {
-  try {
-    const article = await Article.findByIdAndUpdate(id, { ...data }, { new: true });
-    if (!article) return callback({ message: 'Không tìm thấy bài viết!' });
-    callback(null, article);
-  } catch (err) {
-    callback(err);
-  }
+const CHECKIN_METHOD_LABELS = {
+    [CHECKIN_METHOD.QR]: 'Quét QR',
+    [CHECKIN_METHOD.MANUAL]: 'Nhập tay'
 };
 
-export const deleteArticle = async (id, callback) => {
-  try {
-    const article = await Article.findByIdAndDelete(id);
-    if (!article) return callback({ message: 'Không tìm thấy bài viết!' });
-    callback(null, { success: true });
-  } catch (err) {
-    callback(err);
-  }
-};
+const attendanceSchemaV2 = new mongoose.Schema({
+    customerId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'CustomerV2',
+        default: null
+    },
+    customerName: {
+        type: String,
+        required: true,
+        trim: true
+    },
+    customerPhone: {
+        type: String,
+        required: true,
+        trim: true
+    },
+    userPackageId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'UserPackageV2',
+        default: null
+    },
+    packageName: {
+        type: String,
+        default: ''
+    },
+    staffId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'StaffV2',
+        default: null
+    },
+    staffName: {
+        type: String,
+        default: ''
+    },
+    checkInTime: {
+        type: Date,
+        default: Date.now
+    },
+    status: {
+        type: String,
+        enum: Object.values(CHECKIN_STATUS),
+        default: CHECKIN_STATUS.SUCCESS
+    },
+    method: {
+        type: String,
+        enum: Object.values(CHECKIN_METHOD),
+        default: CHECKIN_METHOD.MANUAL
+    },
+    note: {
+        type: String,
+        default: ''
+    }
+}, {
+    timestamps: true
+});
 
-export const incrementArticleViews = async (id, callback) => {
-  try {
-    await Article.findByIdAndUpdate(id, { $inc: { views: 1 } });
-    callback(null, { success: true });
-  } catch (err) {
-    callback(err);
-  }
-};
+attendanceSchemaV2.virtual('dateLabel').get(function () {
+    const d = new Date(this.checkInTime);
+    const y = d.getFullYear();
+    const mo = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${mo}-${day}`;
+});
 
-export const getRelatedArticles = async (articleId, category, limit = 4, callback) => {
-  try {
-    const data = await Article.find({
-      _id: { $ne: articleId },
-      category,
-      status: 'published'
-    })
-      .sort({ publishedAt: -1 })
-      .limit(limit);
-    callback(null, data);
-  } catch (err) {
-    callback(err);
-  }
+attendanceSchemaV2.virtual('timeLabel').get(function () {
+    const d = new Date(this.checkInTime);
+    const hh = String(d.getHours()).padStart(2, '0');
+    const mm = String(d.getMinutes()).padStart(2, '0');
+    return `${hh}:${mm}`;
+});
+
+attendanceSchemaV2.virtual('statusLabel').get(function () {
+    return CHECKIN_STATUS_LABELS[this.status] || this.status;
+});
+
+attendanceSchemaV2.virtual('methodLabel').get(function () {
+    return CHECKIN_METHOD_LABELS[this.method] || this.method;
+});
+
+attendanceSchemaV2.set('toJSON', { virtuals: true });
+attendanceSchemaV2.set('toObject', { virtuals: true });
+
+module.exports = {
+    CHECKIN_STATUS,
+    CHECKIN_STATUS_LABELS,
+    CHECKIN_METHOD,
+    CHECKIN_METHOD_LABELS,
+    AttendanceV2: mongoose.models.AttendanceV2 || mongoose.model('AttendanceV2', attendanceSchemaV2)
+
 };

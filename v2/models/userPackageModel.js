@@ -1,232 +1,189 @@
-import UserPackage from "./schemas/userPackageSchema.js";
+const mongoose = require('mongoose');
 
-export const createRegistration = async (data, callback) => {
-  try {
-    // Nhận thêm status và payment_status được truyền từ Controller xuống
-    const {
-      customer_id,
-      package_id,
-      locationId,
-      duration_months,
-      ptSessionsPerMonth,
-      isFullMonth,
-      monthlySessions,
-      total_price,
-      signature,
-      start_date,
-      end_date,
-      payment_method,
-      status,
-      payment_status,
-    } = data;
-
-    const registration = new UserPackage({
-      customer_id,
-      package_id,
-      locationId,
-      duration_months,
-      ptSessionsPerMonth,
-      isFullMonth,
-      monthlySessions,
-      total_price,
-      signature,
-      start_date,
-      end_date,
-      payment_method: payment_method || "",
-      // Nếu Controller có chỉ định rõ trạng thái (như 'chờ thanh toán') thì ưu tiên dùng luôn
-      payment_status:
-        payment_status || (payment_method ? "chờ thanh toán" : "đã thanh toán"),
-      status: status || (payment_method ? "chờ thanh toán" : "đang hoạt động"),
-    });
-
-    const result = await registration.save();
-    callback(null, result);
-  } catch (err) {
-    callback(err);
-  }
+const MEMBERSHIP_STATUS = {
+    ACTIVE: 'ACTIVE',
+    EXPIRING_SOON: 'EXPIRING_SOON',
+    EXPIRED: 'EXPIRED',
+    CANCELLED: 'CANCELLED'
 };
 
-export const getUserPackages = async (customerId, callback) => {
-  try {
-    const registrations = await UserPackage.find({ customer_id: customerId })
-      // Chui sâu vào bảng gói tập để lấy thông tin cơ sở gốc phòng hờ hóa đơn bị khuyết dữ liệu
-      .populate({
-        path: "package_id",
-        select: "name unitPrice features durations locationId disciplineId disciplines",
-        populate: [
-          { path: "locationId", select: "title name address" },
-          { path: "disciplineId", select: "name" },
-          { path: "disciplines", select: "name" }
-        ],
-      })
-      // Populate trực tiếp cơ sở gắn trên hóa đơn, bắt cả 2 trường title và name để tránh lệch cột DB
-      .populate("locationId", "title name address")
-      .sort({ createdAt: -1 });
-    callback(null, registrations);
-  } catch (err) {
-    callback(err);
-  }
+const PAYMENT_STATUS = {
+    PENDING: 'PENDING',
+    PAID: 'PAID',
+    CANCELLED: 'CANCELLED'
 };
 
-export const getRegistrationById = async (id, callback) => {
-  try {
-    const reg = await UserPackage.findById(id)
-      .populate({
-        path: "package_id",
-        select: "name unitPrice features durations locationId disciplineId disciplines",
-        populate: [
-          { path: "locationId", select: "title name address" },
-          { path: "disciplineId", select: "name" },
-          { path: "disciplines", select: "name" }
-        ],
-      })
-      .populate("locationId", "title name address")
-      .populate("customer_id", "fullName email phone");
-    if (!reg) return callback(null, null);
-    callback(null, reg);
-  } catch (err) {
-    callback(err);
-  }
+const PAYMENT_METHOD = {
+    CASH: 'CASH',
+    TRANSFER: 'TRANSFER',
+    CARD: 'CARD'
 };
 
-export const cancelRegistrationById = async (id, callback) => {
-  try {
-    const result = await UserPackage.findByIdAndUpdate(
-      id,
-      { status: "đã hủy", payment_status: "đã hủy" },
-      { new: true },
-    );
-    callback(null, result);
-  } catch (err) {
-    callback(err);
-  }
+const EXPIRING_SOON_DAYS = 10;
+
+const MEMBERSHIP_STATUS_LABELS = {
+    [MEMBERSHIP_STATUS.ACTIVE]: 'Đang hoạt động',
+    [MEMBERSHIP_STATUS.EXPIRING_SOON]: 'Sắp hết hạn',
+    [MEMBERSHIP_STATUS.EXPIRED]: 'Đã hết hạn',
+    [MEMBERSHIP_STATUS.CANCELLED]: 'Đã hủy'
 };
 
-export const getAllRegistrations = async (
-  page = 1,
-  limit = 15,
-  filters = {},
-  callback,
-) => {
-  try {
-    const filter = {};
-    if (filters.payment_status) filter.payment_status = filters.payment_status;
-    if (filters.locationId) filter.locationId = filters.locationId;
-    if (filters.status) filter.status = filters.status;
-
-    const skip = (page - 1) * limit;
-    const [data, total] = await Promise.all([
-      UserPackage.find(filter)
-        .populate("package_id", "name unitPrice")
-        .populate("locationId", "title name address")
-        .populate("customer_id", "fullName email phone")
-        .populate("confirmed_by", "name")
-        .skip(skip)
-        .limit(limit)
-        .sort({ createdAt: -1 }),
-      UserPackage.countDocuments(filter),
-    ]);
-    callback(null, {
-      data,
-      total,
-      page,
-      limit,
-      totalPages: Math.ceil(total / limit),
-    });
-  } catch (err) {
-    callback(err);
-  }
+const PAYMENT_STATUS_LABELS = {
+    [PAYMENT_STATUS.PENDING]: 'Chờ thanh toán',
+    [PAYMENT_STATUS.PAID]: 'Đã thanh toán',
+    [PAYMENT_STATUS.CANCELLED]: 'Đã hủy'
 };
 
-export const updatePaymentMethod = async (
-  id,
-  customerId,
-  paymentMethod,
-  callback,
-) => {
-  try {
-    const result = await UserPackage.findOneAndUpdate(
-      { _id: id, customer_id: customerId },
-      { payment_method: paymentMethod, payment_status: "chờ thanh toán" },
-      { new: true },
-    );
-    if (!result) return callback(new Error("NotFound"));
-    callback(null, result);
-  } catch (err) {
-    callback(err);
-  }
+const PAYMENT_METHOD_LABELS = {
+    [PAYMENT_METHOD.CASH]: 'Tiền mặt',
+    [PAYMENT_METHOD.TRANSFER]: 'Chuyển khoản',
+    [PAYMENT_METHOD.CARD]: 'Thẻ'
 };
 
-export const updateVnpayTransactionRef = async (id, txnRef, callback) => {
-  try {
-    const result = await UserPackage.findByIdAndUpdate(
-      id,
-      { vnpay_txn_ref: txnRef },
-      { new: true },
-    );
-    if (!result) return callback(new Error("NotFound"));
-    callback(null, result);
-  } catch (err) {
-    callback(err);
-  }
-};
-
-export const findRegistrationByTxnRef = async (txnRef, callback) => {
-  try {
-    const reg = await UserPackage.findOne({ vnpay_txn_ref: txnRef })
-      .populate("customer_id", "fullName email phone")
-      .populate("package_id", "name unitPrice");
-    if (!reg) return callback(null, null);
-    callback(null, reg);
-  } catch (err) {
-    callback(err);
-  }
-};
-
-export const getTransactionHistory = async (customerId, callback) => {
-  try {
-    const transactions = await UserPackage.find({ customer_id: customerId })
-      .populate({
-        path: "package_id",
-        select: "name unitPrice features durations",
-      })
-      .populate("locationId", "title name address bankName accountNumber accountName branch")
-      .sort({ createdAt: -1 });
-    callback(null, transactions);
-  } catch (err) {
-    callback(err);
-  }
-};
-
-export const updatePaymentStatus = async (id, paymentData, callback) => {
-  try {
-    const {
-      payment_status, confirmed_by, payment_method,
-      vnpay_txn_ref, payment_date,
-      vnpay_bank_code, vnpay_bank_tran_no,
-      vnpay_card_type, vnpay_transaction_no,
-    } = paymentData;
-    const update = {
-      payment_status,
-      confirmed_by,
-      confirmed_at: payment_status === "đã thanh toán" ? (payment_date || new Date()) : null,
-      payment_date: payment_status === "đã thanh toán" ? (payment_date || new Date()) : null,
-    };
-    if (payment_method) update.payment_method = payment_method;
-    if (vnpay_txn_ref) update.vnpay_txn_ref = vnpay_txn_ref;
-    if (vnpay_bank_code) update.vnpay_bank_code = vnpay_bank_code;
-    if (vnpay_bank_tran_no) update.vnpay_bank_tran_no = vnpay_bank_tran_no;
-    if (vnpay_card_type) update.vnpay_card_type = vnpay_card_type;
-    if (vnpay_transaction_no) update.vnpay_transaction_no = vnpay_transaction_no;
-    if (payment_status === "đã hủy") {
-      update.status = "đã hủy";
+const userPackageSchemaV2 = new mongoose.Schema({
+    customerId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'CustomerV2',
+        default: null
+    },
+    customerName: {
+        type: String,
+        required: true,
+        trim: true
+    },
+    customerPhone: {
+        type: String,
+        required: true,
+        trim: true
+    },
+    customerEmail: {
+        type: String,
+        default: '',
+        trim: true
+    },
+    packageId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'PackageV2',
+        default: null
+    },
+    packageName: {
+        type: String,
+        required: true,
+        trim: true
+    },
+    packageType: {
+        type: String,
+        default: 'STANDARD'
+    },
+    durationMonths: {
+        type: Number,
+        default: 1,
+        min: 1
+    },
+    ptSessionsPerMonth: {
+        type: Number,
+        default: 0,
+        min: 0
+    },
+    usedSessions: {
+        type: Number,
+        default: 0,
+        min: 0
+    },
+    startDate: {
+        type: Date,
+        required: true
+    },
+    endDate: {
+        type: Date,
+        required: true
+    },
+    totalPrice: {
+        type: Number,
+        default: 0,
+        min: 0
+    },
+    paymentStatus: {
+        type: String,
+        enum: Object.values(PAYMENT_STATUS),
+        default: PAYMENT_STATUS.PAID
+    },
+    paymentMethod: {
+        type: String,
+        enum: Object.values(PAYMENT_METHOD),
+        default: PAYMENT_METHOD.CASH
+    },
+    paidAt: {
+        type: Date,
+        default: null
+    },
+    membershipCode: {
+        type: String,
+        default: ''
+    },
+    note: {
+        type: String,
+        default: ''
+    },
+    status: {
+        type: String,
+        enum: Object.values(MEMBERSHIP_STATUS),
+        default: MEMBERSHIP_STATUS.ACTIVE
     }
-    const result = await UserPackage.findByIdAndUpdate(id, update, {
-      new: true,
-    });
-    if (!result) return callback(new Error("NotFound"));
-    callback(null, result);
-  } catch (err) {
-    callback(err);
-  }
+}, {
+    timestamps: true
+});
+
+userPackageSchemaV2.virtual('remainingDays').get(function () {
+    if (!this.endDate) return 0;
+    const now = new Date();
+    const end = new Date(this.endDate);
+    const diff = end.getTime() - now.getTime();
+    return Math.max(0, Math.ceil(diff / (1000 * 60 * 60 * 24)));
+});
+
+userPackageSchemaV2.virtual('totalDurationDays').get(function () {
+    if (!this.startDate || !this.endDate) return 0;
+    const diff = new Date(this.endDate).getTime() - new Date(this.startDate).getTime();
+    return Math.max(1, Math.ceil(diff / (1000 * 60 * 60 * 24)));
+});
+
+userPackageSchemaV2.virtual('progressPercent').get(function () {
+    const total = this.totalDurationDays;
+    const remaining = this.remainingDays;
+    if (!total) return 0;
+    const elapsed = total - remaining;
+    return Math.min(100, Math.max(0, Math.round((elapsed / total) * 100)));
+});
+
+userPackageSchemaV2.virtual('sessionsLeft').get(function () {
+    const totalAllowed = (this.ptSessionsPerMonth || 0) * (this.durationMonths || 0);
+    return Math.max(0, totalAllowed - (this.usedSessions || 0));
+});
+
+userPackageSchemaV2.virtual('statusLabel').get(function () {
+    return MEMBERSHIP_STATUS_LABELS[this.status] || this.status;
+});
+
+userPackageSchemaV2.virtual('paymentStatusLabel').get(function () {
+    return PAYMENT_STATUS_LABELS[this.paymentStatus] || this.paymentStatus;
+});
+
+userPackageSchemaV2.virtual('paymentMethodLabel').get(function () {
+    return PAYMENT_METHOD_LABELS[this.paymentMethod] || this.paymentMethod;
+});
+
+userPackageSchemaV2.set('toJSON', { virtuals: true });
+userPackageSchemaV2.set('toObject', { virtuals: true });
+
+module.exports = {
+    MEMBERSHIP_STATUS,
+    MEMBERSHIP_STATUS_LABELS,
+    PAYMENT_STATUS,
+    PAYMENT_STATUS_LABELS,
+    PAYMENT_METHOD,
+    PAYMENT_METHOD_LABELS,
+    EXPIRING_SOON_DAYS,
+    UserPackageV2: mongoose.models.UserPackageV2 || mongoose.model('UserPackageV2', userPackageSchemaV2)
 };
+
