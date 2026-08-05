@@ -312,6 +312,29 @@ export const getTrainerBookings = async (trainerId, dateFrom, dateTo, callback) 
   }
 };
 
+export const getAllScheduleBookings = async (dateFrom, dateTo, callback) => {
+  try {
+    const dateFilter = {};
+    if (dateFrom) dateFilter.$gte = new Date(dateFrom);
+    if (dateTo) dateFilter.$lte = new Date(dateTo);
+    const hasDateFilter = dateFrom || dateTo;
+
+    const bookings = await Booking.find({
+      trainerId: { $ne: null },
+      status: { $in: ['pending', 'confirmed'] },
+      ...(hasDateFilter ? { date: dateFilter } : {})
+    })
+      .populate('customerId', 'fullName phone email avatar')
+      .populate('trainerId', 'fullName')
+      .populate('transferToTrainerId', 'fullName')
+      .populate('transferredFromTrainerId', 'fullName')
+      .sort({ date: 1, time: 1 });
+    callback(null, bookings);
+  } catch (err) {
+    callback(err);
+  }
+};
+
 export const checkTrainerConflict = async (trainerId, date, time, excludeBookingId = null, callback) => {
   try {
     const startOfDay = new Date(date);

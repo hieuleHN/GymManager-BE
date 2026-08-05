@@ -1,3 +1,4 @@
+import mongoose from "mongoose";
 import Customer from "../models/schemas/customerSchema.js";
 import CheckIn from "../models/schemas/checkInSchema.js";
 import UserPackage from "../models/schemas/userPackageSchema.js";
@@ -5,6 +6,11 @@ import Package from "../models/schemas/packageSchema.js";
 import Staff from "../models/schemas/staffSchema.js";
 import Booking from "../models/schemas/bookingSchema.js";
 import Job from "../models/schemas/jobSchema.js";
+
+const toObjectId = (id) => {
+    if (!id) return null;
+    try { return new mongoose.Types.ObjectId(id); } catch { return id; }
+};
 
 const getDateRange = (period) => {
     const now = new Date();
@@ -31,6 +37,8 @@ const getDateRange = (period) => {
 export const getAdminDashboardStats = async (req, res) => {
     try {
         const period = req.query.period || 'week';
+        const locationId = toObjectId(req.query.locationId);
+        const locFilter = locationId ? { locationId } : {};
         const now = new Date();
         const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
         const endOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
@@ -50,9 +58,9 @@ export const getAdminDashboardStats = async (req, res) => {
         let bookingStats = { today: 0, month: 0, year: 0 };
         try {
             const [todayCount, monthCount, yearCount] = await Promise.all([
-                Booking.countDocuments({ date: { $gte: startOfToday, $lte: endOfToday } }),
-                Booking.countDocuments({ date: { $gte: startOfMonth } }),
-                Booking.countDocuments({ date: { $gte: startOfYear } })
+                Booking.countDocuments({ date: { $gte: startOfToday, $lte: endOfToday }, ...locFilter }),
+                Booking.countDocuments({ date: { $gte: startOfMonth }, ...locFilter }),
+                Booking.countDocuments({ date: { $gte: startOfYear }, ...locFilter })
             ]);
             bookingStats = { today: todayCount, month: monthCount, year: yearCount };
         } catch (e) {
@@ -73,7 +81,7 @@ export const getAdminDashboardStats = async (req, res) => {
                 growthGroupBy = { $dayOfWeek: "$createdAt" };
             }
             const growthAgg = await Customer.aggregate([
-                { $match: { createdAt: { $gte: periodStart } } },
+                { $match: { createdAt: { $gte: periodStart }, ...locFilter } },
                 { $group: { _id: growthGroupBy, count: { $sum: 1 } } },
                 { $sort: { "_id": 1 } }
             ]);
@@ -84,7 +92,7 @@ export const getAdminDashboardStats = async (req, res) => {
             } else if (effectivePeriod === 'quarter') {
                 const quarterEnd = new Date(periodStart);
                 quarterEnd.setMonth(quarterEnd.getMonth() + 3);
-                const qCustomers = await Customer.find({ createdAt: { $gte: periodStart, $lt: quarterEnd } }).select('createdAt').lean();
+                const qCustomers = await Customer.find({ createdAt: { $gte: periodStart, $lt: quarterEnd }, ...locFilter }).select('createdAt').lean();
                 const qWeekMap = {};
                 for (const c of qCustomers) {
                     const daysDiff = Math.floor((c.createdAt - periodStart) / (1000 * 60 * 60 * 24));
@@ -112,10 +120,12 @@ export const getAdminDashboardStats = async (req, res) => {
         }
 
         // ==========================================================
-        // 3. PHÂN BỔ HỘI VIÊN THEO MÔN (toàn bộ hội viên đang hoạt động)
+        // 3. PHÂN BỔ HỘI VIÊN THEO MÔN (theo period đã chọn)
         // ==========================================================
         const activeRegs = await UserPackage.find({
-            status: "đang hoạt động"
+            status: "đang hoạt động",
+            createdAt: { $gte: periodStart },
+            ...locFilter
         })
             .populate({
                 path: "package_id",
@@ -127,8 +137,6 @@ export const getAdminDashboardStats = async (req, res) => {
             const disciplineName = reg.package_id?.disciplineId?.name;
             if (disciplineName) {
                 sportDistributionMap[disciplineName] = (sportDistributionMap[disciplineName] || 0) + 1;
-            } else {
-                sportDistributionMap["Khác"] = (sportDistributionMap["Khác"] || 0) + 1;
             }
         }
 
@@ -140,6 +148,17 @@ export const getAdminDashboardStats = async (req, res) => {
         // ==========================================================
         // 4. TẦN SUẤT ĐIỂM DANH (theo period)
         // ==========================================================
+        let locUserPackageIds = null;
+        if (locationId) {
+            try {
+                const locUps = await UserPackage.find({ locationId }).select('_id').lean();
+                locUserPackageIds = locUps.map(u => u._id);
+            } catch (e) {
+                console.log("Không lấy được gói tập theo cơ sở:", e.message);
+            }
+        }
+        const checkinLocFilter = locUserPackageIds ? { userPackageId: { $in: locUserPackageIds } } : {};
+
         let checkInGroupBy;
         if (effectivePeriod === 'year') {
             checkInGroupBy = { $month: "$checkInTime" };
@@ -150,7 +169,7 @@ export const getAdminDashboardStats = async (req, res) => {
         }
 
         const checkInStats = await CheckIn.aggregate([
-            { $match: { checkInTime: { $gte: periodStart } } },
+            { $match: { checkInTime: { $gte: periodStart }, ...checkinLocFilter } },
             { $group: { _id: checkInGroupBy, count: { $sum: 1 } } },
             { $sort: { "_id": 1 } }
         ]);
@@ -162,7 +181,7 @@ export const getAdminDashboardStats = async (req, res) => {
         } else if (effectivePeriod === 'quarter') {
             const qEnd = new Date(periodStart);
             qEnd.setMonth(qEnd.getMonth() + 3);
-            const qCheckins = await CheckIn.find({ checkInTime: { $gte: periodStart, $lt: qEnd } }).select('checkInTime').lean();
+            const qCheckins = await CheckIn.find({ checkInTime: { $gte: periodStart, $lt: qEnd }, ...checkinLocFilter }).select('checkInTime').lean();
             const qWeekMap = {};
             for (const c of qCheckins) {
                 const daysDiff = Math.floor((c.checkInTime - periodStart) / (1000 * 60 * 60 * 24));
@@ -195,13 +214,13 @@ export const getAdminDashboardStats = async (req, res) => {
                 name: { $regex: /huấn luyện viên|trainer|pt|hlv/i }
             });
             const trainerJobIds = trainerJobs.map(j => j._id);
-            const trainers = await Staff.find({ job: { $in: trainerJobIds } });
+            const trainers = await Staff.find({ job: { $in: trainerJobIds }, ...locFilter });
 
             trainerPerformance = await Promise.all(trainers.map(async (pt) => {
                 const [sessionCount, rejectedCount, cancelledCount] = await Promise.all([
-                    Booking.countDocuments({ trainerId: pt._id, date: { $gte: periodStart }, status: 'confirmed' }),
-                    Booking.countDocuments({ trainerId: pt._id, date: { $gte: periodStart }, status: 'rejected' }),
-                    Booking.countDocuments({ trainerId: pt._id, date: { $gte: periodStart }, status: 'cancelled' }),
+                    Booking.countDocuments({ trainerId: pt._id, date: { $gte: periodStart }, status: 'confirmed', ...locFilter }),
+                    Booking.countDocuments({ trainerId: pt._id, date: { $gte: periodStart }, status: 'rejected', ...locFilter }),
+                    Booking.countDocuments({ trainerId: pt._id, date: { $gte: periodStart }, status: 'cancelled', ...locFilter }),
                 ]);
                 return {
                     name: pt.fullName,
@@ -217,10 +236,10 @@ export const getAdminDashboardStats = async (req, res) => {
         const totalCheckins = checkInOfWeek.reduce((sum, d) => sum + d.count, 0);
         const totalTrainerSessions = trainerPerformance.reduce((sum, t) => sum + t.sessions, 0);
         let totalNewCustomers = 0;
-        try { totalNewCustomers = await Customer.countDocuments({ createdAt: { $gte: periodStart } }); } catch (e) {}
+        try { totalNewCustomers = await Customer.countDocuments({ createdAt: { $gte: periodStart }, ...locFilter }); } catch (e) {}
 
         let totalBookings = 0;
-        try { totalBookings = await Booking.countDocuments({ date: { $gte: periodStart } }); } catch (e) {}
+        try { totalBookings = await Booking.countDocuments({ date: { $gte: periodStart }, ...locFilter }); } catch (e) {}
 
         return res.status(200).json({
             bookingStats,
@@ -248,6 +267,7 @@ export const getCheckinDetail = async (req, res) => {
         const period = req.query.period || 'week';
         const weekOffset = parseInt(req.query.weekOffset);
         const clickedMonth = parseInt(req.query.clickedMonth);
+        const locationId = toObjectId(req.query.locationId);
 
         let { start: periodStart } = getDateRange(period);
         if (req.query.startDate && req.query.endDate) {
@@ -255,6 +275,15 @@ export const getCheckinDetail = async (req, res) => {
         }
         const isCustomDate = !!(req.query.startDate && req.query.endDate);
         const effectivePeriod = isCustomDate ? 'year' : period;
+
+        let locUserPackageIds = null;
+        if (locationId) {
+            try {
+                const locUps = await UserPackage.find({ locationId }).select('_id').lean();
+                locUserPackageIds = locUps.map(u => u._id);
+            } catch (e) { locUserPackageIds = null; }
+        }
+        const checkinLocFilter = locUserPackageIds ? { userPackageId: { $in: locUserPackageIds } } : {};
 
         let queryStart, queryEnd, label;
 
@@ -285,7 +314,7 @@ export const getCheckinDetail = async (req, res) => {
             label = dayName;
 
             const checkins = await CheckIn.aggregate([
-                { $match: { checkInTime: { $gte: queryStart, $lte: queryEnd }, $expr: { $eq: [{ $dayOfWeek: "$checkInTime" }, targetDayOfWeek] } } },
+                { $match: { checkInTime: { $gte: queryStart, $lte: queryEnd }, $expr: { $eq: [{ $dayOfWeek: "$checkInTime" }, targetDayOfWeek] }, ...checkinLocFilter } },
                 { $lookup: { from: "customers", localField: "customerId", foreignField: "_id", as: "customer" } },
                 { $addFields: { customer: { $arrayElemAt: ["$customer", 0] } } },
                 { $sort: { checkInTime: -1 } },
@@ -306,7 +335,7 @@ export const getCheckinDetail = async (req, res) => {
 
         // Week/month lookup: query by date range
         const checkins = await CheckIn.aggregate([
-            { $match: { checkInTime: { $gte: queryStart, $lt: queryEnd } } },
+            { $match: { checkInTime: { $gte: queryStart, $lt: queryEnd }, ...checkinLocFilter } },
             { $lookup: { from: "customers", localField: "customerId", foreignField: "_id", as: "customer" } },
             { $addFields: { customer: { $arrayElemAt: ["$customer", 0] } } },
             { $sort: { checkInTime: -1 } },
@@ -336,10 +365,19 @@ export const getSportDetail = async (req, res) => {
             return res.status(400).json({ error: "Thiếu tên môn tập" });
         }
 
-        const now = new Date();
-        const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
+        const locationId = toObjectId(req.query.locationId);
+        const locFilter = locationId ? { locationId } : {};
 
-        const regs = await UserPackage.find({ status: "đang hoạt động" })
+        let { start: periodStart } = getDateRange(req.query.period || 'week');
+        if (req.query.startDate && req.query.endDate) {
+            periodStart = new Date(req.query.startDate + 'T00:00:00');
+        }
+
+        const regs = await UserPackage.find({
+            status: "đang hoạt động",
+            createdAt: { $gte: periodStart },
+            ...locFilter
+        })
             .populate({
                 path: "package_id",
                 populate: { path: "disciplineId", select: "name" }
@@ -386,19 +424,23 @@ export const getTrainerDetail = async (req, res) => {
             return res.status(400).json({ error: "Thiếu tên HLV" });
         }
 
+        const locationId = toObjectId(req.query.locationId);
+        const locFilter = locationId ? { locationId } : {};
+
         let { start: periodStart } = getDateRange(period);
         if (req.query.startDate && req.query.endDate) {
             periodStart = new Date(req.query.startDate + 'T00:00:00');
         }
 
-        const trainer = await Staff.findOne({ fullName: trainerName });
+        const trainer = await Staff.findOne({ fullName: trainerName, ...locFilter });
         if (!trainer) {
             return res.status(404).json({ error: "Không tìm thấy HLV" });
         }
 
         const bookings = await Booking.find({
             trainerId: trainer._id,
-            date: { $gte: periodStart }
+            date: { $gte: periodStart },
+            ...locFilter
         })
             .populate("customerId", "fullName phone gender")
             .populate("locationId", "name")
@@ -440,6 +482,9 @@ export const getMonthlyDetail = async (req, res) => {
             return res.status(400).json({ error: "Tháng không hợp lệ (1-12)" });
         }
 
+        const locationId = toObjectId(req.query.locationId);
+        const locFilter = locationId ? { locationId } : {};
+
         const now = new Date();
         const year = now.getFullYear();
         const startOfMonth = new Date(year, month - 1, 1);
@@ -447,7 +492,8 @@ export const getMonthlyDetail = async (req, res) => {
 
         // Lấy danh sách khách hàng đăng ký trong tháng
         const customers = await Customer.find({
-            createdAt: { $gte: startOfMonth, $lt: endOfMonth }
+            createdAt: { $gte: startOfMonth, $lt: endOfMonth },
+            ...locFilter
         }).sort({ createdAt: -1 });
 
         const customerIds = customers.map(c => c._id);
@@ -479,15 +525,15 @@ export const getMonthlyDetail = async (req, res) => {
 
         // Danh sách khách hàng chi tiết
         const customerList = customers.map(c => {
-            const pkg = userPackages.find(up => up.customer_id.toString() === c._id.toString());
+            const pkgs = userPackages.filter(up => up.customer_id?.toString?.() === c._id.toString());
             return {
                 _id: c._id,
                 fullName: c.fullName || "Chưa có tên",
                 phone: c.phone || "",
                 email: c.email || "",
                 gender: c.gender || "Khác",
-                package: pkg?.package_id?.name || "Chưa đăng ký",
-                totalPrice: pkg?.total_price || 0,
+                packageCount: pkgs.length,
+                totalPrice: pkgs.reduce((sum, p) => sum + (p.total_price || 0), 0),
                 createdAt: c.createdAt,
             };
         });

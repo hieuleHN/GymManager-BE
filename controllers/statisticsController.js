@@ -7,6 +7,12 @@ import Equipment from "../models/schemas/equipmentSchema.js";
 import CheckIn from "../models/schemas/checkInSchema.js";
 import Booking from "../models/schemas/bookingSchema.js";
 import Customer from "../models/schemas/customerSchema.js";
+import mongoose from "mongoose";
+
+const toObjectId = (id) => {
+  if (!id) return null;
+  try { return new mongoose.Types.ObjectId(id); } catch { return id; }
+};
 
 const MONTHS = ["T1", "T2", "T3", "T4", "T5", "T6", "T7", "T8", "T9", "T10", "T11", "T12"];
 
@@ -94,7 +100,7 @@ async function sumBetween(Model, amountField, dateField, start, end, matchExtra 
 export const getFinanceStatistics = async (req, res) => {
   try {
     const period = req.query.period || "month";
-    const locationId = req.query.locationId || null;
+    const locationId = toObjectId(req.query.locationId);
     const locFilter = locationId ? { locationId: locationId } : {};
 
     const { start, prevStart, prevEnd } = getPeriodRange(period);
@@ -587,7 +593,7 @@ export const getFinanceStatistics = async (req, res) => {
 
 export const getOperationsStatistics = async (req, res) => {
   try {
-    const locationId = req.query.locationId || null;
+    const locationId = toObjectId(req.query.locationId);
     const match = locationId ? { location_id: locationId } : {};
 
     const equipments = await Equipment.find(match);
