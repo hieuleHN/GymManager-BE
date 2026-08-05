@@ -14,7 +14,6 @@ const BOOKING_STATUS_LABELS = {
   [BOOKING_STATUS.CANCELLED]: "Đã hủy",
   [BOOKING_STATUS.REJECTED]: "Bị từ chối",
 };
-
 const SESSION_TYPE = {
   PERSONAL: "PERSONAL",
   GROUP: "GROUP",
@@ -27,17 +26,38 @@ const SESSION_TYPE_LABELS = {
   [SESSION_TYPE.CLASS]: "Lớp tập thể",
   [SESSION_TYPE.OTHER]: "Khác",
 };
-
 const PAYMENT_STATUS = {
   PENDING: "PENDING",
   PAID: "PAID",
   CANCELLED: "CANCELLED",
 };
-
 const PAYMENT_STATUS_LABELS = {
   [PAYMENT_STATUS.PENDING]: "Chờ thanh toán",
   [PAYMENT_STATUS.PAID]: "Đã thanh toán",
   [PAYMENT_STATUS.CANCELLED]: "Đã hủy",
+};
+
+const TRANSFER_TYPE = {
+  NONE: "NONE",
+  TO_COLLEAGUE: "TO_COLLEAGUE",
+  TO_ANOTHER_DAY: "TO_ANOTHER_DAY",
+};
+const TRANSFER_TYPE_LABELS = {
+  [TRANSFER_TYPE.NONE]: "Không chuyển",
+  [TRANSFER_TYPE.TO_COLLEAGUE]: "Chuyển PT khác",
+  [TRANSFER_TYPE.TO_ANOTHER_DAY]: "Dời sang ngày khác",
+};
+const TRANSFER_STATUS = {
+  NONE: "NONE",
+  PENDING_APPROVAL: "PENDING_APPROVAL",
+  APPROVED: "APPROVED",
+  REJECTED: "REJECTED",
+};
+const TRANSFER_STATUS_LABELS = {
+  [TRANSFER_STATUS.NONE]: "Không có",
+  [TRANSFER_STATUS.PENDING_APPROVAL]: "Đang chờ duyệt",
+  [TRANSFER_STATUS.APPROVED]: "Đã duyệt",
+  [TRANSFER_STATUS.REJECTED]: "Bị từ chối",
 };
 
 const bookingSchemaV2 = new mongoose.Schema(
@@ -50,15 +70,12 @@ const bookingSchemaV2 = new mongoose.Schema(
     },
     customerName: { type: String, required: true, trim: true },
     customerPhone: { type: String, required: true, trim: true },
-
-    // Gói tập
     userPackageId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "UserPackageV2",
       default: null,
     },
     packageName: { type: String, default: "" },
-
     sessionType: {
       type: String,
       enum: Object.values(SESSION_TYPE),
@@ -82,8 +99,6 @@ const bookingSchemaV2 = new mongoose.Schema(
     },
     rejectionReason: { type: String, default: "" },
     note: { type: String, default: "" },
-
-    // Thanh toán & Điểm danh
     price: { type: Number, default: 0 },
     paymentStatus: {
       type: String,
@@ -96,10 +111,42 @@ const bookingSchemaV2 = new mongoose.Schema(
       ref: "AttendanceV2",
       default: null,
     },
+
+    // Tính năng chuyển nhượng
+    transferType: {
+      type: String,
+      enum: Object.values(TRANSFER_TYPE),
+      default: TRANSFER_TYPE.NONE,
+    },
+    transferToTrainerId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "StaffV2",
+      default: null,
+    },
+    transferToTrainerName: { type: String, default: "" },
+    transferredFromTrainerId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "StaffV2",
+      default: null,
+    },
+    transferredFromTrainerName: { type: String, default: "" },
+    transferReason: { type: String, default: "" },
+    transferNewDate: { type: Date, default: null },
+    transferNewTime: { type: String, default: "" },
+    transferStatus: {
+      type: String,
+      enum: Object.values(TRANSFER_STATUS),
+      default: TRANSFER_STATUS.NONE,
+    },
+    transferApprovedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "StaffV2",
+      default: null,
+    },
+    transferApprovedAt: { type: Date, default: null },
+    transferRejectionReason: { type: String, default: "" },
   },
-  {
-    timestamps: true,
-  },
+  { timestamps: true },
 );
 
 module.exports = {
@@ -109,6 +156,10 @@ module.exports = {
   SESSION_TYPE_LABELS,
   PAYMENT_STATUS,
   PAYMENT_STATUS_LABELS,
+  TRANSFER_TYPE,
+  TRANSFER_TYPE_LABELS,
+  TRANSFER_STATUS,
+  TRANSFER_STATUS_LABELS,
   BookingV2:
     mongoose.models.BookingV2 || mongoose.model("BookingV2", bookingSchemaV2),
 };
