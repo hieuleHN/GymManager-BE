@@ -17,6 +17,11 @@ const customerSchemaV2 = new mongoose.Schema({
         lowercase: true,
         default: ''
     },
+    locationId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Location',
+        default: null
+    },
     membershipPackage: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'Package',

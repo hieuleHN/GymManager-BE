@@ -143,7 +143,8 @@ const registerMembership = async (req, res) => {
             totalPrice,
             paymentStatus,
             paymentMethod,
-            note
+            note,
+            locationId
         } = req.body;
 
         if (!customerName || !customerName.trim()) {
@@ -199,6 +200,7 @@ const registerMembership = async (req, res) => {
             customerName: customerName.trim(),
             customerPhone: customerPhone.trim(),
             customerEmail: customerEmail || '',
+            locationId: locationId || null,
             packageId: packageId || null,
             packageName,
             packageType,

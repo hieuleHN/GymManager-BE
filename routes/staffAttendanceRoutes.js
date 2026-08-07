@@ -5,7 +5,7 @@ import { generateQR, verifyQR, todayAttendance, attendanceHistory } from '../con
 const router = express.Router();
 
 router.get('/qr', authenticateToken, generateQR);
-router.post('/verify', verifyQR);
+router.post('/verify', authenticateToken, verifyQR);
 router.get('/today', authenticateToken, todayAttendance);
 router.get('/history', authenticateToken, attendanceHistory);
 

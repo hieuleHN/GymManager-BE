@@ -24,6 +24,16 @@ const CHECKIN_METHOD_LABELS = {
 };
 
 const attendanceSchemaV2 = new mongoose.Schema({
+    personType: {
+        type: String,
+        enum: ['MEMBER', 'STAFF'],
+        default: 'MEMBER'
+    },
+    locationId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Location',
+        default: null
+    },
     customerId: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'CustomerV2',
@@ -57,9 +67,21 @@ const attendanceSchemaV2 = new mongoose.Schema({
         type: String,
         default: ''
     },
+    lockerId: {
+        type: String,
+        default: ''
+    },
+    lockerName: {
+        type: String,
+        default: ''
+    },
     checkInTime: {
         type: Date,
         default: Date.now
+    },
+    checkOutTime: {
+        type: Date,
+        default: null
     },
     status: {
         type: String,
@@ -100,6 +122,14 @@ attendanceSchemaV2.virtual('statusLabel').get(function () {
 
 attendanceSchemaV2.virtual('methodLabel').get(function () {
     return CHECKIN_METHOD_LABELS[this.method] || this.method;
+});
+
+attendanceSchemaV2.virtual('hasLocker').get(function () {
+    return !!this.lockerId;
+});
+
+attendanceSchemaV2.virtual('checkedOut').get(function () {
+    return !!this.checkOutTime;
 });
 
 attendanceSchemaV2.set('toJSON', { virtuals: true });

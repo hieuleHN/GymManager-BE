@@ -71,7 +71,7 @@ export const login = (req, res) => {
           }
 
           const token = jwt.sign(
-            { id: staff._id, role: staff.job?.name || 'staff', username: staff.account, fullName: staff.fullName, isStaff: true, jobId, isAdmin },
+            { id: staff._id, role: staff.job?.name || 'staff', username: staff.account, fullName: staff.fullName, isStaff: true, jobId, isAdmin, locationId: staff.locationId || null },
             JWT_SECRET,
             { expiresIn: '3d' }
           );

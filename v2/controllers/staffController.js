@@ -1,4 +1,16 @@
 const { StaffV2, STAFF_ROLES, STAFF_PERMISSIONS } = require('../models/staffModel');
+const { stationLocationId, getClubName } = require('../services/clubService');
+
+// Nhân viên có phòng tập chỉ được thao tác với nhân viên cùng phòng tập / chưa gán phòng.
+// Trả về res 403 kèm tên phòng tập nếu nhân viên đích thuộc phòng tập khác.
+const rejectIfOtherClub = async (res, staff, req) => {
+    const loc = stationLocationId(req);
+    if (!loc || !staff || !staff.locationId) return false;
+    if (String(staff.locationId) === String(loc)) return false;
+    const clubName = await getClubName(staff.locationId);
+    res.status(403).json({ success: false, message: `Nhân viên này ở phòng tập ${clubName}` });
+    return true;
+};
 
 const validateVietnamesePhone = (phone) => {
     if (!phone) return false;
@@ -44,6 +56,9 @@ const getStaffList = async (req, res) => {
         }
         if (role) filter.role = role;
         if (status) filter.status = status;
+        // Nhân viên có phòng tập -> chỉ quản lý nhân viên của phòng tập mình (+ chưa gán phòng)
+        const loc = stationLocationId(req);
+        if (loc) filter.locationId = { $in: [loc, null] };
 
         const skip = (page - 1) * limit;
         const [data, total] = await Promise.all([
@@ -78,6 +93,7 @@ const getStaffById = async (req, res) => {
                 message: 'Không tìm thấy nhân viên V2!'
             });
         }
+        if (await rejectIfOtherClub(res, staff, req)) return;
         return res.status(200).json({
             success: true,
             message: 'Lấy thông tin nhân viên V2 thành công',
@@ -94,7 +110,7 @@ const getStaffById = async (req, res) => {
 
 const createStaff = async (req, res) => {
     try {
-        const { account, password, fullName, email, phone, gender, role, permissions, workSchedule, startDate, address, baseSalary } = req.body;
+        const { account, password, fullName, email, phone, gender, role, permissions, workSchedule, startDate, address, baseSalary, locationId } = req.body;
 
         if (!account || !password || !fullName || !phone) {
             return res.status(400).json({
@@ -134,6 +150,10 @@ const createStaff = async (req, res) => {
             ? permissions.filter(p => STAFF_PERMISSIONS.includes(p))
             : [];
 
+        // Nhân viên có phòng tập chỉ được tạo nhân viên cho đúng phòng tập của mình
+        const stationLoc = stationLocationId(req);
+        const staffLocation = stationLoc ? stationLoc : (locationId || null);
+
         const staff = await StaffV2.create({
             account: account.trim().toLowerCase(),
             password,
@@ -146,6 +166,7 @@ const createStaff = async (req, res) => {
             workSchedule: Array.isArray(workSchedule) ? workSchedule : [],
             startDate: startDate || new Date(),
             address: address || '',
+            locationId: staffLocation,
             baseSalary: baseSalary || 0,
             status: 'ACTIVE'
         });
@@ -179,11 +200,17 @@ const updateStaff = async (req, res) => {
                 message: 'Không tìm thấy nhân viên V2!'
             });
         }
+        if (await rejectIfOtherClub(res, staff, req)) return;
 
-        const { password, fullName, email, phone, gender, role, permissions, workSchedule, startDate, address, baseSalary, status } = req.body;
+        const { password, fullName, email, phone, gender, role, permissions, workSchedule, startDate, address, baseSalary, status, locationId } = req.body;
 
         if (fullName !== undefined) staff.fullName = formatStaffName(fullName);
         if (email !== undefined) staff.email = email;
+        // Nhân viên có phòng tập không được gán/chuyển nhân viên sang phòng tập khác
+        const stationLoc = stationLocationId(req);
+        if (locationId !== undefined) {
+            staff.locationId = stationLoc ? stationLoc : (locationId || null);
+        }
         if (phone !== undefined) {
             if (!validateVietnamesePhone(phone)) {
                 return res.status(400).json({
@@ -232,13 +259,15 @@ const updateStaff = async (req, res) => {
 
 const deleteStaff = async (req, res) => {
     try {
-        const staff = await StaffV2.findByIdAndDelete(req.params.id);
+        const staff = await StaffV2.findById(req.params.id);
         if (!staff) {
             return res.status(404).json({
                 success: false,
                 message: 'Không tìm thấy nhân viên V2!'
             });
         }
+        if (await rejectIfOtherClub(res, staff, req)) return;
+        await StaffV2.findByIdAndDelete(staff._id);
         return res.status(200).json({
             success: true,
             message: 'Xóa nhân viên V2 thành công'
@@ -261,6 +290,7 @@ const toggleStaffStatus = async (req, res) => {
                 message: 'Không tìm thấy nhân viên V2!'
             });
         }
+        if (await rejectIfOtherClub(res, staff, req)) return;
         staff.status = staff.status === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE';
         const saved = await staff.save();
         return res.status(200).json({
@@ -298,10 +328,13 @@ const getRolesAndPermissions = async (req, res) => {
 
 const getStaffSummary = async (req, res) => {
     try {
+        // Nhân viên có phòng tập -> thống kê theo đúng phòng tập của mình (+ nhân viên chưa gán phòng)
+        const loc = stationLocationId(req);
+        const filter = loc ? { locationId: { $in: [loc, null] } } : {};
         const [total, active, inactive] = await Promise.all([
-            StaffV2.countDocuments(),
-            StaffV2.countDocuments({ status: 'ACTIVE' }),
-            StaffV2.countDocuments({ status: 'INACTIVE' })
+            StaffV2.countDocuments(filter),
+            StaffV2.countDocuments({ ...filter, status: 'ACTIVE' }),
+            StaffV2.countDocuments({ ...filter, status: 'INACTIVE' })
         ]);
 
         return res.status(200).json({

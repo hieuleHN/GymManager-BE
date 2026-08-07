@@ -108,6 +108,11 @@ const staffSchemaV2 = new mongoose.Schema({
         type: String,
         default: ''
     },
+    locationId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Location',
+        default: null
+    },
     baseSalary: {
         type: Number,
         default: 0

@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const { auth } = require('../middleware/auth');
 const {
     getMembershipList,
     getMembershipSummary,
@@ -15,6 +16,9 @@ const {
     deleteMembership,
     getMembershipMeta
 } = require('../controllers/userPackageController');
+
+// Gán middleware auth (xác định phòng tập hiện tại từ token)
+router.use(auth);
 
 // GET /api/v2/user-packages/meta - Danh sách trạng thái, phương thức thanh toán
 router.get('/meta', getMembershipMeta);

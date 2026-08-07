@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const { auth } = require('../middleware/auth');
 const {
     getStaffList,
     getStaffById,
@@ -10,6 +11,9 @@ const {
     getRolesAndPermissions,
     getStaffSummary
 } = require('../controllers/staffController');
+
+// Gán middleware auth (xác định phòng tập hiện tại từ token)
+router.use(auth);
 
 // GET /api/v2/staff/summary - Lấy tổng quan nhân viên
 router.get('/summary', getStaffSummary);

@@ -64,9 +64,9 @@ const findActiveMembership = async ({ customerId, customerPhone } = {}) => {
     return memberships[0] || null;
 };
 
-// Đếm số gói membership đang còn hiệu lực
-const countActiveMembers = async () => {
-    const memberships = await findActiveMemberships();
+// Đếm số gói membership đang còn hiệu lực (có thể truyền thêm bộ lọc phòng tập)
+const countActiveMembers = async (filter = {}) => {
+    const memberships = await findActiveMemberships(filter);
     return memberships.length;
 };
 

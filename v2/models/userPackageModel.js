@@ -61,6 +61,11 @@ const userPackageSchemaV2 = new mongoose.Schema({
         default: '',
         trim: true
     },
+    locationId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Location',
+        default: null
+    },
     packageId: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'PackageV2',

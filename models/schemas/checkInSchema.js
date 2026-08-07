@@ -21,6 +21,12 @@ const checkInSchema = new mongoose.Schema({
         required: true
     },
 
+    locationId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Location",
+        default: null
+    },
+
     qrToken: {
         type: String,
         default: ""
@@ -31,10 +37,16 @@ const checkInSchema = new mongoose.Schema({
         default: Date.now
     },
 
+    checkOutTime: {
+        type: Date,
+        default: null
+    },
+
     status: {
         type: String,
         enum: [
             "success",
+            "checked-out",
             "expired",
             "blocked"
         ],
