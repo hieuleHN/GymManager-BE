@@ -19,9 +19,6 @@ export const login = (req, res) => {
       if (customer.status === 'locked') {
         return res.status(403).json({ error: 'Tài khoản của bạn đã bị khóa!' });
       }
-      if (customer.status === 'pending' || customer.status === 'pending_approval') {
-        return res.status(403).json({ error: 'Tài khoản của bạn đang chờ duyệt. Vui lòng thử lại sau!' });
-      }
       if (customer.status === 'rejected') {
         return res.status(403).json({ error: 'Tài khoản của bạn đã bị từ chối. Vui lòng liên hệ quản trị viên!' });
       }
