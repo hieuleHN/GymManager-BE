@@ -22,10 +22,13 @@ router.get(
 );
 
 /*
-    Máy quét verify mã QR (Bỏ authenticateToken để máy quét tự do gửi qrToken lên)
+    Máy quét verify mã QR — có authenticateToken để xác định phòng tập hiện tại
+    từ nhân viên đang đăng nhập (locationId trong token), nhằm chặn hội viên
+    thuộc phòng tập khác.
 */
 router.post(
     "/verify",
+    authenticateToken,
     verifyQRCode
 );
 

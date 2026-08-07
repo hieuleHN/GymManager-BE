@@ -1,0 +1,7 @@
+const CUSTOMER_STATUS = {
+    ACTIVE: 'ACTIVE',
+    EXPIRING_SOON: 'EXPIRING_SOON',
+    EXPIRED: 'EXPIRED'
+};
+
+module.exports = CUSTOMER_STATUS;

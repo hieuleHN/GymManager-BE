@@ -18,14 +18,26 @@ import {
   approveTransferRequest,
   rejectTransferRequest,
   getPendingTransferRequests,
-  getTrainerBookings
+  getTrainerBookings,
+  getAllScheduleBookings
 } from '../models/bookingModel.js';
 import { createVnpayGroup, getVnpayGroupByTxnRef, markVnpayGroupPaid } from '../models/vnpayGroupModel.js';
 import { createNotification } from '../models/notificationModel.js';
 import { createWalletTransaction } from '../models/walletTransactionModel.js';
 import Customer from '../models/schemas/customerSchema.js';
 import UserPackage from '../models/schemas/userPackageSchema.js';
+import Staff from '../models/schemas/staffSchema.js';
 import vnpay from "../config/vnpayConfig.js";
+
+const isScheduleManager = async (user) => {
+  if (user?.isAdmin) return true;
+  if (!user?.id) return false;
+  try {
+    const staff = await Staff.findById(user.id).populate('job', 'permissions');
+    const perms = staff?.job?.permissions || [];
+    return perms.includes('quan_ly') || perms.includes('le_tan');
+  } catch { return false; }
+};
 
 const checkFreePtSession = async (customerId) => {
   try {
@@ -192,7 +204,7 @@ export const create = async (req, res) => {
   }
 };
 
-export const list = (req, res) => {
+export const list = async (req, res) => {
   const page = parseInt(req.query.page) || 1;
   const limit = parseInt(req.query.limit) || 20;
   const { status, trainerId, locationId, dateFrom, dateTo } = req.query;
@@ -203,8 +215,9 @@ export const list = (req, res) => {
   if (dateFrom) filters.dateFrom = dateFrom;
   if (dateTo) filters.dateTo = dateTo;
 
-  // Tu dong loc theo tai khoan HLV dang nhap, admin thi xem tat ca
-  if (!req.user.isAdmin) {
+  // Tu dong loc theo tai khoan HLV dang nhap; admin/quan ly/le tan thi xem tat ca
+  const manageAll = await isScheduleManager(req.user);
+  if (!req.user.isAdmin && !manageAll) {
     filters.trainerId = req.user.id;
   } else if (trainerId) {
     filters.trainerId = trainerId;
@@ -395,7 +408,7 @@ export const rejectBooking = (req, res) => {
   });
 };
 
-export const requestTransfer = (req, res) => {
+export const requestTransfer = async (req, res) => {
   const { id } = req.params;
   const { transferType, transferToTrainerId, transferReason, transferNewDate, transferNewTime } = req.body;
 
@@ -411,12 +424,14 @@ export const requestTransfer = (req, res) => {
     return res.status(400).json({ error: 'Vui lòng chọn ngày mới!' });
   }
 
+  const manageAll = await isScheduleManager(req.user);
+
   getBookingById(id, (err, booking) => {
     if (err) return res.status(500).json({ error: err.message });
     if (!booking) return res.status(404).json({ error: 'Không tìm thấy lịch đặt!' });
 
     const trainerId = booking.trainerId?._id || booking.trainerId;
-    if (trainerId?.toString() !== req.user.id && !req.user.isAdmin) {
+    if (trainerId?.toString() !== req.user.id && !req.user.isAdmin && !manageAll) {
       return res.status(403).json({ error: 'Bạn không có quyền yêu cầu chuyển lịch này!' });
     }
 
@@ -556,14 +571,22 @@ export const listTransferRequests = (req, res) => {
   });
 };
 
-export const getMyTrainerBookings = (req, res) => {
+export const getMyTrainerBookings = async (req, res) => {
   const trainerId = req.user.id;
   const { dateFrom, dateTo } = req.query;
 
-  getTrainerBookings(trainerId, dateFrom, dateTo, (err, bookings) => {
-    if (err) return res.status(500).json({ error: err.message });
-    res.json(bookings);
-  });
+  const manageAll = await isScheduleManager(req.user);
+  if (manageAll) {
+    getAllScheduleBookings(dateFrom, dateTo, (err, bookings) => {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json(bookings);
+    });
+  } else {
+    getTrainerBookings(trainerId, dateFrom, dateTo, (err, bookings) => {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json(bookings);
+    });
+  }
 };
 
 export const createBulk = async (req, res) => {

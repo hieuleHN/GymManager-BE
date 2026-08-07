@@ -3,6 +3,19 @@ import Staff from '../models/schemas/staffSchema.js';
 import Job from '../models/schemas/jobSchema.js';
 import StaffAttendance from '../models/schemas/staffAttendanceSchema.js';
 import StaffShift from '../models/schemas/staffShiftSchema.js';
+import Location from '../models/schemas/locationSchema.js';
+
+// Lấy ID phòng tập của máy quét từ tài khoản nhân viên đang đăng nhập (locationId trong token).
+// Admin / tài khoản không gắn phòng tập -> null (quản lý toàn bộ).
+// Tài khoản admin (isAdmin) có thể chọn phòng tập cần quản lý qua header X-Location-Id.
+const getStationLocationId = (req) => {
+    const u = req.user;
+    const headerLoc = req.headers && req.headers['x-location-id'];
+    if (u && u.isAdmin && headerLoc && headerLoc !== 'all' && headerLoc !== 'undefined') {
+        return headerLoc;
+    }
+    return (u && u.isStaff && u.locationId) ? u.locationId : null;
+};
 
 const SHIFT_TIMES = {
   'morning-noon':      { start: '06:00', end: '13:30' },
@@ -61,14 +74,24 @@ export const verifyQR = async (req, res) => {
     const staff = await Staff.findById(decoded.staffId).populate('job', 'name');
     if (!staff) return res.status(404).json({ error: 'Không tìm thấy nhân viên!' });
 
+    // Kiểm tra phòng tập: nhân viên phải thuộc đúng phòng tập của máy quét
+    const stationLocationId = getStationLocationId(req);
+    if (stationLocationId && staff.locationId && String(staff.locationId) !== String(stationLocationId)) {
+        const loc = await Location.findById(staff.locationId);
+        const clubName = loc ? (loc.title || loc.address || 'chưa rõ') : 'khác';
+        return res.status(403).json({ error: `Nhân viên này ở phòng tập ${clubName}` });
+    }
+
     const now = new Date();
     const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
     const dayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
 
+    // Ca đang mở trong ngày (chưa checkout) — nếu có thì lần quét này là CHECK-OUT
     const existing = await StaffAttendance.findOne({
       staffId: staff._id,
-      date: { $gte: dayStart, $lte: dayEnd }
-    });
+      date: { $gte: dayStart, $lte: dayEnd },
+      checkOutTime: null
+    }).sort({ checkInTime: -1 });
 
     const shift = await StaffShift.findOne({
       staffId: staff._id,
@@ -82,51 +105,48 @@ export const verifyQR = async (req, res) => {
 
     // Check-out flow
     if (existing) {
-      if (!existing.checkOutTime) {
-        existing.checkOutTime = now;
-        existing.status = 'checked-out';
-        await existing.save();
+      existing.checkOutTime = now;
+      existing.status = 'checked-out';
+      await existing.save();
 
-        let minutesEarly = 0;
-        let overtime = 0;
-        const checkInMinutesLate = existing.minutesLate || calcMinutesLate(new Date(existing.checkInTime), shiftInfo?.start || '06:00');
-        if (shiftInfo) {
-          minutesEarly = calcMinutesEarly(now, shiftInfo.end);
-          overtime = calcOvertime(existing.checkInTime, now, shiftInfo.end);
-        }
-
-        // Tính thưởng/phạt real-time
-        let todayPenalty = checkInMinutesLate * LATE_RATE_PER_MIN + minutesEarly * LATE_RATE_PER_MIN;
-        let todayBonus = 0;
-
-        if (checkInMinutesLate === 0 && minutesEarly === 0) {
-          todayBonus = ATTENDANCE_BONUS;
-        }
-
-        if (todayPenalty > 0) {
-          staff.latePenalty = (staff.latePenalty || 0) + todayPenalty;
-        }
-        if (todayBonus > 0) {
-          staff.attendanceBonus = (staff.attendanceBonus || 0) + todayBonus;
-        }
-        await staff.save();
-
-        return res.json({
-          message: 'Check-out thành công!',
-          staff: { id: staff._id, fullName: staff.fullName, job: staff.job?.name, phone: staff.phone },
-          shift: shiftInfo,
-          status: 'checked-out',
-          checkInTime: existing.checkInTime,
-          checkOutTime: now,
-          minutesLate: checkInMinutesLate,
-          minutesEarly,
-          overtime,
-          totalMinutes: Math.round((now - existing.checkInTime) / 60000),
-          todayBonus,
-          todayPenalty,
-        });
+      let minutesEarly = 0;
+      let overtime = 0;
+      const checkInMinutesLate = existing.minutesLate || calcMinutesLate(new Date(existing.checkInTime), shiftInfo?.start || '06:00');
+      if (shiftInfo) {
+        minutesEarly = calcMinutesEarly(now, shiftInfo.end);
+        overtime = calcOvertime(existing.checkInTime, now, shiftInfo.end);
       }
-      return res.status(400).json({ error: 'Nhân viên đã check-out hôm nay!' });
+
+      // Tính thưởng/phạt real-time
+      let todayPenalty = checkInMinutesLate * LATE_RATE_PER_MIN + minutesEarly * LATE_RATE_PER_MIN;
+      let todayBonus = 0;
+
+      if (checkInMinutesLate === 0 && minutesEarly === 0) {
+        todayBonus = ATTENDANCE_BONUS;
+      }
+
+      if (todayPenalty > 0) {
+        staff.latePenalty = (staff.latePenalty || 0) + todayPenalty;
+      }
+      if (todayBonus > 0) {
+        staff.attendanceBonus = (staff.attendanceBonus || 0) + todayBonus;
+      }
+      await staff.save();
+
+      return res.json({
+        message: 'Check-out thành công!',
+        staff: { id: staff._id, fullName: staff.fullName, job: staff.job?.name, phone: staff.phone },
+        shift: shiftInfo,
+        status: 'checked-out',
+        checkInTime: existing.checkInTime,
+        checkOutTime: now,
+        minutesLate: checkInMinutesLate,
+        minutesEarly,
+        overtime,
+        totalMinutes: Math.round((now - existing.checkInTime) / 60000),
+        todayBonus,
+        todayPenalty,
+      });
     }
 
     // Check-in flow
@@ -149,7 +169,7 @@ export const verifyQR = async (req, res) => {
     });
 
     res.json({
-      message: status === 'late' ? `Check-in thành công (đi muộn ${minutesLate} phút)!` : 'Check-in thành công!',
+      message: 'Check-in thành công!',
       staff: { id: staff._id, fullName: staff.fullName, job: staff.job?.name, phone: staff.phone },
       shift: shiftInfo,
       status,
@@ -169,7 +189,10 @@ export const todayAttendance = async (req, res) => {
     const tomorrow = new Date(today);
     tomorrow.setHours(23, 59, 59, 999);
     q.date = { $gte: today, $lte: tomorrow };
-    if (req.query.locationId) q.locationId = req.query.locationId;
+    // Nhân viên có phòng tập -> mặc định lọc đúng phòng tập của mình (có thể ghi đè bằng query)
+    const loc = getStationLocationId(req);
+    if (loc) q.locationId = loc;
+    else if (req.query.locationId) q.locationId = req.query.locationId;
 
     const records = await StaffAttendance.find(q)
       .populate('staffId', 'fullName account')
@@ -201,6 +224,9 @@ export const attendanceHistory = async (req, res) => {
   try {
     const { staffId, page, limit } = req.query;
     const q = staffId ? { staffId } : {};
+    // Nhân viên có phòng tập chỉ xem lịch sử chấm công của đúng phòng tập mình
+    const loc = getStationLocationId(req);
+    if (loc) q.locationId = loc;
     const total = await StaffAttendance.countDocuments(q);
     const data = await StaffAttendance.find(q)
       .populate('staffId', 'fullName account')

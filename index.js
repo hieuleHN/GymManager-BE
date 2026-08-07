@@ -1,6 +1,7 @@
 import "dotenv/config";
 import express from "express";
 import cors from "cors";
+import { createRequire } from "module";
 import db from "./config/db.js";
 import locationRoutes from "./routes/locationRoutes.js";
 import packageRoutes from "./routes/packageRoutes.js";
@@ -88,6 +89,11 @@ app.use("/api/staff-attendance", staffAttendanceRoutes);
 
 // Cắm route cấu hình trang chủ vào hệ thống
 app.use("/api/settings", siteSettingRoutes);
+
+// Module V2 (CommonJS) — nạp qua createRequire vì backend đang dùng ESM
+const require = createRequire(import.meta.url);
+const v2Api = require("./v2/index.js");
+app.use("/api/v2", v2Api);
 
 initPackageStatusScheduler();
 
