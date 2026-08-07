@@ -13,15 +13,19 @@ export const getAdminDashboardStats = async (req, res) => {
         const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
         const startOfYear = new Date(now.getFullYear(), 0, 1);
 
+        const locationId = req.query.locationId || null;
+        const bookingFilter = locationId ? { locationId } : {};
+        const packageFilter = locationId ? { locationId } : {};
+
         // ==========================================================
         // 1. LIÊN KẾT ĐẶT LỊCH HLV (Sử dụng trường chuẩn booking_date)
         // ==========================================================
         let bookingStats = { today: 0, month: 0, year: 0 };
         try {
             const [todayCount, monthCount, yearCount] = await Promise.all([
-                Booking.countDocuments({ date: { $gte: startOfToday, $lte: endOfToday } }),
-                Booking.countDocuments({ date: { $gte: startOfMonth } }),
-                Booking.countDocuments({ date: { $gte: startOfYear } })
+                Booking.countDocuments({ ...bookingFilter, date: { $gte: startOfToday, $lte: endOfToday } }),
+                Booking.countDocuments({ ...bookingFilter, date: { $gte: startOfMonth } }),
+                Booking.countDocuments({ ...bookingFilter, date: { $gte: startOfYear } })
             ]);
             bookingStats = { today: todayCount, month: monthCount, year: yearCount };
         } catch (e) {
@@ -31,16 +35,27 @@ export const getAdminDashboardStats = async (req, res) => {
         // ==========================================================
         // 2. LIÊN KẾT HỘI VIÊN ĐĂNG KÝ MỚI (Tăng trưởng theo tháng)
         // ==========================================================
-        const customerGrowth = await Customer.aggregate([
-            { $match: { createdAt: { $gte: startOfYear } } },
-            {
-                $group: {
-                    _id: { $month: "$createdAt" },
-                    count: { $sum: 1 }
-                }
-            },
-            { $sort: { "_id": 1 } }
-        ]);
+        let customerGrowth;
+        if (locationId) {
+            const growthByPkg = await UserPackage.aggregate([
+                { $match: { ...packageFilter, createdAt: { $gte: startOfYear } } },
+                { $group: { _id: { $month: "$createdAt" }, customerIds: { $addToSet: "$customer_id" } } },
+                { $project: { _id: 1, count: { $size: "$customerIds" } } },
+                { $sort: { "_id": 1 } }
+            ]);
+            customerGrowth = growthByPkg;
+        } else {
+            customerGrowth = await Customer.aggregate([
+                { $match: { createdAt: { $gte: startOfYear } } },
+                {
+                    $group: {
+                        _id: { $month: "$createdAt" },
+                        count: { $sum: 1 }
+                    }
+                },
+                { $sort: { "_id": 1 } }
+            ]);
+        }
 
         const monthsLabel = ["T1", "T2", "T3", "T4", "T5", "T6", "T7", "T8", "T9", "T10", "T11", "T12"];
         const formattedGrowth = monthsLabel.map((label, index) => {
@@ -54,7 +69,8 @@ export const getAdminDashboardStats = async (req, res) => {
         // ==========================================================
         // 3. LIÊN KẾT HỘI VIÊN HOẠT ĐỘNG THEO MÔN (status: "đang hoạt động")
         // ==========================================================
-        const activeRegs = await UserPackage.find({ status: "đang hoạt động" })
+        const activeRegFilter = { status: "đang hoạt động", ...packageFilter };
+        const activeRegs = await UserPackage.find(activeRegFilter)
             .populate({
                 path: "package_id",
                 populate: { path: "disciplineId", select: "name" }
@@ -81,8 +97,14 @@ export const getAdminDashboardStats = async (req, res) => {
         const oneWeekAgo = new Date();
         oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
 
-        const checkInStats = await CheckIn.aggregate([
-            { $match: { checkInTime: { $gte: oneWeekAgo } } },
+        let checkInMatch = { checkInTime: { $gte: oneWeekAgo } };
+        let checkInStats;
+        if (locationId) {
+            const userPackageIds = await UserPackage.find({ ...packageFilter }).distinct("_id");
+            checkInMatch = { ...checkInMatch, userPackageId: { $in: userPackageIds } };
+        }
+        checkInStats = await CheckIn.aggregate([
+            { $match: checkInMatch },
             {
                 $group: {
                     _id: { $dayOfWeek: "$checkInTime" },
@@ -111,12 +133,12 @@ export const getAdminDashboardStats = async (req, res) => {
                 name: { $regex: /huấn luyện viên|trainer|pt|hlv/i }
             });
             const trainerJobIds = trainerJobs.map(j => j._id);
-            const trainers = await Staff.find({ job: { $in: trainerJobIds } });
+            const trainerFilter = locationId ? { job: { $in: trainerJobIds }, locationId } : { job: { $in: trainerJobIds } };
+            const trainers = await Staff.find(trainerFilter);
 
             trainerPerformance = await Promise.all(trainers.map(async (pt) => {
-                const sessionCount = await Booking.countDocuments({
-                    trainerId: pt._id,
-                });
+                const sessionFilter = { trainerId: pt._id, ...bookingFilter };
+                const sessionCount = await Booking.countDocuments(sessionFilter);
                 return {
                     name: pt.fullName,
                     sessions: sessionCount

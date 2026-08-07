@@ -57,20 +57,40 @@ function pctChange(current, previous) {
 }
 
 // Nhóm doanh thu/thu chi theo tháng trong năm hiện tại
-async function monthlySeries(Model, amountField, dateField, matchExtra = {}) {
+async function monthlySeries(Model, amountField, dateField, matchExtra = {}, fallbackDateField = null) {
   const now = new Date();
   const startYear = new Date(now.getFullYear(), 0, 1);
-  const groupMatch = { [dateField]: { $gte: startYear }, ...matchExtra };
 
-  const rows = await Model.aggregate([
-    { $match: groupMatch },
-    {
-      $group: {
-        _id: { $month: `$${dateField}` },
-        value: { $sum: `$${amountField}` },
+  let rows;
+  if (fallbackDateField) {
+    const groupMatch = {
+      $or: [
+        { [dateField]: { $gte: startYear } },
+        { $and: [{ $or: [{ [dateField]: null }, { [dateField]: { $exists: false } }] }, { [fallbackDateField]: { $gte: startYear } }] },
+      ],
+      ...matchExtra,
+    };
+    rows = await Model.aggregate([
+      { $match: groupMatch },
+      {
+        $group: {
+          _id: { $month: { $ifNull: [`$${dateField}`, `$${fallbackDateField}`] } },
+          value: { $sum: `$${amountField}` },
+        },
       },
-    },
-  ]);
+    ]);
+  } else {
+    const groupMatch = { [dateField]: { $gte: startYear }, ...matchExtra };
+    rows = await Model.aggregate([
+      { $match: groupMatch },
+      {
+        $group: {
+          _id: { $month: `$${dateField}` },
+          value: { $sum: `$${amountField}` },
+        },
+      },
+    ]);
+  }
 
   return MONTHS.map((label, idx) => {
     const found = rows.find((r) => r._id === idx + 1);
@@ -79,11 +99,27 @@ async function monthlySeries(Model, amountField, dateField, matchExtra = {}) {
 }
 
 // Tổng theo khoảng thời gian
-async function sumBetween(Model, amountField, dateField, start, end, matchExtra = {}) {
-  const filter = {
-    [dateField]: { $gte: start, $lte: end },
-    ...matchExtra,
-  };
+async function sumBetween(Model, amountField, dateField, start, end, matchExtra = {}, fallbackDateField = null) {
+  let filter;
+  if (fallbackDateField) {
+    filter = {
+      $or: [
+        { [dateField]: { $gte: start, $lte: end } },
+        {
+          $and: [
+            { $or: [{ [dateField]: null }, { [dateField]: { $exists: false } }] },
+            { [fallbackDateField]: { $gte: start, $lte: end } },
+          ],
+        },
+      ],
+      ...matchExtra,
+    };
+  } else {
+    filter = {
+      [dateField]: { $gte: start, $lte: end },
+      ...matchExtra,
+    };
+  }
   const result = await Model.aggregate([
     { $match: filter },
     { $group: { _id: null, total: { $sum: `$${amountField}` } } },
@@ -102,11 +138,11 @@ export const getFinanceStatistics = async (req, res) => {
     // ============ 1. DOANH THU THỰC THU (kỳ này vs kỳ trước) ============
     const thisPaidSum = await sumBetween(
       UserPackage, "total_price", "payment_date", start, new Date(),
-      { ...locFilter, payment_status: "đã thanh toán" }
+      { ...locFilter, payment_status: "đã thanh toán" }, "createdAt"
     );
     const prevPaidSum = await sumBetween(
       UserPackage, "total_price", "payment_date", prevStart, prevEnd,
-      { ...locFilter, payment_status: "đã thanh toán" }
+      { ...locFilter, payment_status: "đã thanh toán" }, "createdAt"
     );
 
     const thisWalletSum = locationId ? 0 : await sumBetween(
@@ -335,7 +371,7 @@ export const getFinanceStatistics = async (req, res) => {
     // ============ SERIES THEO THÁNG ============
     const cashSeries = await monthlySeries(
       UserPackage, "total_price", "payment_date",
-      { ...locFilter, payment_status: "đã thanh toán" }
+      { ...locFilter, payment_status: "đã thanh toán" }, "createdAt"
     );
 
     // Thêm tiền nạp ví theo tháng vào cashSeries (chỉ khi không lọc theo location)
@@ -505,7 +541,10 @@ export const getFinanceStatistics = async (req, res) => {
     const paidPackages = await UserPackage.find({
       ...locFilter,
       payment_status: "đã thanh toán",
-      payment_date: { $gte: start.toISOString().slice(0, 10), $lte: new Date().toISOString().slice(0, 10) },
+      $or: [
+        { payment_date: { $gte: start, $lte: new Date() } },
+        { $and: [{ $or: [{ payment_date: null }, { payment_date: { $exists: false } }] }, { createdAt: { $gte: start, $lte: new Date() } }] },
+      ],
     }).populate("package_id", "name").populate("customer_id", "fullName account");
     paidPackages.forEach(up => {
       revenueDetails.push({

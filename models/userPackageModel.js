@@ -20,6 +20,8 @@ export const createRegistration = async (data, callback) => {
       payment_status,
     } = data;
 
+    const finalPaymentStatus = payment_status || (payment_method ? "chờ thanh toán" : "đã thanh toán");
+
     const registration = new UserPackage({
       customer_id,
       package_id,
@@ -33,9 +35,8 @@ export const createRegistration = async (data, callback) => {
       start_date,
       end_date,
       payment_method: payment_method || "",
-      // Nếu Controller có chỉ định rõ trạng thái (như 'chờ thanh toán') thì ưu tiên dùng luôn
-      payment_status:
-        payment_status || (payment_method ? "chờ thanh toán" : "đã thanh toán"),
+      payment_status: finalPaymentStatus,
+      payment_date: finalPaymentStatus === "đã thanh toán" ? new Date() : null,
       status: status || (payment_method ? "chờ thanh toán" : "đang hoạt động"),
     });
 
