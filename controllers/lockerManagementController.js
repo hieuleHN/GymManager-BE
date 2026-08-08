@@ -1,13 +1,15 @@
-const { LockerV2, LOCKER_STATUS } = require('../models/lockerModel');
-const { stationLocationId } = require('../services/clubService');
+import { LockerV2, LOCKER_STATUS } from "../models/lockerManagementModel.js";
+import { stationLocationId } from "../services/clubService.js";
+import Customer from "../models/schemas/customerSchema.js";
+import CheckIn from "../models/schemas/checkInSchema.js";
 
 const normalizePrefix = (prefix) => {
-    const s = String(prefix || '').trim().replace(/-+$/, '');
-    return s || 'LK';
+    const s = String(prefix || "").trim().replace(/-+$/, "");
+    return s || "LK";
 };
 
-const validateLockerCode = (code) => {
-    if (!code || typeof code !== 'string') return false;
+export const validateLockerCode = (code) => {
+    if (!code || typeof code !== "string") return false;
     return /^LK?-\d{3,4}$/i.test(code.trim());
 };
 
@@ -19,35 +21,35 @@ const ensureOwned = (locker, loc) => {
     return true;
 };
 
-const formatLockerStatus = (status) => {
+export const formatLockerStatus = (status) => {
     const statusMap = {
-        AVAILABLE: 'Trống',
-        OCCUPIED: 'Đang sử dụng',
-        MAINTENANCE: 'Bảo trì / Hỏng',
-        RESERVED: 'Đã đặt trước'
+        AVAILABLE: "Trống",
+        OCCUPIED: "Đang sử dụng",
+        MAINTENANCE: "Bảo trì / Hỏng",
+        RESERVED: "Đã đặt trước"
     };
-    return statusMap[status?.toUpperCase()] || 'Không xác định';
+    return statusMap[status?.toUpperCase()] || "Không xác định";
 };
 
-const getLockerUsageRate = (totalLockers, occupiedLockers) => {
+export const getLockerUsageRate = (totalLockers, occupiedLockers) => {
     if (!totalLockers || totalLockers <= 0) return 0;
     return Math.round((occupiedLockers / totalLockers) * 100);
 };
 
 // Sinh danh sách mã tủ tiếp theo cho một prefix: bù số trống trong dãy hiện có,
 // không còn số trống thì tăng tiếp từ số lớn nhất. Mã tủ được tính trong phạm vi phòng tập.
-const computeNextCodes = async (prefix, count, locationId) => {
+export const computeNextCodes = async (prefix, count, locationId) => {
     const p = normalizePrefix(prefix);
     const q = locationId ? { locationId } : {};
-    const all = await LockerV2.find(q).select('lockerNumber').lean();
+    const all = await LockerV2.find(q).select("lockerNumber").lean();
     const used = new Set();
     let min = Infinity;
     let hasAny = false;
     let width = 3;
     for (const doc of all) {
-        const match = String(doc.lockerNumber || '').trim().match(/^(.*?)(\d+)$/);
+        const match = String(doc.lockerNumber || "").trim().match(/^(.*?)(\d+)$/);
         if (!match) continue;
-        const codePrefix = match[1].replace(/-+$/, '');
+        const codePrefix = match[1].replace(/-+$/, "");
         if (codePrefix !== p) continue;
         const num = parseInt(match[2], 10);
         used.add(num);
@@ -66,11 +68,11 @@ const computeNextCodes = async (prefix, count, locationId) => {
             candidate += 1;
         }
     }
-    return numbers.map(num => `${p}-${String(num).padStart(width, '0')}`);
+    return numbers.map(num => `${p}-${String(num).padStart(width, "0")}`);
 };
 
 // GET /api/v2/lockers - Danh sách tủ đồ (lọc theo phòng tập hiện tại nếu có)
-const list = async (req, res) => {
+export const list = async (req, res) => {
     try {
         const q = {};
         const loc = stationLocationId(req);
@@ -82,7 +84,7 @@ const list = async (req, res) => {
         const available = total - occupied - maintenance;
         return res.status(200).json({
             success: true,
-            message: 'Lấy danh sách tủ đồ V2 thành công',
+            message: "Lấy danh sách tủ đồ thành công",
             data: lockers,
             stats: {
                 total,
@@ -93,23 +95,23 @@ const list = async (req, res) => {
             }
         });
     } catch (error) {
-        return res.status(500).json({ success: false, message: 'Lỗi hệ thống khi lấy danh sách tủ đồ V2', error: error.message });
+        return res.status(500).json({ success: false, message: "Lỗi hệ thống khi lấy danh sách tủ đồ", error: error.message });
     }
 };
 
 // GET /api/v2/lockers/next?prefix=LK&count=5 - Mã tủ tiếp theo (preview)
-const getNext = async (req, res) => {
+export const getNext = async (req, res) => {
     try {
-        const { prefix = 'LK', count = 5 } = req.query;
+        const { prefix = "LK", count = 5 } = req.query;
         const codes = await computeNextCodes(prefix, count, stationLocationId(req));
         return res.status(200).json({ success: true, data: codes });
     } catch (error) {
-        return res.status(500).json({ success: false, message: 'Lỗi hệ thống khi lấy mã tủ tiếp theo', error: error.message });
+        return res.status(500).json({ success: false, message: "Lỗi hệ thống khi lấy mã tủ tiếp theo", error: error.message });
     }
 };
 
 // POST /api/v2/lockers/row - Tạo dãy tủ mới { prefix, zone, count }
-const createRow = async (req, res) => {
+export const createRow = async (req, res) => {
     try {
         const { prefix, zone, count, rowName } = req.body;
         const p = normalizePrefix(prefix);
@@ -119,9 +121,9 @@ const createRow = async (req, res) => {
         const docs = codes.map(lockerNumber => ({
             lockerNumber,
             prefix: p,
-            zone: ['NAM', 'NU', 'VIP'].includes(zone) ? zone : 'NAM',
+            zone: ["NAM", "NU", "VIP"].includes(zone) ? zone : "NAM",
             locationId: loc,
-            note: rowName ? String(rowName).trim() : ''
+            note: rowName ? String(rowName).trim() : ""
         }));
         const created = await LockerV2.insertMany(docs);
         return res.status(201).json({
@@ -130,12 +132,12 @@ const createRow = async (req, res) => {
             data: created
         });
     } catch (error) {
-        return res.status(500).json({ success: false, message: 'Lỗi khi thêm dãy tủ', error: error.message });
+        return res.status(500).json({ success: false, message: "Lỗi khi thêm dãy tủ", error: error.message });
     }
 };
 
 // POST /api/v2/lockers/add - Thêm tủ vào dãy đã có { prefix, zone, count, status }
-const addLockers = async (req, res) => {
+export const addLockers = async (req, res) => {
     try {
         const { prefix, zone, count, status } = req.body;
         const p = normalizePrefix(prefix);
@@ -145,12 +147,12 @@ const addLockers = async (req, res) => {
         const targetStatus = Object.values(LOCKER_STATUS).includes(status) ? status : LOCKER_STATUS.AVAILABLE;
         // Kế thừa tên dãy (note) từ các tủ cùng dãy để hiển thị tên dãy nhất quán
         const locFilter = loc ? { locationId: loc } : {};
-        const existing = await LockerV2.findOne({ prefix: p, ...locFilter }).select('note').lean();
-        const note = (existing && existing.note) || '';
+        const existing = await LockerV2.findOne({ prefix: p, ...locFilter }).select("note").lean();
+        const note = (existing && existing.note) || "";
         const docs = codes.map(lockerNumber => ({
             lockerNumber,
             prefix: p,
-            zone: ['NAM', 'NU', 'VIP'].includes(zone) ? zone : 'NAM',
+            zone: ["NAM", "NU", "VIP"].includes(zone) ? zone : "NAM",
             locationId: loc,
             status: targetStatus,
             note
@@ -162,25 +164,25 @@ const addLockers = async (req, res) => {
             data: created
         });
     } catch (error) {
-        return res.status(500).json({ success: false, message: 'Lỗi khi thêm tủ', error: error.message });
+        return res.status(500).json({ success: false, message: "Lỗi khi thêm tủ", error: error.message });
     }
 };
 
-// PATCH /api/v2/lockers/:id - Cập nhật trạng thái / ghi chú / báo cáo bảo trì
 const clearMaintenance = (locker) => {
-    locker.maintenanceType = '';
-    locker.maintenanceDescription = '';
-    locker.maintenanceImage = '';
+    locker.maintenanceType = "";
+    locker.maintenanceDescription = "";
+    locker.maintenanceImage = "";
     locker.maintenanceAt = null;
 };
 
-const update = async (req, res) => {
+// PATCH /api/v2/lockers/:id - Cập nhật trạng thái / ghi chú / báo cáo bảo trì
+export const update = async (req, res) => {
     try {
         const { status, note } = req.body;
         const locker = await LockerV2.findById(req.params.id);
-        if (!locker) return res.status(404).json({ success: false, message: 'Không tìm thấy tủ!' });
+        if (!locker) return res.status(404).json({ success: false, message: "Không tìm thấy tủ!" });
         if (!ensureOwned(locker, stationLocationId(req))) {
-            return res.status(403).json({ success: false, message: 'Tủ này thuộc phòng tập khác!' });
+            return res.status(403).json({ success: false, message: "Tủ này thuộc phòng tập khác!" });
         }
         if (status && Object.values(LOCKER_STATUS).includes(status)) {
             const prevStatus = locker.status;
@@ -188,8 +190,8 @@ const update = async (req, res) => {
             if (status === LOCKER_STATUS.AVAILABLE) {
                 locker.previousStatus = null;
                 locker.assignedType = null;
-                locker.assignedName = '';
-                locker.assignedPhone = '';
+                locker.assignedName = "";
+                locker.assignedPhone = "";
                 locker.assignedAt = null;
                 clearMaintenance(locker);
             }
@@ -204,32 +206,32 @@ const update = async (req, res) => {
                     locker.previousStatus = prevStatus;
                     locker.maintenanceAt = new Date();
                 }
-                if (req.body.maintenanceType !== undefined) locker.maintenanceType = String(req.body.maintenanceType || '').trim();
-                if (req.body.maintenanceDescription !== undefined) locker.maintenanceDescription = String(req.body.maintenanceDescription || '').trim();
-                if (req.body.maintenanceImage !== undefined) locker.maintenanceImage = String(req.body.maintenanceImage || '').trim();
+                if (req.body.maintenanceType !== undefined) locker.maintenanceType = String(req.body.maintenanceType || "").trim();
+                if (req.body.maintenanceDescription !== undefined) locker.maintenanceDescription = String(req.body.maintenanceDescription || "").trim();
+                if (req.body.maintenanceImage !== undefined) locker.maintenanceImage = String(req.body.maintenanceImage || "").trim();
             }
         } else if (locker.status === LOCKER_STATUS.MAINTENANCE) {
             // Vẫn đang bảo trì, cập nhật báo cáo mà không reset thời gian bắt đầu
-            if (req.body.maintenanceType !== undefined) locker.maintenanceType = String(req.body.maintenanceType || '').trim();
-            if (req.body.maintenanceDescription !== undefined) locker.maintenanceDescription = String(req.body.maintenanceDescription || '').trim();
-            if (req.body.maintenanceImage !== undefined) locker.maintenanceImage = String(req.body.maintenanceImage || '').trim();
+            if (req.body.maintenanceType !== undefined) locker.maintenanceType = String(req.body.maintenanceType || "").trim();
+            if (req.body.maintenanceDescription !== undefined) locker.maintenanceDescription = String(req.body.maintenanceDescription || "").trim();
+            if (req.body.maintenanceImage !== undefined) locker.maintenanceImage = String(req.body.maintenanceImage || "").trim();
         }
         if (note !== undefined) locker.note = note;
         await locker.save();
-        return res.json({ success: true, message: 'Cập nhật tủ thành công', data: locker });
+        return res.json({ success: true, message: "Cập nhật tủ thành công", data: locker });
     } catch (error) {
-        return res.status(500).json({ success: false, message: 'Lỗi khi cập nhật tủ', error: error.message });
+        return res.status(500).json({ success: false, message: "Lỗi khi cập nhật tủ", error: error.message });
     }
 };
 
 // POST /api/v2/lockers/:id/assign - Gán tủ cho hội viên/nhân viên { personType, name, phone }
-const assign = async (req, res) => {
+export const assign = async (req, res) => {
     try {
         const { personType, name, phone } = req.body;
         const locker = await LockerV2.findById(req.params.id);
-        if (!locker) return res.status(404).json({ success: false, message: 'Không tìm thấy tủ!' });
+        if (!locker) return res.status(404).json({ success: false, message: "Không tìm thấy tủ!" });
         if (!ensureOwned(locker, stationLocationId(req))) {
-            return res.status(403).json({ success: false, message: 'Tủ này thuộc phòng tập khác!' });
+            return res.status(403).json({ success: false, message: "Tủ này thuộc phòng tập khác!" });
         }
         if (locker.status === LOCKER_STATUS.OCCUPIED) {
             return res.status(400).json({ success: false, message: `Tủ ${locker.lockerNumber} đã có người sử dụng!` });
@@ -239,35 +241,61 @@ const assign = async (req, res) => {
         }
         locker.status = LOCKER_STATUS.OCCUPIED;
         locker.previousStatus = null;
-        locker.assignedType = personType === 'STAFF' ? 'STAFF' : 'MEMBER';
-        locker.assignedName = String(name || '').trim();
-        locker.assignedPhone = String(phone || '').trim();
+        locker.assignedType = personType === "STAFF" ? "STAFF" : "MEMBER";
+        locker.assignedName = String(name || "").trim();
+        locker.assignedPhone = String(phone || "").trim();
         locker.assignedAt = new Date();
         clearMaintenance(locker);
         await locker.save();
+
+        // Ghi lại tủ đồ đang dùng vào ca điểm danh đang mở hôm nay của hội viên (nếu có)
+        if (locker.assignedType === "MEMBER" && (locker.assignedPhone || locker.assignedName)) {
+            try {
+                const cust = await Customer.findOne({
+                    $or: [
+                        { phone: locker.assignedPhone || "__none__" },
+                        { fullName: locker.assignedName || "__none__" }
+                    ]
+                });
+                if (cust) {
+                    const now = new Date();
+                    const startDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+                    const endDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+                    await CheckIn.updateMany(
+                        {
+                            customerId: cust._id,
+                            checkInTime: { $gte: startDay, $lte: endDay },
+                            checkOutTime: null
+                        },
+                        { $set: { lockerId: locker._id, lockerNumber: locker.lockerNumber } }
+                    );
+                }
+            } catch (e) { /* không chặn luồng gán tủ khi ghi thiếu thông tin tủ */ }
+        }
+
         return res.json({
             success: true,
-            message: `Đã gán tủ ${locker.lockerNumber} cho ${locker.assignedName || 'khách hàng'}`,
+            message: `Đã gán tủ ${locker.lockerNumber} cho ${locker.assignedName || "khách hàng"}`,
             data: locker
         });
     } catch (error) {
-        return res.status(500).json({ success: false, message: 'Lỗi khi gán tủ', error: error.message });
+        return res.status(500).json({ success: false, message: "Lỗi khi gán tủ", error: error.message });
     }
 };
 
 // POST /api/v2/lockers/:id/release - Trả tủ về trạng thái trống
-const release = async (req, res) => {
+export const release = async (req, res) => {
     try {
         const locker = await LockerV2.findById(req.params.id);
-        if (!locker) return res.status(404).json({ success: false, message: 'Không tìm thấy tủ!' });
+        if (!locker) return res.status(404).json({ success: false, message: "Không tìm thấy tủ!" });
         if (!ensureOwned(locker, stationLocationId(req))) {
-            return res.status(403).json({ success: false, message: 'Tủ này thuộc phòng tập khác!' });
+            return res.status(403).json({ success: false, message: "Tủ này thuộc phòng tập khác!" });
         }
         locker.status = LOCKER_STATUS.AVAILABLE;
         locker.previousStatus = null;
         locker.assignedType = null;
-        locker.assignedName = '';
-        locker.assignedPhone = '';
+        locker.assignedName = "";
+        locker.assignedPhone = "";
         locker.assignedAt = null;
         clearMaintenance(locker);
         await locker.save();
@@ -277,18 +305,18 @@ const release = async (req, res) => {
             data: locker
         });
     } catch (error) {
-        return res.status(500).json({ success: false, message: 'Lỗi khi trả tủ', error: error.message });
+        return res.status(500).json({ success: false, message: "Lỗi khi trả tủ", error: error.message });
     }
 };
 
 // POST /api/v2/lockers/:id/complete-maintenance - Hoàn tất bảo trì:
 // quay về trạng thái trước khi bảo trì (đang sử dụng -> đang sử dụng, trống -> trống)
-const completeMaintenance = async (req, res) => {
+export const completeMaintenance = async (req, res) => {
     try {
         const locker = await LockerV2.findById(req.params.id);
-        if (!locker) return res.status(404).json({ success: false, message: 'Không tìm thấy tủ!' });
+        if (!locker) return res.status(404).json({ success: false, message: "Không tìm thấy tủ!" });
         if (!ensureOwned(locker, stationLocationId(req))) {
-            return res.status(403).json({ success: false, message: 'Tủ này thuộc phòng tập khác!' });
+            return res.status(403).json({ success: false, message: "Tủ này thuộc phòng tập khác!" });
         }
         if (locker.status !== LOCKER_STATUS.MAINTENANCE) {
             return res.status(400).json({ success: false, message: `Tủ ${locker.lockerNumber} không đang bảo trì!` });
@@ -298,8 +326,8 @@ const completeMaintenance = async (req, res) => {
         locker.previousStatus = null;
         if (target === LOCKER_STATUS.AVAILABLE) {
             locker.assignedType = null;
-            locker.assignedName = '';
-            locker.assignedPhone = '';
+            locker.assignedName = "";
+            locker.assignedPhone = "";
             locker.assignedAt = null;
         }
         clearMaintenance(locker);
@@ -309,27 +337,27 @@ const completeMaintenance = async (req, res) => {
             : `Đã hoàn tất bảo trì, tủ ${locker.lockerNumber} quay về trạng thái trống`;
         return res.json({ success: true, message, data: locker });
     } catch (error) {
-        return res.status(500).json({ success: false, message: 'Lỗi khi hoàn tất bảo trì', error: error.message });
+        return res.status(500).json({ success: false, message: "Lỗi khi hoàn tất bảo trì", error: error.message });
     }
 };
 
 // DELETE /api/v2/lockers/:id - Xóa một tủ
-const remove = async (req, res) => {
+export const remove = async (req, res) => {
     try {
         const locker = await LockerV2.findById(req.params.id);
-        if (!locker) return res.status(404).json({ success: false, message: 'Không tìm thấy tủ!' });
+        if (!locker) return res.status(404).json({ success: false, message: "Không tìm thấy tủ!" });
         if (!ensureOwned(locker, stationLocationId(req))) {
-            return res.status(403).json({ success: false, message: 'Tủ này thuộc phòng tập khác!' });
+            return res.status(403).json({ success: false, message: "Tủ này thuộc phòng tập khác!" });
         }
         await LockerV2.findByIdAndDelete(locker._id);
-        return res.json({ success: true, message: 'Đã xóa tủ!', data: locker });
+        return res.json({ success: true, message: "Đã xóa tủ!", data: locker });
     } catch (error) {
-        return res.status(500).json({ success: false, message: 'Lỗi khi xóa tủ', error: error.message });
+        return res.status(500).json({ success: false, message: "Lỗi khi xóa tủ", error: error.message });
     }
 };
 
 // DELETE /api/v2/lockers/row/:prefix - Xóa toàn bộ dãy tủ theo prefix (trong phạm vi phòng tập)
-const removeRow = async (req, res) => {
+export const removeRow = async (req, res) => {
     try {
         const prefix = normalizePrefix(req.params.prefix);
         const q = { prefix };
@@ -338,24 +366,24 @@ const removeRow = async (req, res) => {
         const result = await LockerV2.deleteMany(q);
         return res.json({ success: true, message: `Đã xóa ${result.deletedCount} tủ của dãy "${prefix}"` });
     } catch (error) {
-        return res.status(500).json({ success: false, message: 'Lỗi khi xóa dãy tủ', error: error.message });
+        return res.status(500).json({ success: false, message: "Lỗi khi xóa dãy tủ", error: error.message });
     }
 };
 
 // GET /api/v2/lockers/status - Trạng thái tổng quan (trong phạm vi phòng tập)
-const statusOverview = async (req, res) => {
+export const statusOverview = async (req, res) => {
     try {
         const q = {};
         const loc = stationLocationId(req);
         if (loc) q.locationId = loc;
-        const lockers = await LockerV2.find(q).select('status').lean();
+        const lockers = await LockerV2.find(q).select("status").lean();
         const total = lockers.length;
         const occupied = lockers.filter(l => l.status === LOCKER_STATUS.OCCUPIED).length;
         const maintenance = lockers.filter(l => l.status === LOCKER_STATUS.MAINTENANCE).length;
         const available = total - occupied - maintenance;
         return res.status(200).json({
             success: true,
-            message: 'Lấy thông tin trạng thái tủ đồ V2 thành công',
+            message: "Lấy thông tin trạng thái tủ đồ thành công",
             data: {
                 total,
                 occupied,
@@ -365,25 +393,6 @@ const statusOverview = async (req, res) => {
             }
         });
     } catch (error) {
-        return res.status(500).json({ success: false, message: 'Lỗi hệ thống khi lấy thông tin trạng thái tủ đồ V2', error: error.message });
+        return res.status(500).json({ success: false, message: "Lỗi hệ thống khi lấy thông tin trạng thái tủ đồ", error: error.message });
     }
-};
-
-module.exports = {
-    normalizePrefix,
-    computeNextCodes,
-    validateLockerCode,
-    formatLockerStatus,
-    getLockerUsageRate,
-    list,
-    getNext,
-    createRow,
-    addLockers,
-    update,
-    assign,
-    release,
-    completeMaintenance,
-    remove,
-    removeRow,
-    statusOverview
 };

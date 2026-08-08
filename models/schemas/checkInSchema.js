@@ -42,6 +42,17 @@ const checkInSchema = new mongoose.Schema({
         default: null
     },
 
+    lockerId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "LockerV2",
+        default: null
+    },
+
+    lockerNumber: {
+        type: String,
+        default: ""
+    },
+
     status: {
         type: String,
         enum: [

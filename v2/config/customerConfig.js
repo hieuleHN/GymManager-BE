@@ -1,4 +1,0 @@
-module.exports = {
-    EXPIRY_WARNING_DAYS: 7,
-    MAX_ACTIVE_LOCKERS_PER_CUSTOMER: 1
-};

@@ -40,11 +40,19 @@ export const initPackageStatusScheduler = () => {
 
   cron.schedule('* * * * *', async () => {
     console.log('[Cron Job] Kiểm tra lịch tập quá hạn...');
-    await autoCancelPendingBookings();
+    try {
+      await autoCancelPendingBookings();
+    } catch (err) {
+      console.error('[Cron Job] Lỗi hủy lịch tập:', err);
+    }
   });
 
   cron.schedule('* * * * *', async () => {
     console.log('[Cron Job] Kiểm tra đơn đăng ký gói tập quá hạn thanh toán...');
-    await autoCancelPendingPackages();
+    try {
+      await autoCancelPendingPackages();
+    } catch (err) {
+      console.error('[Cron Job] Lỗi hủy gói tập:', err);
+    }
   });
 };

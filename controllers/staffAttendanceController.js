@@ -225,15 +225,260 @@ export const attendanceHistory = async (req, res) => {
     const { staffId, page, limit } = req.query;
     const q = staffId ? { staffId } : {};
     // Nhân viên có phòng tập chỉ xem lịch sử chấm công của đúng phòng tập mình
-    const loc = getStationLocationId(req);
+    const loc = getStationLocationId(req) || req.query.locationId || null;
     if (loc) q.locationId = loc;
+
+    // Lọc theo ngày (date) hoặc khoảng ngày (from/to)
+    if (req.query.date) {
+      const parts = String(req.query.date).split('-').map(Number);
+      if (parts.length === 3 && parts.every(n => !isNaN(n))) {
+        const [y, m, d] = parts;
+        q.date = {
+          $gte: new Date(y, m - 1, d, 0, 0, 0, 0),
+          $lte: new Date(y, m - 1, d, 23, 59, 59, 999)
+        };
+      }
+    } else if (req.query.from || req.query.to) {
+      q.date = {};
+      if (req.query.from) {
+        const f = new Date(String(req.query.from).split('T')[0]);
+        f.setHours(0, 0, 0, 0);
+        q.date.$gte = f;
+      }
+      if (req.query.to) {
+        const t = new Date(String(req.query.to).split('T')[0]);
+        t.setHours(23, 59, 59, 999);
+        q.date.$lte = t;
+      }
+    }
+
+    const p = Number(page) || 1;
+    const lim = Math.min(Number(limit) || 20, 200);
     const total = await StaffAttendance.countDocuments(q);
     const data = await StaffAttendance.find(q)
+      .populate({
+        path: 'staffId',
+        select: 'fullName account phone avatar gender email job locationId',
+        populate: { path: 'job', select: 'name' }
+      })
+      .populate('shiftId', 'shift notes')
+      .sort({ date: -1, checkInTime: -1 })
+      .skip((p - 1) * lim)
+      .limit(lim);
+
+    const enriched = data.map(r => {
+      const item = r.toObject();
+      if (item.shiftId?.shift && SHIFT_TIMES[item.shiftId.shift]) {
+        const s = SHIFT_TIMES[item.shiftId.shift];
+        item.shiftTimes = s;
+        if (item.checkInTime) item.minutesLate = calcMinutesLate(new Date(item.checkInTime), s.start);
+        if (item.checkOutTime && item.checkInTime) {
+          item.minutesEarly = calcMinutesEarly(new Date(item.checkOutTime), s.end);
+          item.overtime = calcOvertime(new Date(item.checkInTime), new Date(item.checkOutTime), s.end);
+          item.totalMinutes = Math.round((new Date(item.checkOutTime) - new Date(item.checkInTime)) / 60000);
+        }
+      } else if (item.checkInTime && item.checkOutTime) {
+        item.totalMinutes = Math.round((new Date(item.checkOutTime) - new Date(item.checkInTime)) / 60000);
+      }
+      item.statusLabel = {
+        'checked-in': 'Đang làm',
+        'checked-out': 'Đã chấm công',
+        'absent': 'Nghỉ',
+        'late': 'Đi muộn'
+      }[item.status] || item.status;
+      return item;
+    });
+
+    res.json({ data: enriched, total, page: p, limit: lim, totalPages: Math.ceil(total / lim) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// Thống kê chấm công theo kỳ (week/month/quarter/year) hoặc khoảng ngày tùy chỉnh
+export const attendanceStats = async (req, res) => {
+  try {
+    const period = req.query.period || 'month';
+    const loc = getStationLocationId(req) || req.query.locationId || null;
+
+    let from = req.query.startDate ? new Date(String(req.query.startDate).split('T')[0]) : null;
+    let to = req.query.endDate ? new Date(String(req.query.endDate).split('T')[0]) : null;
+
+    if (!from && !to) {
+      const now = new Date();
+      to = now;
+      from = new Date(now);
+      if (period === 'week') { from.setDate(now.getDate() - 6); }
+      else if (period === 'quarter') { from = new Date(now.getFullYear(), Math.floor(now.getMonth() / 3) * 3, 1); }
+      else if (period === 'year') { from = new Date(now.getFullYear(), 0, 1); }
+      else { from = new Date(now.getFullYear(), now.getMonth(), 1); }
+    }
+    from.setHours(0, 0, 0, 0);
+    to.setHours(23, 59, 59, 999);
+
+    const match = { date: { $gte: from, $lte: to } };
+    if (loc) match.locationId = loc;
+
+    const records = await StaffAttendance.find(match)
       .populate('staffId', 'fullName account')
-      .sort({ date: -1 })
-      .skip(((Number(page) || 1) - 1) * (Number(limit) || 20))
-      .limit(Number(limit) || 20);
-    res.json({ data, total, page: Number(page) || 1, totalPages: Math.ceil(total / (Number(limit) || 20)) });
+      .populate('shiftId', 'shift');
+
+    const dailyMap = {};
+    let total = 0, totalMinutes = 0, lateCount = 0, onTimeCount = 0, overtimeMinutes = 0;
+    const shiftDist = { 'morning-noon': 0, 'afternoon-evening': 0, none: 0 };
+
+    records.forEach(r => {
+      const d = new Date(r.date);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      if (!dailyMap[key]) dailyMap[key] = { date: key, count: 0, totalMinutes: 0, lateCount: 0, overtimeMinutes: 0 };
+
+      dailyMap[key].count++;
+      total++;
+
+      let minutes = r.totalMinutes || 0;
+      if (r.checkInTime && r.checkOutTime) {
+        minutes = Math.round((new Date(r.checkOutTime) - new Date(r.checkInTime)) / 60000);
+      }
+      dailyMap[key].totalMinutes += minutes;
+      totalMinutes += minutes;
+
+      const isLate = r.status === 'late' || (r.minutesLate || 0) > 0;
+      if (isLate) { dailyMap[key].lateCount++; lateCount++; }
+      if (r.status === 'checked-out' && !isLate && !(r.minutesEarly || 0)) onTimeCount++;
+
+      if (r.overtime) { dailyMap[key].overtimeMinutes += r.overtime; overtimeMinutes += r.overtime; }
+
+      const shiftKey = r.shiftId?.shift;
+      if (shiftDist[shiftKey] !== undefined) shiftDist[shiftKey]++;
+      else shiftDist.none++;
+    });
+
+    // Điền đầy đủ ngày trống trong khoảng (tránh biểu đồ mất ngày)
+    const daily = [];
+    for (let cursor = new Date(from); cursor <= to; cursor.setDate(cursor.getDate() + 1)) {
+      const key = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}-${String(cursor.getDate()).padStart(2, '0')}`;
+      daily.push(dailyMap[key] || { date: key, count: 0, totalMinutes: 0, lateCount: 0, overtimeMinutes: 0 });
+    }
+
+    // Đếm vắng mặt: ca được phân nhưng không có lượt chấm công trong ngày
+    const shiftFilter = { date: { $gte: from, $lte: to } };
+    if (loc) {
+      // Ca không gắn phòng tập (phân khi chọn "Tất cả cơ sở") cũng phải tính vào
+      shiftFilter.$or = [
+        { locationId: loc },
+        { locationId: null },
+        { locationId: { $exists: false } },
+      ];
+    }
+    const shifts = await StaffShift.find(shiftFilter);
+    const attendedKeys = new Set(records.map(r => `${r.staffId?._id}|${new Date(r.date).toDateString()}`));
+    const absentCount = shifts.filter(s =>
+      s.staffId && !attendedKeys.has(`${s.staffId}|${new Date(s.date).toDateString()}`)
+    ).length;
+
+    const shiftDistData = [
+      { name: 'Ca sáng', value: shiftDist['morning-noon'] },
+      { name: 'Ca chiều', value: shiftDist['afternoon-evening'] },
+      { name: 'Không phân ca', value: shiftDist.none },
+    ].filter(s => s.value > 0);
+
+    // Phân chia theo cơ sở phòng tập
+    const byLocation = [];
+    const locAgg = {};
+    records.forEach(r => {
+      const key = r.locationId ? String(r.locationId) : 'none';
+      if (!locAgg[key]) locAgg[key] = { total: 0, totalMinutes: 0, lateCount: 0, onTimeCount: 0, absentCount: 0 };
+      const g = locAgg[key];
+      g.total++;
+      let minutes = r.totalMinutes || 0;
+      if (r.checkInTime && r.checkOutTime) {
+        minutes = Math.round((new Date(r.checkOutTime) - new Date(r.checkInTime)) / 60000);
+      }
+      g.totalMinutes += minutes;
+      const isLate = r.status === 'late' || (r.minutesLate || 0) > 0;
+      if (isLate) g.lateCount++;
+      if (r.status === 'checked-out' && !isLate && !(r.minutesEarly || 0)) g.onTimeCount++;
+    });
+    shifts.forEach(s => {
+      const key = s.locationId ? String(s.locationId) : 'none';
+      if (!locAgg[key]) locAgg[key] = { total: 0, totalMinutes: 0, lateCount: 0, onTimeCount: 0, absentCount: 0 };
+      const attended = s.staffId && attendedKeys.has(`${s.staffId}|${new Date(s.date).toDateString()}`);
+      if (!attended) locAgg[key].absentCount++;
+    });
+    if (Object.keys(locAgg).length > 0) {
+      const locIds = Object.keys(locAgg).filter(k => k !== 'none');
+      const locNameMap = {};
+      if (locIds.length) {
+        const locations = await Location.find({ _id: { $in: locIds } });
+        locations.forEach(l => { locNameMap[String(l._id)] = l.title || l.address || 'Phòng tập'; });
+      }
+      Object.entries(locAgg).forEach(([key, g]) => {
+        byLocation.push({
+          locationId: key === 'none' ? null : key,
+          locationName: key === 'none' ? 'Không gắn cơ sở' : (locNameMap[key] || 'Phòng tập'),
+          ...g,
+        });
+      });
+      byLocation.sort((a, b) => b.total - a.total);
+    }
+
+    res.json({
+      summary: { total, totalMinutes, lateCount, onTimeCount, overtimeMinutes, absentCount },
+      daily,
+      shiftDist: shiftDistData,
+      byLocation,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// Cảnh báo vắng mặt: nhân viên được phân ca nhưng không chấm công trong ngày
+export const attendanceAbsences = async (req, res) => {
+  try {
+    const { from, to } = req.query;
+    const loc = getStationLocationId(req) || req.query.locationId || null;
+    if (!from || !to) return res.status(400).json({ error: 'Vui lòng chọn khoảng ngày!' });
+
+    const start = new Date(String(from).split('T')[0]); start.setHours(0, 0, 0, 0);
+    const end = new Date(String(to).split('T')[0]); end.setHours(23, 59, 59, 999);
+
+    const shiftFilter = { date: { $gte: start, $lte: end } };
+    if (loc) {
+      // Ca không gắn phòng tập (phân khi chọn "Tất cả cơ sở") cũng phải tính vào
+      shiftFilter.$or = [
+        { locationId: loc },
+        { locationId: null },
+        { locationId: { $exists: false } },
+      ];
+    }
+
+    const shifts = await StaffShift.find(shiftFilter)
+      .populate('staffId', 'fullName account avatar phone gender email locationId');
+
+    const staffIds = [...new Set(shifts.map(s => s.staffId?._id).filter(Boolean))];
+    const attFilter = { date: { $gte: start, $lte: end } };
+    if (staffIds.length) attFilter.staffId = { $in: staffIds };
+
+    const attendances = await StaffAttendance.find(attFilter).select('staffId date');
+    const attended = new Set(attendances.map(a => `${a.staffId}|${new Date(a.date).toDateString()}`));
+
+    const absentList = shifts
+      .filter(s => s.staffId && !attended.has(`${s.staffId._id}|${new Date(s.date).toDateString()}`))
+      .map(s => {
+        const st = s.staffId;
+        return {
+          _id: s._id,
+          staff: { _id: st._id, fullName: st.fullName, account: st.account, avatar: st.avatar, phone: st.phone, gender: st.gender, email: st.email, locationId: st.locationId },
+          date: s.date,
+          shift: s.shift,
+          shiftTimes: SHIFT_TIMES[s.shift] || null,
+          notes: s.notes,
+        };
+      })
+      .sort((a, b) => new Date(b.date) - new Date(a.date));
+
+    res.json({ data: absentList, total: absentList.length });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

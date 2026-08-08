@@ -34,7 +34,8 @@ export const login = (req, res) => {
           role: 'member',
           isStaff: false,
           status: customer.status,
-          balance: customer.balance || 0
+          balance: customer.balance || 0,
+          locationId: customer.locationId || null
         }
       });
     });
