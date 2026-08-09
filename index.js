@@ -1,10 +1,14 @@
 import "dotenv/config";
 import express from "express";
+import http from "http";
 import cors from "cors";
 import db from "./config/db.js";
+import { initSocket } from "./config/socket.js";
 import locationRoutes from "./routes/locationRoutes.js";
 import packageRoutes from "./routes/packageRoutes.js";
 import { initPackageStatusScheduler } from "./services/cronService.js";
+import messageMonitorRoutes from "./routes/messageMonitorRoutes.js";
+import sensitiveKeywordRoutes from "./routes/sensitiveKeywordRoutes.js";
 
 import productRoutes from "./routes/productRoutes.js";
 import equipmentRoutes from "./routes/equipmentRoutes.js";
@@ -35,6 +39,7 @@ import authRoutes from "./routes/authRoutes.js";
 import articleRoutes from "./routes/articleRoutes.js";
 import lockerManagementRoutes from "./routes/lockerManagementRoutes.js";
 import ttsRoutes from "./routes/ttsRoutes.js";
+import messageRoutes from "./routes/messageRoutes.js";
 
 import { autoCancelPendingBookings } from "./jobs/autoCancelBooking.js";
 import { autoCancelPendingPackages } from "./jobs/autoCancelPendingPackages.js";
@@ -105,6 +110,13 @@ app.use("/api/v2/lockers", lockerManagementRoutes);
 // Giọng đọc tiếng Việt miễn phí
 app.use("/api/tts", ttsRoutes);
 
+// Chat nội bộ / HLV - Hội viên / Lễ tân - Hội viên
+app.use("/api/messages", messageRoutes);
+
+// Giám sát tin nhắn (admin/quản lý) + quản lý từ khoá nhạy cảm
+app.use("/api/messages-monitor", messageMonitorRoutes);
+app.use("/api/sensitive-keywords", sensitiveKeywordRoutes);
+
 initPackageStatusScheduler();
 
 // Chạy sau khi MongoDB đã kết nối thành công
@@ -119,6 +131,8 @@ setTimeout(async () => {
 }, 5000);
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
+const server = http.createServer(app);
+initSocket(server);
+server.listen(PORT, () => {
   console.log(`🚀 Server đang chạy mượt mà tại cổng http://localhost:${PORT}`);
 });

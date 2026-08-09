@@ -3,6 +3,7 @@ import Customer from '../models/schemas/customerSchema.js';
 import { lockCustomer } from '../models/customerModel.js';
 import { autoCancelPendingBookings } from '../jobs/autoCancelBooking.js';
 import { autoCancelPendingPackages } from '../jobs/autoCancelPendingPackages.js';
+import { processDueMessageReminders } from '../jobs/processMessageReminders.js';
 
 export const initPackageStatusScheduler = () => {
   cron.schedule('0 0 * * *', async () => {
@@ -53,6 +54,14 @@ export const initPackageStatusScheduler = () => {
       await autoCancelPendingPackages();
     } catch (err) {
       console.error('[Cron Job] Lỗi hủy gói tập:', err);
+    }
+  });
+
+  cron.schedule('* * * * *', async () => {
+    try {
+      await processDueMessageReminders();
+    } catch (err) {
+      console.error('[Cron Job] Lỗi xử lý nhắc hẹn tin nhắn:', err);
     }
   });
 };
