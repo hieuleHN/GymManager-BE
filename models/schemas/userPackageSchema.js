@@ -52,8 +52,16 @@ const userPackageSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ["đang hoạt động", "còn 10 ngày", "hết hạn", "đã hủy"],
+    enum: ["đang hoạt động", "còn 10 ngày", "đang tạm ngưng", "hết hạn", "đã hủy"],
     default: "đang hoạt động",
+  },
+  frozenAt: {
+    type: Date,
+    default: null,
+  },
+  frozenUntil: {
+    type: Date,
+    default: null,
   },
   payment_status: {
     type: String,

@@ -3,7 +3,8 @@ import mongoose from "mongoose";
 export const LOCKER_STATUS = {
     AVAILABLE: "AVAILABLE",
     OCCUPIED: "OCCUPIED",
-    MAINTENANCE: "MAINTENANCE"
+    MAINTENANCE: "MAINTENANCE",
+    AWAIT_KEY_RETURN: "AWAIT_KEY_RETURN"
 };
 
 const lockerManagementSchema = new mongoose.Schema({
@@ -56,6 +57,14 @@ const lockerManagementSchema = new mongoose.Schema({
         type: Date,
         default: null
     },
+    rentalDays: {
+        type: Number,
+        default: 0
+    },
+    rentedAt: {
+        type: Date,
+        default: null
+    },
     note: {
         type: String,
         default: ""
@@ -84,7 +93,8 @@ lockerManagementSchema.virtual("statusLabel").get(function () {
     const map = {
         AVAILABLE: "Trống",
         OCCUPIED: "Đang sử dụng",
-        MAINTENANCE: "Bảo trì"
+        MAINTENANCE: "Bảo trì",
+        AWAIT_KEY_RETURN: "Chờ trả chìa khoá"
     };
     return map[this.status] || this.status;
 });

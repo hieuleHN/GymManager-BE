@@ -193,6 +193,8 @@ export const update = async (req, res) => {
                 locker.assignedName = "";
                 locker.assignedPhone = "";
                 locker.assignedAt = null;
+                locker.rentalDays = 0;
+                locker.rentedAt = null;
                 clearMaintenance(locker);
             }
             if (status === LOCKER_STATUS.OCCUPIED) {
@@ -297,6 +299,8 @@ export const release = async (req, res) => {
         locker.assignedName = "";
         locker.assignedPhone = "";
         locker.assignedAt = null;
+        locker.rentalDays = 0;
+        locker.rentedAt = null;
         clearMaintenance(locker);
         await locker.save();
         return res.json({
@@ -329,6 +333,8 @@ export const completeMaintenance = async (req, res) => {
             locker.assignedName = "";
             locker.assignedPhone = "";
             locker.assignedAt = null;
+            locker.rentalDays = 0;
+            locker.rentedAt = null;
         }
         clearMaintenance(locker);
         await locker.save();

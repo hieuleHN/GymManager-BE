@@ -143,6 +143,26 @@ export const findCustomerByAccount = async (account, callback) => {
   }
 };
 
+export const searchCustomers = async (query, callback) => {
+  try {
+    const q = String(query || '').trim();
+    if (!q) return callback(null, []);
+    const filter = {
+      $or: [
+        { account: { $regex: q, $options: 'i' } },
+        { fullName: { $regex: q, $options: 'i' } },
+        { phone: { $regex: q, $options: 'i' } }
+      ]
+    };
+    const customers = await Customer.find(filter)
+      .select('_id account fullName avatar phone status locationId')
+      .limit(8);
+    callback(null, customers);
+  } catch (err) {
+    callback(err);
+  }
+};
+
 export const getPendingCustomers = async (callback) => {
   try {
     const customers = await Customer.find({ status: { $in: ['pending', 'pending_approval'] } }).sort({ createdAt: -1 });

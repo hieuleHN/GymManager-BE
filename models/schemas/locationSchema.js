@@ -52,6 +52,26 @@ const locationSchema = new mongoose.Schema({
     type: String,
     default: ''
   },
+  enabledServices: {
+    type: [String],
+    default: []
+  },
+  serviceFees: [
+    {
+      _id: false,
+      service_type: {
+        type: String
+      },
+      hasFee: {
+        type: Boolean,
+        default: false
+      },
+      fee: {
+        type: Number,
+        default: 0
+      }
+    }
+  ],
   createdAt: {
     type: Date,
     default: Date.now

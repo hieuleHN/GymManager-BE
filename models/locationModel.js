@@ -132,6 +132,41 @@ export const updateSignature = async (id, signature, callback) => {
   }
 };
 
+// 8.1 Lấy danh sách dịch vụ được bật hiển thị + cấu hình phí cho cơ sở
+export const getServiceConfig = async (id, callback) => {
+  try {
+    const location = await Location.findById(id).select('enabledServices serviceFees');
+    if (!location) return callback(null, null);
+    callback(null, {
+      enabledServices: location.enabledServices || [],
+      serviceFees: location.serviceFees || []
+    });
+  } catch (err) {
+    callback(err);
+  }
+};
+
+// 8.2 Cập nhật danh sách dịch vụ được bật hiển thị + cấu hình phí cho cơ sở
+export const updateServiceConfig = async (id, config, callback) => {
+  try {
+    const updated = await Location.findByIdAndUpdate(
+      id,
+      {
+        enabledServices: Array.isArray(config.enabledServices) ? config.enabledServices : [],
+        serviceFees: Array.isArray(config.serviceFees) ? config.serviceFees : []
+      },
+      { new: true }
+    );
+    if (!updated) return callback(new Error('NotFound'));
+    callback(null, {
+      enabledServices: updated.enabledServices || [],
+      serviceFees: updated.serviceFees || []
+    });
+  } catch (err) {
+    callback(err);
+  }
+};
+
 // 8. Xóa cơ sở (Xóa dữ liệu DB và trả về danh sách file để controller xóa vật lý)
 export const remove = async (id, callback) => {
   try {

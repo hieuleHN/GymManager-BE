@@ -191,3 +191,34 @@ export const deleteLocation = (req, res) => {
     });
   });
 };
+
+// Danh sách dịch vụ được bật hiển thị + cấu hình phí cho hội viên của một cơ sở
+export const getServices = (req, res) => {
+  LocationModel.getServiceConfig(req.params.id, (err, result) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (result === null) return res.status(404).json({ error: 'Không tìm thấy cơ sở này!' });
+    res.json({ locationId: req.params.id, ...result });
+  });
+};
+
+// Nhân viên: bật/tắt dịch vụ hiển thị + cấu hình phí cho hội viên của một cơ sở
+export const updateServices = (req, res) => {
+  const { enabledServices, serviceFees } = req.body;
+  if (!Array.isArray(enabledServices)) {
+    return res.status(400).json({ error: 'enabledServices phải là một mảng!' });
+  }
+  LocationModel.updateServiceConfig(
+    req.params.id,
+    {
+      enabledServices,
+      serviceFees: Array.isArray(serviceFees) ? serviceFees : []
+    },
+    (err, result) => {
+      if (err) {
+        if (err.message === 'NotFound') return res.status(404).json({ error: 'Không tìm thấy cơ sở này!' });
+        return res.status(500).json({ error: err.message });
+      }
+      res.json({ message: 'Cập nhật cấu hình dịch vụ thành công!', ...result });
+    }
+  );
+};

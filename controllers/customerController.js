@@ -1,6 +1,7 @@
 import {
   createCustomer, getAllCustomers, getCustomerById, updateCustomerById, deleteCustomerById,
-  approveCustomer, rejectCustomer, getPendingCustomers, submitPersonalInfo, findCustomerByAccount
+  approveCustomer, rejectCustomer, getPendingCustomers, submitPersonalInfo, findCustomerByAccount,
+  searchCustomers
 } from '../models/customerModel.js';
 import { findStaffByAccount } from '../models/staffModel.js';
 import fs from 'fs';
@@ -30,6 +31,14 @@ export const register = (req, res) => {
         res.status(201).json({ message: 'Đăng ký thành công! Bạn có thể đăng nhập ngay.', customerId: result.customerId });
       });
     });
+  });
+};
+
+export const search = (req, res) => {
+  const q = req.query.q || '';
+  searchCustomers(q, (err, customers) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(customers || []);
   });
 };
 

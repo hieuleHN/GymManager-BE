@@ -40,6 +40,7 @@ import articleRoutes from "./routes/articleRoutes.js";
 import lockerManagementRoutes from "./routes/lockerManagementRoutes.js";
 import ttsRoutes from "./routes/ttsRoutes.js";
 import messageRoutes from "./routes/messageRoutes.js";
+import serviceRequestRoutes from "./routes/serviceRequestRoutes.js";
 
 import { autoCancelPendingBookings } from "./jobs/autoCancelBooking.js";
 import { autoCancelPendingPackages } from "./jobs/autoCancelPendingPackages.js";
@@ -116,6 +117,9 @@ app.use("/api/messages", messageRoutes);
 // Giám sát tin nhắn (admin/quản lý) + quản lý từ khoá nhạy cảm
 app.use("/api/messages-monitor", messageMonitorRoutes);
 app.use("/api/sensitive-keywords", sensitiveKeywordRoutes);
+
+// Yêu cầu dịch vụ từ hội viên
+app.use("/api/service-requests", serviceRequestRoutes);
 
 initPackageStatusScheduler();
 
