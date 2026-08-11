@@ -233,40 +233,21 @@ export const getFinanceStatistics = async (req, res) => {
       Expense, "amount", "date", prevStart, prevEnd, expenseFilter
     );
 
-    // ============ 3b. COGS & TIỀN NHẬP HÀNG ============
+    // ============ 3b. COGS (Giá vốn hàng bán) & TIỀN NHẬP HÀNG ============
     const productFilter = locationId ? { location_id: locationId } : {};
     const products = await Product.find(productFilter);
 
+    // COGS = costPrice × số lượng đã bán trong kỳ (dựa trên monthlySales)
     let cogsThis = 0;
-    if (period === "week") {
-      // Tuần: COGS = costPrice × số lượng đã bán trong khoảng thời gian (dựa trên monthlySales)
-      cogsThis = products.reduce((sum, p) => {
-        const soldInPeriod = (p.monthlySales || [])
-          .filter(s => {
-            const saleDate = new Date(s.year, s.month - 1, 1);
-            return saleDate >= start && saleDate <= new Date();
-          })
-          .reduce((mSum, s) => mSum + (s.quantity || 0), 0);
-        return sum + (p.costPrice || 0) * soldInPeriod;
-      }, 0);
-    } else {
-      // Tháng/quý/năm: tổng tiền nhập hàng (dựa trên importDate)
-      cogsThis = products
-        .filter(p => {
-          const impDate = new Date(p.importDate);
-          return impDate >= start && impDate <= new Date();
+    products.forEach(p => {
+      const soldInPeriod = (p.monthlySales || [])
+        .filter(s => {
+          const saleDate = new Date(s.year, s.month - 1, 1);
+          return saleDate >= start && saleDate <= new Date();
         })
-        .reduce((sum, p) => sum + (p.costPrice || 0) * (p.importQuantity || p.quantity || 0), 0);
-    }
-
-    // Tổng tiền nhập hàng năm (dùng cho expenseStructure pie chart)
-    const totalImportCost = products
-      .filter(p => {
-        const impDate = new Date(p.importDate);
-        const yearStart = new Date(new Date().getFullYear(), 0, 1);
-        return impDate >= yearStart && impDate <= new Date();
-      })
-      .reduce((sum, p) => sum + (p.costPrice || 0) * (p.importQuantity || p.quantity || 0), 0);
+        .reduce((mSum, s) => mSum + (s.quantity || 0), 0);
+      cogsThis += (p.costPrice || 0) * soldInPeriod;
+    });
 
     // ============ 3c. KHẤU HAO THIẾT BỊ (Nguyên giá / 60 tháng = 5 năm) ============
     const DEPRECIATION_MONTHS = 60;
@@ -295,6 +276,18 @@ export const getFinanceStatistics = async (req, res) => {
 
     // Khấu hao kỳ này
     const equipmentCostThis = equipments.reduce((sum, e) => sum + calcDepreciation(e, start, now), 0);
+
+    // Tổng COGS năm (dùng cho expenseStructure pie chart)
+    const yearStartForCogs = new Date(now.getFullYear(), 0, 1);
+    const totalCogsYear = products.reduce((sum, p) => {
+      const soldInYear = (p.monthlySales || [])
+        .filter(s => {
+          const saleDate = new Date(s.year, s.month - 1, 1);
+          return saleDate >= yearStartForCogs && saleDate <= now;
+        })
+        .reduce((mSum, s) => mSum + (s.quantity || 0), 0);
+      return sum + (p.costPrice || 0) * soldInYear;
+    }, 0);
 
     // Khấu hao năm (dùng cho expenseStructure pie chart)
     const yearStart = new Date(now.getFullYear(), 0, 1);
@@ -359,12 +352,49 @@ export const getFinanceStatistics = async (req, res) => {
     const profitThis = accrualThis - totalExpenseThis;
     const profitPrev = accrualPrev - totalExpensePrev;
 
+    // ============ 4b. DÒNG TIỀN RÒNG (tích lũy từ đầu đến nay - không phụ thuộc kỳ) ============
+    // Tổng tiền thu từ đầu đến giờ (theo CLB nếu chọn)
+    const allTimeCashIn = await UserPackage.aggregate([
+      { $match: { ...locFilter, payment_status: "đã thanh toán" } },
+      { $group: { _id: null, total: { $sum: "$total_price" } } },
+    ]);
+    const allTimeCashInVal = (allTimeCashIn[0]?.total || 0);
+
+    const allTimeWalletIn = await WalletTransaction.aggregate([
+      { $match: { type: "topup", status: "completed", ...(locFilter.locationId ? { locationId: locFilter.locationId } : {}) } },
+      { $group: { _id: null, total: { $sum: "$amount" } } },
+    ]);
+    const allTimeWalletInVal = (allTimeWalletIn[0]?.total || 0);
+
+    const allTimeBookingIn = await Booking.aggregate([
+      { $match: { ...locFilter, paymentStatus: "paid", trainerId: { $ne: null } } },
+      { $group: { _id: null, total: { $sum: "$price" } } },
+    ]);
+    const allTimeBookingInVal = (allTimeBookingIn[0]?.total || 0);
+
+    const totalCashInAllTime = allTimeCashInVal + allTimeWalletInVal + allTimeBookingInVal;
+
+    // Tổng chi phí cố định từ đầu đến giờ (theo CLB nếu chọn)
+    const totalExpenseAllTime = await Expense.aggregate([
+      { $match: locFilter },
+      { $group: { _id: null, total: { $sum: "$amount" } } },
+    ]);
+    const totalExpenseAllTimeVal = (totalExpenseAllTime[0]?.total || 0);
+
+    // Tổng tiền nhập hàng từ đầu đến giờ (theo CLB nếu chọn - products đã filter sẵn)
+    const totalImportAllTime = products.reduce((sum, p) => {
+      return sum + (p.costPrice || 0) * (p.importQuantity || p.quantity || 0);
+    }, 0);
+
+    const netCashFlow = totalCashInAllTime - totalExpenseAllTimeVal - totalImportAllTime;
+
     const summary = {
       realCashIn: realCashInThis,
       accrualRevenue: accrualThis,
       totalExpense: totalExpenseThis,
       totalProfit: profitThis,
       importCost: cogsThis,
+      netCashFlow,
       profitMargin: accrualThis ? Math.round((profitThis / accrualThis) * 100) : 0,
       change: {
         realCashIn: pctChange(realCashInThis, realCashInPrev),
@@ -479,8 +509,8 @@ export const getFinanceStatistics = async (req, res) => {
       name: categoryLabel[e._id] || e._id,
       value: e.value,
     }));
-    if (totalImportCost > 0) {
-      expenseStructure.push({ name: "Tiền nhập hàng", value: totalImportCost });
+    if (totalCogsYear > 0) {
+      expenseStructure.push({ name: "Giá vốn hàng bán (COGS)", value: totalCogsYear });
     }
     if (totalEquipmentCost > 0) {
       expenseStructure.push({ name: "Tiền thiết bị", value: totalEquipmentCost });
