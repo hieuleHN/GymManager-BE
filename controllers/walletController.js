@@ -54,6 +54,18 @@ export const pay = async (req, res) => {
         });
       }
     } else if (type === 'package') {
+      await new Promise((resolve) => {
+        createWalletTransaction({
+          customerId,
+          type: 'payment',
+          amount: -amount,
+          balanceBefore: balance,
+          balanceAfter: balance - amount,
+          status: 'completed',
+          description: `Thanh toán gói tập (${ids.length} gói) - ${amount.toLocaleString('vi-VN')}₫`
+        }, () => resolve(null));
+      });
+
       for (const id of ids) {
         await new Promise((resolve) => {
           updatePaymentStatus(id, {

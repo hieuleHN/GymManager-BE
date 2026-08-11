@@ -143,7 +143,7 @@ export const findCustomerByAccount = async (account, callback) => {
   }
 };
 
-export const searchCustomers = async (query, callback) => {
+export const searchCustomers = async (query, callback, locationId) => {
   try {
     const q = String(query || '').trim();
     if (!q) return callback(null, []);
@@ -154,6 +154,7 @@ export const searchCustomers = async (query, callback) => {
         { phone: { $regex: q, $options: 'i' } }
       ]
     };
+    if (locationId) filter.locationId = locationId;
     const customers = await Customer.find(filter)
       .select('_id account fullName avatar phone status locationId')
       .limit(8);

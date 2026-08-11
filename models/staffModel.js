@@ -10,7 +10,11 @@ export const getTrainers = async (permission, callback) => {
       .populate('locationId', 'title address')
       .populate('disciplineId', 'name')
       .sort({ rating: -1 });
-    let filtered = trainers.filter(t => t.job && !t.job.isAdmin);
+    let filtered = trainers.filter(t =>
+      t.job &&
+      !t.job.isAdmin &&
+      /huấn luyện viên|trainer|pt|hlv/i.test(t.job.name || '')
+    );
     if (permission) {
       filtered = filtered.filter(t => t.job?.permissions?.includes(permission));
     }

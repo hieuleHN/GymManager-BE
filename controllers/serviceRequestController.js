@@ -289,6 +289,15 @@ const applyServiceEffect = async (request) => {
       return;
     }
 
+    // Chỉ cho phép chuyển nhượng trong cùng câu lạc bộ
+    const senderCustomer = await Customer.findById(request.customer_id).select('locationId');
+    const senderLocationId = (reg.locationId || senderCustomer?.locationId)?.toString?.();
+    const recipientLocationId = recipient.locationId?.toString?.();
+    if (senderLocationId && recipientLocationId && senderLocationId !== recipientLocationId) {
+      console.error('[ServiceRequest] Từ chối chuyển nhượng khác câu lạc bộ:', senderLocationId, recipientLocationId);
+      return;
+    }
+
     // Chuyển toàn bộ gói cùng loại đang hoạt động sang hội viên mới
     const result = await UserPackage.updateMany(
       {

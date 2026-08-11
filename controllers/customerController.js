@@ -36,10 +36,11 @@ export const register = (req, res) => {
 
 export const search = (req, res) => {
   const q = req.query.q || '';
+  const locationId = req.query.locationId || null;
   searchCustomers(q, (err, customers) => {
     if (err) return res.status(500).json({ error: err.message });
     res.json(customers || []);
-  });
+  }, locationId);
 };
 
 export const list = (req, res) => {
