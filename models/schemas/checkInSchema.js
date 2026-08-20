@@ -27,6 +27,13 @@ const checkInSchema = new mongoose.Schema({
         default: null
     },
 
+    // Lưu hình thức điểm danh (FACE_ID hoặc QR_CODE)
+    method: {
+        type: String,
+        enum: ["QR_CODE", "FACE_ID", "MANUAL"],
+        default: "QR_CODE"
+    },
+
     qrToken: {
         type: String,
         default: ""

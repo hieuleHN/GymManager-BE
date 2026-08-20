@@ -27,6 +27,11 @@ const customerSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Location'
   },
+  // Vector đặc trưng khuôn mặt phục vụ nhận diện FaceID
+  faceDescriptor: {
+    type: [Number],
+    default: []
+  },
   registerDate: {
     type: Date,
     default: Date.now
@@ -57,7 +62,7 @@ const customerSchema = new mongoose.Schema({
   }
 });
 
-customerSchema.pre('save', function(next) {
+customerSchema.pre('save', function (next) {
   this.updatedAt = new Date();
   next();
 });

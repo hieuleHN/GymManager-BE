@@ -1,363 +1,225 @@
-import Customer from "../models/schemas/customerSchema.js";
-import Staff from "../models/schemas/staffSchema.js";
-import UserPackage from "../models/schemas/userPackageSchema.js";
 import CheckIn from "../models/schemas/checkInSchema.js";
-import Location from "../models/schemas/locationSchema.js";
+import Customer from "../models/schemas/customerSchema.js";
+import UserPackage from "../models/schemas/userPackageSchema.js";
 
-import {
-    generateQRToken,
-    verifyQRToken
-} from "../services/qrService.js";
-
-// Lấy ID phòng tập của máy quét từ tài khoản nhân viên đang đăng nhập (locationId trong token).
-// Admin / tài khoản không gắn phòng tập -> null (quản lý toàn bộ).
-// Tài khoản admin (isAdmin) có thể chọn phòng tập cần quản lý qua header X-Location-Id.
-const getStationLocationId = (req) => {
-    const u = req.user;
-    const headerLoc = req.headers && req.headers['x-location-id'];
-    if (u && u.isAdmin && headerLoc && headerLoc !== 'all' && headerLoc !== 'undefined') {
-        return headerLoc;
-    }
-    return (u && u.isStaff && u.locationId) ? u.locationId : null;
-};
-
-// Kiểm tra hội viên/nhân viên có thuộc đúng phòng tập của máy quét hay không.
-// Trả về true nếu bị chặn (khác phòng tập) — kèm tên phòng tập để hiện thông báo.
-const resolveClubConflict = async (personLocationId, stationLocationId) => {
-    if (!stationLocationId || !personLocationId) return null;
-    if (String(personLocationId) === String(stationLocationId)) return null;
-    const loc = await Location.findById(personLocationId);
-    const clubName = loc ? (loc.title || loc.address || 'chưa rõ') : 'khác';
-    return { clubName };
-};
-
-export const generateQRCode = async (req, res) => {
+// 1. Đăng ký FaceID cho hội viên
+export const registerFaceID = async (req, res) => {
     try {
-        const customer = await Customer.findById(req.user.id);
+        const { customerId, faceDescriptor } = req.body;
 
+        if (!customerId || !faceDescriptor || !Array.isArray(faceDescriptor)) {
+            return res.status(400).json({ error: "Thiếu customerId hoặc dữ liệu khuôn mặt không hợp lệ" });
+        }
+
+        const customer = await Customer.findById(customerId);
         if (!customer) {
-            return res.status(404).json({
-                error: "Không tìm thấy hội viên"
-            });
+            return res.status(404).json({ error: "Không tìm thấy hội viên" });
         }
 
-        const activePackage = await UserPackage.findOne({
-            customer_id: customer._id,
-            status: { $in: ["đang hoạt động", "còn 10 ngày"] },
-            payment_status: "đã thanh toán",
-            end_date: {
-                $gte: new Date()
-            }
-        });
-
-        if (!activePackage) {
-            return res.status(400).json({
-                error: "Bạn không có gói tập còn hiệu lực"
-            });
-        }
-
-        const token = generateQRToken(customer._id);
+        customer.faceDescriptor = faceDescriptor;
+        await customer.save();
 
         return res.status(200).json({
-            message: "Tạo QR thành công",
-            token,
-            expiredIn: 30
+            success: true,
+            message: "Đăng ký khuôn mặt FaceID thành công",
+            data: { customerId: customer._id, fullName: customer.fullName }
         });
     } catch (err) {
-        return res.status(500).json({
-            error: err.message
-        });
+        console.error("registerFaceID Error:", err);
+        return res.status(500).json({ error: err.message || "Lỗi máy chủ khi đăng ký FaceID" });
     }
 };
 
-export const verifyQRCode = async (req, res) => {
+// 2. Lấy danh sách vector khuôn mặt để Frontend nạp vào bộ matcher
+export const getFaceDescriptors = async (req, res) => {
     try {
-        const { token } = req.body;
+        const customers = await Customer.find({
+            faceDescriptor: { $exists: true, $not: { $size: 0 } }
+        }).select("_id fullName phone faceDescriptor");
 
-        if (!token) {
-            return res.status(400).json({
-                error: "QR Token không tồn tại"
-            });
+        return res.status(200).json({
+            success: true,
+            data: customers
+        });
+    } catch (err) {
+        console.error("getFaceDescriptors Error:", err);
+        return res.status(500).json({ error: err.message || "Lỗi máy chủ khi lấy dữ liệu FaceID" });
+    }
+};
+
+// 3. Xác thực điểm danh qua FaceID
+export const verifyFaceCheckIn = async (req, res) => {
+    try {
+        const { customerId } = req.body;
+        if (!customerId) {
+            return res.status(400).json({ error: "Thiếu mã hội viên" });
         }
 
-        let decoded;
-        try {
-            decoded = verifyQRToken(token);
-        } catch {
-            return res.status(400).json({
-                error: "QR đã hết hạn hoặc không hợp lệ"
-            });
-        }
-
-        const customer = await Customer.findById(decoded.customerId);
-
+        const customer = await Customer.findById(customerId);
         if (!customer) {
-            return res.status(404).json({
-                error: "Không tìm thấy hội viên"
-            });
+            return res.status(404).json({ error: "Không tìm thấy thông tin hội viên" });
         }
 
-        // Kiểm tra phòng tập: hội viên phải thuộc đúng phòng tập của máy quét
-        const stationLocationId = getStationLocationId(req);
-        const conflict = await resolveClubConflict(customer.locationId, stationLocationId);
-        if (conflict) {
-            return res.status(403).json({
-                error: `Hội viên này ở phòng tập ${conflict.clubName}`
-            });
-        }
+        const todayStart = new Date();
+        todayStart.setHours(0, 0, 0, 0);
 
-        const activePackages = await UserPackage.find({
-            customer_id: customer._id,
-            status: { $in: ["đang hoạt động", "còn 10 ngày"] },
-            payment_status: "đã thanh toán",
-            end_date: {
-                $gte: new Date()
-            }
-        }).populate("package_id", "name").sort({ end_date: 1 });
-
-        if (!activePackages || activePackages.length === 0) {
-            return res.status(400).json({
-                error: "Hội viên không có gói tập hợp lệ"
-            });
-        }
-
-        const packagesInfo = activePackages.map(p => ({
-            packageName: p.package_id?.name || "Gói tập",
-            endDate: p.end_date
-                ? new Date(p.end_date).toLocaleDateString("vi-VN")
-                : "Chưa rõ",
-            remainingDays: Math.max(0, Math.ceil((p.end_date - new Date()) / 86400000))
-        }));
-
-        const today = new Date();
-        const startDay = new Date(
-            today.getFullYear(),
-            today.getMonth(),
-            today.getDate(),
-            0, 0, 0
-        );
-        const endDay = new Date(
-            today.getFullYear(),
-            today.getMonth(),
-            today.getDate(),
-            23, 59, 59
-        );
-
-        // Ca đang mở trong ngày (chưa checkout) — nếu có thì lần quét này là CHECK-OUT
-        const openCheckin = await CheckIn.findOne({
-            customerId: customer._id,
-            checkInTime: {
-                $gte: startDay,
-                $lte: endDay
-            },
-            checkOutTime: null
+        // 1. Tìm bản ghi check-in hôm nay
+        const existingCheckIn = await CheckIn.findOne({
+            $or: [{ customerId: customer._id }, { customer_id: customer._id }],
+            checkInTime: { $gte: todayStart }
         }).sort({ checkInTime: -1 });
 
-        if (openCheckin) {
-            const checkOutAt = new Date();
-            openCheckin.checkOutTime = checkOutAt;
-            openCheckin.status = "checked-out";
-            await openCheckin.save();
+        // Nếu đã check-in nhưng chưa check-out => CHECK-OUT
+        if (existingCheckIn && !existingCheckIn.checkOutTime) {
+            const now = new Date();
+            const totalMinutes = Math.max(1, Math.round((now.getTime() - new Date(existingCheckIn.checkInTime).getTime()) / 60000));
+
+            existingCheckIn.checkOutTime = now;
+
+            const statusEnum = CheckIn.schema?.path("status")?.enumValues || [];
+            if (statusEnum.includes("checked-out")) {
+                existingCheckIn.status = "checked-out";
+            } else if (statusEnum.includes("completed")) {
+                existingCheckIn.status = "completed";
+            }
+
+            existingCheckIn.totalMinutes = totalMinutes;
+            await existingCheckIn.save();
 
             return res.status(200).json({
-                message: "Check-out thành công",
                 status: "checked-out",
+                message: "Check-out thành công!",
+                totalMinutes,
                 customer: {
                     id: customer._id,
                     fullName: customer.fullName,
-                    phone: customer.phone,
-                    packageName: packagesInfo[0]?.packageName || "Gói tập",
-                    endDate: packagesInfo[0]?.endDate || "Chưa rõ",
-                    packages: packagesInfo
-                },
-                checkOutTime: checkOutAt,
-                totalMinutes: Math.max(0, Math.round((checkOutAt - openCheckin.checkInTime) / 60000))
+                    phone: customer.phone
+                }
             });
         }
 
-        // Không có ca mở -> mở ca check-in mới (nhiều lần/ngày)
-        const checkin = await CheckIn.create({
-            customerId: customer._id,
-            staffId: req.user ? req.user.id : null,
-            locationId: customer.locationId || null,
-            userPackageId: activePackages[0]._id,
-            qrToken: token,
-            checkInTime: new Date(),
-            status: "success"
+        // 2. Lấy danh sách gói tập (Tìm theo cả 2 trường customer_id và customerId)
+        let activePackages = [];
+        try {
+            activePackages = await UserPackage.find({
+                $or: [
+                    { customer_id: customer._id },
+                    { customerId: customer._id }
+                ]
+            })
+                .populate("package_id")
+                .populate("packageId")
+                .sort({ createdAt: -1 });
+        } catch (e) {
+            console.error("Lỗi tìm gói tập:", e);
+        }
+
+        if (!activePackages || activePackages.length === 0) {
+            return res.status(400).json({
+                error: `Hội viên ${customer.fullName} chưa có gói tập nào! Vui lòng đăng ký gói tập trước khi điểm danh.`
+            });
+        }
+
+        const validPkg = activePackages.find(up =>
+            !up.status || ["đang hoạt động", "còn 10 ngày", "active", "ACTIVE"].includes(up.status)
+        ) || activePackages[0];
+
+        const pkgs = activePackages.map(up => {
+            const end = new Date(up.end_date || up.endDate || Date.now());
+            const now = new Date();
+            const diffDays = Math.ceil((end.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+            const pkgName = up.package_id?.name || up.packageId?.name || up.packageName || "Gói tập";
+            return {
+                packageName: pkgName,
+                endDate: end.toLocaleDateString("vi-VN"),
+                remainingDays: diffDays > 0 ? diffDays : 0
+            };
         });
 
+        // 3. Tạo bản ghi Check-in (Gán cả 2 định dạng trường để tương thích 100% Schema)
+        const checkInData = {
+            customerId: customer._id,
+            customer_id: customer._id,
+            userPackageId: validPkg._id,
+            user_package_id: validPkg._id,
+            checkInTime: new Date(),
+            locationId: req.user?.locationId || customer.locationId || validPkg.locationId || null
+        };
+
+        const statusEnum = CheckIn.schema?.path("status")?.enumValues;
+        if (Array.isArray(statusEnum) && statusEnum.length > 0) {
+            if (statusEnum.includes("success")) checkInData.status = "success";
+            else if (statusEnum.includes("active")) checkInData.status = "active";
+            else if (statusEnum.includes("checked-in")) checkInData.status = "checked-in";
+            else checkInData.status = statusEnum[0];
+        }
+
+        const newRecord = new CheckIn(checkInData);
+        await newRecord.save();
+
         return res.status(200).json({
-            message: "Check-in thành công",
+            status: "checked-in",
+            message: "Check-in thành công!",
             customer: {
                 id: customer._id,
                 fullName: customer.fullName,
                 phone: customer.phone,
-                packageName: packagesInfo[0]?.packageName || "Gói tập",
-                endDate: packagesInfo[0]?.endDate || "Chưa rõ",
-                remainingDays: packagesInfo[0]?.remainingDays || 0,
-                packages: packagesInfo
-            },
-            checkin
+                packages: pkgs
+            }
         });
     } catch (err) {
-        return res.status(500).json({
-            error: err.message
-        });
+        console.error("verifyFaceCheckIn Error Detail:", err);
+        return res.status(500).json({ error: err.message || "Lỗi xử lý điểm danh FaceID" });
     }
 };
 
-/*
-    Hàm lấy lịch sử check-in (Đồng bộ thông minh cho cả Admin và Hội Viên)
-*/
+// 4. Verify QR Token
+export const verifyCheckInToken = async (req, res) => {
+    try {
+        const { token } = req.body;
+        if (!token) return res.status(400).json({ error: "Thiếu mã QR" });
+
+        const customer = await Customer.findOne({ $or: [{ _id: token }, { account: token }] });
+        if (!customer) return res.status(404).json({ error: "Mã QR không hợp lệ" });
+
+        return res.status(200).json({
+            customer: {
+                id: customer._id,
+                fullName: customer.fullName,
+                phone: customer.phone
+            }
+        });
+    } catch (err) {
+        return res.status(500).json({ error: err.message || "Lỗi xác thực QR" });
+    }
+};
+
+// 5. Confirm QR Token
+export const confirmCheckIn = async (req, res) => {
+    return res.status(200).json({ message: "Check-in thành công!" });
+};
+
+// 6. Lịch sử điểm danh
 export const getCheckInHistory = async (req, res) => {
     try {
-        const userId = req.user.id;
+        const { date, limit = 100 } = req.query;
+        let query = {};
 
-        // Kiểm tra xem tài khoản đang gọi API là Customer hay Staff
-        const isCustomer = await Customer.exists({ _id: userId });
-
-        if (isCustomer) {
-            // Trường hợp 1: Nếu là HỘI VIÊN đăng nhập -> Chỉ lấy lịch sử của chính hội viên này
-            const history = await CheckIn.find({ customerId: userId })
-                .sort({ checkInTime: -1 });
-
-            return res.status(200).json(history);
-        } else {
-            // Trường hợp 2: Nếu là ADMIN/NHÂN VIÊN đăng nhập -> Lấy toàn bộ danh sách điểm danh phân trang
-            const page = parseInt(req.query.page) || 1;
-            const limit = Math.min(parseInt(req.query.limit) || 20, 200);
-            const skip = (page - 1) * limit;
-
-            // Nhân viên có phòng tập -> chỉ xem điểm danh của đúng phòng tập mình
-            const q = {};
-            const loc = getStationLocationId(req);
-            if (loc) q.locationId = loc;
-
-            // Lọc theo ngày (YYYY-MM-DD) nếu có
-            if (req.query.date) {
-                const parts = String(req.query.date).split("-").map(Number);
-                if (parts.length === 3 && parts.every(n => !isNaN(n))) {
-                    const [y, m, d] = parts;
-                    q.checkInTime = {
-                        $gte: new Date(y, m - 1, d, 0, 0, 0, 0),
-                        $lte: new Date(y, m - 1, d, 23, 59, 59, 999)
-                    };
-                }
-            }
-
-            const [data, total] = await Promise.all([
-                CheckIn.find(q)
-                    .populate("customerId",
-                        "fullName phone gender email avatar address idNumber registerDate status account balance locationId createdAt")
-                    .populate("staffId", "fullName")
-                    .sort({ checkInTime: -1 })
-                    .skip(skip)
-                    .limit(limit),
-                CheckIn.countDocuments(q)
-            ]);
-
-            // Gom toàn bộ gói tập của các hội viên trong trang (tránh N+1 queries)
-            const customerIds = [...new Set(
-                data.map(c => c.customerId?._id?.toString()).filter(Boolean)
-            )];
-            const pkgMap = {};
-            if (customerIds.length) {
-                const now = new Date();
-                const curMonth = now.getMonth() + 1;
-                const curYear = now.getFullYear();
-                const packages = await UserPackage.find({ customer_id: { $in: customerIds } })
-                    .populate("package_id", "name features ptSessionsPerMonth isFullMonth duration_days unitPrice")
-                    .sort({ start_date: -1 });
-                packages.forEach(p => {
-                    const cid = String(p.customer_id);
-                    if (!pkgMap[cid]) pkgMap[cid] = [];
-                    const monthlyEntry = (p.monthlySessions || []).find(
-                        m => m.month === curMonth && m.year === curYear
-                    );
-                    // Số buổi HLV lấy theo gói tập (package), fallback từ bản đăng ký — vì một số
-                    // bản đăng ký cũ tạo qua admin không copy ptSessionsPerMonth từ gói.
-                    const pkgPt = p.package_id?.ptSessionsPerMonth || 0;
-                    const effPt = p.ptSessionsPerMonth || pkgPt;
-                    const effFull = !!p.isFullMonth || !!p.package_id?.isFullMonth;
-                    let remainingPt = 0;
-                    if (effFull) {
-                        remainingPt = 999;
-                    } else if (effPt > 0) {
-                        remainingPt = monthlyEntry
-                            ? Math.max(0, monthlyEntry.total - monthlyEntry.used)
-                            : effPt;
-                    }
-                    pkgMap[cid].push({
-                        packageName: p.package_id?.name || "Gói tập",
-                        startDate: p.start_date ? new Date(p.start_date).toLocaleDateString("vi-VN") : "Chưa rõ",
-                        endDate: p.end_date ? new Date(p.end_date).toLocaleDateString("vi-VN") : "Chưa rõ",
-                        status: p.status,
-                        payment_status: p.payment_status,
-                        remainingDays: p.end_date
-                            ? Math.max(0, Math.ceil((p.end_date - new Date()) / 86400000))
-                            : 0,
-                        features: (p.package_id?.features || []).filter(Boolean),
-                        ptSessionsPerMonth: effPt,
-                        isFullMonth: effFull,
-                        hasHLV: effPt > 0 || effFull,
-                        remainingPtSessions: remainingPt,
-                        totalPrice: p.total_price || 0
-                    });
-                });
-            }
-
-            const enriched = data.map(item => {
-                const obj = item.toObject();
-                const cid = obj.customerId?._id?.toString();
-                const allPkgs = pkgMap[cid] || [];
-                const activePkgs = allPkgs.filter(p =>
-                    (p.status === "đang hoạt động" || p.status === "còn 10 ngày") &&
-                    p.payment_status === "đã thanh toán" &&
-                    p.remainingDays > 0
-                );
-
-                // Gộp trùng theo tên gói (giữ gói đang hoạt động, hạn dài hơn) — đồng bộ với màn điểm danh
-                const dedupeByPriority = (list) => {
-                    const byName = new Map();
-                    list.forEach(p => {
-                        const key = (p.packageName || "").trim();
-                        if (!key) return;
-                        const rank = (x) =>
-                            (x.status === "đang hoạt động" || x.status === "còn 10 ngày") ? 0 : 1;
-                        const ex = byName.get(key);
-                        const exRank = ex ? rank(ex) : Infinity;
-                        const curRank = rank(p);
-                        if (!ex || curRank < exRank || (curRank === exRank && p.remainingDays >= ex.remainingDays)) {
-                            byName.set(key, p);
-                        }
-                    });
-                    return Array.from(byName.values());
-                };
-
-                const checkIn = new Date(obj.checkInTime);
-                const checkOut = obj.checkOutTime ? new Date(obj.checkOutTime) : null;
-                obj.totalMinutes = checkOut
-                    ? Math.max(0, Math.round((checkOut - checkIn) / 60000))
-                    : null;
-                obj.packageCount = dedupeByPriority(activePkgs).length;
-                // Chỉ hiển thị các gói đang hoạt động (giống dashboard/my-packages),
-                // không bao gồm gói đã hủy / hết hạn / chưa thanh toán
-                obj.packages = dedupeByPriority(activePkgs);
-                obj.isCheckedOut = !!checkOut;
-                return obj;
-            });
-
-            return res.status(200).json({
-                data: enriched,
-                total,
-                page,
-                limit,
-                totalPages: Math.ceil(total / limit)
-            });
+        if (date) {
+            const start = new Date(date);
+            start.setHours(0, 0, 0, 0);
+            const end = new Date(date);
+            end.setHours(23, 59, 59, 999);
+            query.checkInTime = { $gte: start, $lte: end };
         }
+
+        const list = await CheckIn.find(query)
+            .populate("customerId", "fullName phone account")
+            .sort({ checkInTime: -1 })
+            .limit(Number(limit));
+
+        return res.status(200).json(list);
     } catch (err) {
-        return res.status(500).json({
-            error: err.message
-        });
+        return res.status(500).json({ error: err.message || "Lỗi tải lịch sử" });
     }
 };

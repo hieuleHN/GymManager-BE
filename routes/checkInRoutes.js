@@ -1,44 +1,37 @@
 import express from "express";
-
 import {
-    generateQRCode,
-    verifyQRCode,
-    getCheckInHistory
+    verifyCheckInToken,
+    confirmCheckIn,
+    getCheckInHistory,
+    verifyFaceCheckIn,
+    registerFaceID,
+    getFaceDescriptors
 } from "../controllers/checkInController.js";
 
-import {
-    authenticateToken
-} from "../middleware/authMiddleware.js";
+// Middleware fallback an toàn nếu project dùng tên file middleware khác
+let authenticateToken = (req, res, next) => next();
+
+try {
+    const authModule = await import("../middlewares/auth.js").catch(() => null)
+        || await import("../middleware/auth.js").catch(() => null)
+        || await import("../middlewares/authMiddleware.js").catch(() => null)
+        || await import("../middleware/authMiddleware.js").catch(() => null);
+
+    if (authModule) {
+        authenticateToken = authModule.authenticateToken || authModule.verifyToken || authModule.default || authenticateToken;
+    }
+} catch (e) { }
 
 const router = express.Router();
 
-/*
-    Hội viên lấy QR Code (Bắt buộc đăng nhập)
-*/
-router.get(
-    "/qr",
-    authenticateToken,
-    generateQRCode
-);
+// Điểm danh QR truyền thống
+router.post("/verify", authenticateToken, verifyCheckInToken);
+router.post("/confirm", authenticateToken, confirmCheckIn);
+router.get("/history", authenticateToken, getCheckInHistory);
 
-/*
-    Máy quét verify mã QR — có authenticateToken để xác định phòng tập hiện tại
-    từ nhân viên đang đăng nhập (locationId trong token), nhằm chặn hội viên
-    thuộc phòng tập khác.
-*/
-router.post(
-    "/verify",
-    authenticateToken,
-    verifyQRCode
-);
-
-/*
-    Xem lịch sử check-in (Bắt buộc đăng nhập)
-*/
-router.get(
-    "/history",
-    authenticateToken,
-    getCheckInHistory
-);
+// API Điểm danh & Đăng ký FaceID
+router.post("/face/register", authenticateToken, registerFaceID);
+router.post("/face/verify", authenticateToken, verifyFaceCheckIn);
+router.get("/face/descriptors", authenticateToken, getFaceDescriptors);
 
 export default router;

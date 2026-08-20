@@ -10,6 +10,7 @@ import { initPackageStatusScheduler } from "./services/cronService.js";
 import messageMonitorRoutes from "./routes/messageMonitorRoutes.js";
 import sensitiveKeywordRoutes from "./routes/sensitiveKeywordRoutes.js";
 
+import userPackageRoutes from "./routes/userPackageRoutes.js";
 import productRoutes from "./routes/productRoutes.js";
 import equipmentRoutes from "./routes/equipmentRoutes.js";
 import disciplineRoutes from "./routes/disciplineRoutes.js";
@@ -23,7 +24,6 @@ import permissionRoutes from "./routes/permissionRoutes.js";
 import policyRoutes from "./routes/policyRoutes.js";
 import expenseRoutes from "./routes/expenseRoutes.js";
 import lockerRoutes from "./routes/lockerRoutes.js";
-import userPackageRoutes from "./routes/userPackageRoutes.js";
 import bookingRoutes from "./routes/bookingRoutes.js";
 import notificationRoutes from "./routes/notificationRoutes.js";
 import checkInRoutes from "./routes/checkInRoutes.js";
