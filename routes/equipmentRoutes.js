@@ -3,6 +3,7 @@ import * as EquipmentController from "../controllers/equipmentController.js";
 
 const router = express.Router();
 
+router.get("/export/excel", EquipmentController.exportEquipmentsToExcel);
 router.get("/", EquipmentController.getAllEquipments);
 router.get(
   "/location/:locationId",

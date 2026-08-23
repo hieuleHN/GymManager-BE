@@ -1,3 +1,5 @@
+import excelJS from "exceljs";
+import mongoose from "mongoose";
 import Equipment from "../models/schemas/equipmentSchema.js";
 
 export const getAllEquipments = async (req, res) => {
@@ -76,12 +78,10 @@ export const updateEquipment = async (req, res) => {
       return res
         .status(404)
         .json({ message: "Không tìm thấy thiết bị để cập nhật!" });
-    res
-      .status(200)
-      .json({
-        message: "Cập nhật thiết bị thành công!",
-        data: updatedEquipment,
-      });
+    res.status(200).json({
+      message: "Cập nhật thiết bị thành công!",
+      data: updatedEquipment,
+    });
   } catch (error) {
     if (error.name === "ValidationError") {
       const messages = Object.values(error.errors).map((err) => err.message);
@@ -201,6 +201,96 @@ export const resolveReport = async (req, res) => {
         .status(400)
         .json({ message: "Dữ liệu không hợp lệ!", errors: messages });
     }
+    res.status(500).json({ message: "Lỗi server!", error: error.message });
+  }
+}; // CHÚ Ý: Dấu ngoặc này là để đóng hàm resolveReport
+
+export const exportEquipmentsToExcel = async (req, res) => {
+  try {
+    const { locationId } = req.query;
+    let filter = {};
+
+    if (locationId) {
+      if (!mongoose.Types.ObjectId.isValid(locationId)) {
+        return res.status(400).json({ message: "Dữ liệu không hợp lệ!" });
+      }
+      filter.location_id = locationId;
+    }
+
+    const equipments = await Equipment.find(filter).populate(
+      "location_id",
+      "name",
+    );
+
+    if (!equipments || equipments.length === 0) {
+      return res.status(404).json({ message: "Không có dữ liệu thiết bị!" });
+    }
+
+    const workbook = new excelJS.Workbook();
+    const worksheet = workbook.addWorksheet("Bao_Cao_Thiet_Bi");
+
+    worksheet.columns = [
+      { header: "STT", key: "stt", width: 5 },
+      { header: "Tên thiết bị", key: "name", width: 25 },
+      { header: "Trạng thái", key: "status", width: 15 },
+      { header: "Nhà cung cấp", key: "supplier", width: 20 },
+      { header: "Ngày mua", key: "purchase_date", width: 15 },
+      { header: "Nguyên giá (VNĐ)", key: "unitPrice", width: 15 },
+      {
+        header: "Phí bảo trì (VNĐ)",
+        key: "total_maintenance_cost",
+        width: 20,
+      },
+      { header: "Downtime (Ngày)", key: "total_downtime_days", width: 18 },
+      { header: "Tỷ lệ sẵn sàng (%)", key: "availability", width: 18 },
+    ];
+
+    worksheet.getRow(1).font = { bold: true };
+    worksheet.getRow(1).alignment = {
+      vertical: "middle",
+      horizontal: "center",
+    };
+
+    const now = new Date();
+
+    equipments.forEach((eq, index) => {
+      const purchaseDate = new Date(eq.purchase_date);
+      let totalDays = Math.floor(
+        (now.getTime() - purchaseDate.getTime()) / (1000 * 60 * 60 * 24),
+      );
+
+      if (totalDays <= 0) totalDays = 1;
+
+      const downtimeDays = eq.total_downtime_days || 0;
+      let availability = ((totalDays - downtimeDays) / totalDays) * 100;
+
+      availability = Math.max(0, Math.min(100, availability));
+
+      worksheet.addRow({
+        stt: index + 1,
+        name: eq.name,
+        status: eq.status.toUpperCase(),
+        supplier: eq.supplier,
+        purchase_date: purchaseDate.toLocaleDateString("vi-VN"),
+        unitPrice: eq.unitPrice,
+        total_maintenance_cost: eq.total_maintenance_cost,
+        total_downtime_days: downtimeDays,
+        availability: availability.toFixed(2) + "%",
+      });
+    });
+
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    );
+    res.setHeader(
+      "Content-Disposition",
+      "attachment; filename=Bao_Cao_Thiet_Bi.xlsx",
+    );
+
+    await workbook.xlsx.write(res);
+    res.status(200).end();
+  } catch (error) {
     res.status(500).json({ message: "Lỗi server!", error: error.message });
   }
 };
