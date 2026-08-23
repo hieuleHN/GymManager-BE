@@ -3,6 +3,7 @@ import express from "express";
 import {
     generateQRCode,
     verifyQRCode,
+    confirmCheckIn,
     getCheckInHistory
 } from "../controllers/checkInController.js";
 
@@ -30,6 +31,15 @@ router.post(
     "/verify",
     authenticateToken,
     verifyQRCode
+);
+
+/*
+    Xác nhận check-in chính thức sau bước verify (máy quét bấm "Xác nhận").
+    Dùng token QR làm bằng chứng nên không cần đăng nhập.
+*/
+router.post(
+    "/confirm",
+    confirmCheckIn
 );
 
 /*

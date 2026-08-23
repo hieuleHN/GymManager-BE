@@ -207,6 +207,65 @@ export const verifyQRCode = async (req, res) => {
 };
 
 /*
+    Xác nhận check-in chính thức sau khi máy quét đã verify.
+    Chỉ đọc trạng thái bản ghi gần nhất trong ngày để trả về thông báo,
+    KHÔNG tạo mới / đóng ca (tránh toggle check-out nhầm khi bấm xác nhận).
+*/
+export const confirmCheckIn = async (req, res) => {
+    try {
+        const { token } = req.body || {};
+        if (!token) {
+            return res.status(400).json({ error: "QR Token không tồn tại" });
+        }
+
+        let decoded;
+        try {
+            decoded = verifyQRToken(token);
+        } catch {
+            return res.status(400).json({ error: "QR đã hết hạn hoặc không hợp lệ" });
+        }
+
+        const customer = await Customer.findById(decoded.customerId);
+        if (!customer) {
+            return res.status(404).json({ error: "Không tìm thấy hội viên" });
+        }
+
+        const today = new Date();
+        const last = await CheckIn.findOne({
+            customerId: customer._id,
+            checkInTime: {
+                $gte: new Date(today.getFullYear(), today.getMonth(), today.getDate(), 0, 0, 0),
+                $lte: new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59, 999)
+            }
+        }).sort({ checkInTime: -1 });
+
+        let message = "Check-in thành công";
+        let status = "checked-in";
+        if (!last) {
+            message = "Chưa có bản ghi điểm danh hôm nay";
+            status = "not-found";
+        } else if (last.checkOutTime) {
+            message = "Check-out thành công";
+            status = "checked-out";
+        }
+
+        return res.status(200).json({
+            success: true,
+            message,
+            status,
+            customer: {
+                id: customer._id,
+                fullName: customer.fullName,
+                phone: customer.phone
+            },
+            checkinId: last?._id || null
+        });
+    } catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+};
+
+/*
     Hàm lấy lịch sử check-in (Đồng bộ thông minh cho cả Admin và Hội Viên)
 */
 export const getCheckInHistory = async (req, res) => {

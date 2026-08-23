@@ -20,12 +20,16 @@ const notificationSchema = new mongoose.Schema({
   },
   type: {
     type: String,
-    enum: ['booking_request', 'booking_confirmed', 'booking_rejected', 'booking_cancelled', 'locker_resolved', 'locker_rejected', 'transfer_requested', 'transfer_approved', 'transfer_rejected', 'booking_transferred', 'wallet_topup', 'wallet_payment', 'new_article', 'new_community_post', 'like', 'comment', 'report', 'message_reminder'],
+    enum: ['booking_request', 'booking_confirmed', 'booking_rejected', 'booking_cancelled', 'locker_resolved', 'locker_rejected', 'transfer_requested', 'transfer_approved', 'transfer_rejected', 'booking_transferred', 'wallet_topup', 'wallet_payment', 'new_article', 'new_community_post', 'like', 'comment', 'report', 'message_reminder', 'payment_reminder', 'renewal_reminder', 'package_cancelled', 'package_renewed', 'package_activated'],
     required: true
   },
   relatedBookingId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Booking'
+  },
+  relatedUserPackageId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'UserPackage'
   },
   relatedLockerIssueId: {
     type: mongoose.Schema.Types.ObjectId,

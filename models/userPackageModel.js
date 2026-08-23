@@ -18,6 +18,11 @@ export const createRegistration = async (data, callback) => {
       payment_method,
       status,
       payment_status,
+      // Giá chốt tại thời điểm mua (hợp đồng cũ giữ giá cũ khi gói đổi giá)
+      unit_price_applied,
+      price_snapshot,
+      // Liên kết phiếu gia hạn
+      original_registration_id,
     } = data;
 
     const finalPaymentStatus = payment_status || (payment_method ? "chờ thanh toán" : "đã thanh toán");
@@ -37,7 +42,11 @@ export const createRegistration = async (data, callback) => {
       payment_method: payment_method || "",
       payment_status: finalPaymentStatus,
       payment_date: finalPaymentStatus === "đã thanh toán" ? new Date() : null,
-      status: status || (payment_method ? "chờ thanh toán" : "đang hoạt động"),
+      // "chờ thanh toán" KHÔNG thuộc enum status -> đơn chưa duyệt dùng "chờ xác nhận"
+      status: status || (payment_method ? "chờ xác nhận" : "đang hoạt động"),
+      unit_price_applied: unit_price_applied ?? null,
+      price_snapshot: price_snapshot || undefined,
+      original_registration_id: original_registration_id || null,
     });
 
     const result = await registration.save();
@@ -120,7 +129,7 @@ export const getAllRegistrations = async (
       UserPackage.find(filter)
         .populate("package_id", "name unitPrice")
         .populate("locationId", "title name address")
-        .populate("customer_id", "fullName email phone")
+        .populate("customer_id", "fullName email phone account")
         .populate("confirmed_by", "name")
         .skip(skip)
         .limit(limit)
