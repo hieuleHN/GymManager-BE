@@ -9,6 +9,7 @@ import packageRoutes from "./routes/packageRoutes.js";
 import { initPackageStatusScheduler } from "./services/cronService.js";
 import messageMonitorRoutes from "./routes/messageMonitorRoutes.js";
 import sensitiveKeywordRoutes from "./routes/sensitiveKeywordRoutes.js";
+import { startEquipmentCron } from "./cronjobs/equipmentCron.js";
 
 import userPackageRoutes from "./routes/userPackageRoutes.js";
 import productRoutes from "./routes/productRoutes.js";
@@ -122,15 +123,16 @@ app.use("/api/sensitive-keywords", sensitiveKeywordRoutes);
 app.use("/api/service-requests", serviceRequestRoutes);
 
 initPackageStatusScheduler();
+startEquipmentCron();
 
 // Chạy sau khi MongoDB đã kết nối thành công
 setTimeout(async () => {
   try {
-    console.log('[Startup] Đang xử lý các giao dịch chờ thanh toán quá hạn...');
+    console.log("[Startup] Đang xử lý các giao dịch chờ thanh toán quá hạn...");
     await autoCancelPendingBookings();
     await autoCancelPendingPackages();
   } catch (err) {
-    console.error('[Startup] Lỗi:', err.message);
+    console.error("[Startup] Lỗi:", err.message);
   }
 }, 5000);
 
