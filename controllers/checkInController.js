@@ -221,7 +221,6 @@ export const verifyFaceCheckIn = async (req, res) => {
         return res.status(500).json({ error: err.message || "Lỗi xử lý điểm danh FaceID" });
     }
 };
-
 // 4. Verify QR Token
 export const verifyCheckInToken = async (req, res) => {
     try {

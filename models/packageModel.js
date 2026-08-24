@@ -1,5 +1,14 @@
 ﻿import Package from "./schemas/packageSchema.js";
 
+// Điều kiện "gói đang bán" - dùng cho mọi truy vấn phía khách
+// (tương thích dữ liệu cũ chưa có lifecycle_status)
+export const onSaleFilter = () => ({
+  $or: [
+    { lifecycle_status: "đang bán" },
+    { lifecycle_status: { $exists: false }, is_active: true },
+  ],
+});
+
 export const createPackage = async (packageData, callback) => {
   try {
     const {
@@ -21,6 +30,7 @@ export const createPackage = async (packageData, callback) => {
       isFullMonth,
       combo,
       disciplines,
+      lifecycle_status,
     } = packageData;
     const pkg = new Package({
       name,
@@ -28,6 +38,7 @@ export const createPackage = async (packageData, callback) => {
       description,
       duration_days,
       is_active: is_active !== undefined ? is_active : true,
+      lifecycle_status: lifecycle_status || "nháp",
       service_id,
       unitPrice,
       disciplineId,
@@ -82,9 +93,12 @@ export const getAllPackages = async (
   }
 };
 
-export const getPackagesByDiscipline = async (disciplineId, callback) => {
+export const getPackagesByDiscipline = async (disciplineId, staffView = false, callback) => {
   try {
-    const packages = await Package.find({ disciplineId })
+    const filter = { disciplineId };
+    // Khách chỉ thấy gói đang bán; staff (trang quản lý) thấy tất cả
+    if (!staffView) Object.assign(filter, onSaleFilter());
+    const packages = await Package.find(filter)
       .populate("service_id", "name")
       .populate("disciplineId", "name")
       .populate("disciplines", "name");
@@ -129,6 +143,10 @@ export const updatePackageById = async (id, packageData, callback) => {
       isFullMonth,
       combo,
       disciplines,
+      // Vòng đời gói - bắt buộc đưa vào whitelist, nếu không trạng thái sẽ không bao giờ lưu xuống DB
+      lifecycle_status,
+      status_changed_at,
+      status_changed_by,
     } = packageData;
     const result = await Package.findByIdAndUpdate(
       id,
@@ -152,6 +170,9 @@ export const updatePackageById = async (id, packageData, callback) => {
         updatedAt,
         ptSessionsPerMonth: ptSessionsPerMonth ?? 0,
         isFullMonth: !!isFullMonth,
+        lifecycle_status,
+        status_changed_at,
+        status_changed_by,
       },
       { new: true },
     );
@@ -169,7 +190,7 @@ export const getRelatedPackages = async (
   callback,
 ) => {
   try {
-    const filter = { _id: { $ne: packageId }, is_active: true };
+    const filter = { _id: { $ne: packageId }, ...onSaleFilter() };
     if (disciplineId) filter.disciplineId = disciplineId;
     if (locationId) filter.locationId = locationId;
     const packages = await Package.find(filter)
@@ -185,9 +206,8 @@ export const getRelatedPackages = async (
 
 export const deletePackageById = async (id, callback) => {
   try {
-    const { default: UserPackage } =
-      await import("./schemas/userPackageSchema.js");
-    await UserPackage.deleteMany({ package_id: id });
+    // KHÔNG xóa dữ liệu đăng ký của hội viên (lịch sử hợp đồng phải được giữ lại).
+    // Việc chặn xóa gói đang có hội viên nằm ở tầng Controller.
     await Package.findByIdAndDelete(id);
     callback(null, { affectedRows: 1 });
   } catch (err) {

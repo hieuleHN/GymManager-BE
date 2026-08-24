@@ -18,6 +18,21 @@ const packageSchema = new mongoose.Schema({
     type: Boolean,
     default: true
   },
+  // Vòng đời gói: nháp -> đang bán -> tạm ngưng -> ngừng bán
+  lifecycle_status: {
+    type: String,
+    enum: ['nháp', 'đang bán', 'tạm ngưng', 'ngừng bán'],
+    default: 'nháp'
+  },
+  status_changed_at: {
+    type: Date,
+    default: null
+  },
+  status_changed_by: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Staff',
+    default: null
+  },
   service_id: {
     type: Number,
     default: null
@@ -77,6 +92,14 @@ const packageSchema = new mongoose.Schema({
     type: Date,
     default: Date.now
   }
+});
+
+// Đồng bộ is_active với vòng đời: chỉ "đang bán" là hiện lên trang khách
+packageSchema.pre('save', function (next) {
+  if (this.isModified('lifecycle_status')) {
+    this.is_active = this.lifecycle_status === 'đang bán';
+  }
+  next();
 });
 
 export default mongoose.model('Package', packageSchema);
