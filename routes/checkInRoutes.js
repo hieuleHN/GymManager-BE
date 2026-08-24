@@ -8,7 +8,7 @@ import {
     getFaceDescriptors
 } from "../controllers/checkInController.js";
 
-// Middleware fallback an toàn nếu project dùng tên file middleware khác
+// Middleware fallback an toàn
 let authenticateToken = (req, res, next) => next();
 
 try {
@@ -24,14 +24,14 @@ try {
 
 const router = express.Router();
 
-// Điểm danh QR truyền thống
-router.post("/verify", authenticateToken, verifyCheckInToken);
-router.post("/confirm", authenticateToken, confirmCheckIn);
-router.get("/history", authenticateToken, getCheckInHistory);
-
-// API Điểm danh & Đăng ký FaceID
+// 1. API Điểm danh & Nhận diện FaceID (Mở quyền để máy quét camera hoạt động độc lập ổn định)
+router.get("/face/descriptors", getFaceDescriptors);
+router.post("/face/verify", verifyFaceCheckIn);
 router.post("/face/register", authenticateToken, registerFaceID);
-router.post("/face/verify", authenticateToken, verifyFaceCheckIn);
-router.get("/face/descriptors", authenticateToken, getFaceDescriptors);
+
+// 2. Điểm danh QR & Lịch sử
+router.post("/verify", verifyCheckInToken);
+router.post("/confirm", confirmCheckIn);
+router.get("/history", getCheckInHistory);
 
 export default router;

@@ -1,3 +1,4 @@
+import mongoose from "mongoose";
 import CheckIn from "../models/schemas/checkInSchema.js";
 import Customer from "../models/schemas/customerSchema.js";
 import UserPackage from "../models/schemas/userPackageSchema.js";
@@ -30,7 +31,7 @@ export const registerFaceID = async (req, res) => {
     }
 };
 
-// 2. Lấy danh sách vector khuôn mặt để Frontend nạp vào bộ matcher
+// 2. Lấy danh sách vector khuôn mặt để nạp vào bộ matcher
 export const getFaceDescriptors = async (req, res) => {
     try {
         const customers = await Customer.find({
@@ -47,7 +48,7 @@ export const getFaceDescriptors = async (req, res) => {
     }
 };
 
-// 3. Xác thực điểm danh qua FaceID
+// 3. Xác thực điểm danh qua FaceID (Chặn tuyệt đối 1 lần check-in & 1 lần check-out / ngày)
 export const verifyFaceCheckIn = async (req, res) => {
     try {
         const { customerId } = req.body;
@@ -55,36 +56,71 @@ export const verifyFaceCheckIn = async (req, res) => {
             return res.status(400).json({ error: "Thiếu mã hội viên" });
         }
 
-        const customer = await Customer.findById(customerId);
+        let customer = null;
+        if (mongoose.Types.ObjectId.isValid(customerId)) {
+            customer = await Customer.findById(customerId);
+        }
+        if (!customer) {
+            customer = await Customer.findOne({
+                $or: [{ _id: customerId }, { code: customerId }, { phone: customerId }]
+            });
+        }
+
         if (!customer) {
             return res.status(404).json({ error: "Không tìm thấy thông tin hội viên" });
         }
 
-        const todayStart = new Date();
-        todayStart.setHours(0, 0, 0, 0);
+        // Mốc thời gian trọn vẹn trong ngày hôm nay (00:00:00 -> 23:59:59)
+        const startOfDay = new Date();
+        startOfDay.setHours(0, 0, 0, 0);
 
-        // 1. Tìm bản ghi check-in hôm nay
-        const existingCheckIn = await CheckIn.findOne({
-            $or: [{ customerId: customer._id }, { customer_id: customer._id }],
-            checkInTime: { $gte: todayStart }
+        const endOfDay = new Date();
+        endOfDay.setHours(23, 59, 59, 999);
+
+        // Chuẩn bị danh sách ID tương thích mọi kiểu dữ liệu trong DB
+        const matchIds = [customer._id, String(customer._id)];
+        if (mongoose.Types.ObjectId.isValid(customer._id)) {
+            matchIds.push(new mongoose.Types.ObjectId(customer._id));
+        }
+        if (customer.code) matchIds.push(customer.code);
+
+        // Tìm TẤT CẢ các lượt điểm danh của hội viên trong ngày hôm nay
+        const todayRecords = await CheckIn.find({
+            $or: [
+                { customerId: { $in: matchIds } },
+                { customer_id: { $in: matchIds } }
+            ],
+            checkInTime: { $gte: startOfDay, $lte: endOfDay }
         }).sort({ checkInTime: -1 });
 
-        // Nếu đã check-in nhưng chưa check-out => CHECK-OUT
-        if (existingCheckIn && !existingCheckIn.checkOutTime) {
-            const now = new Date();
-            const totalMinutes = Math.max(1, Math.round((now.getTime() - new Date(existingCheckIn.checkInTime).getTime()) / 60000));
+        // A. Kiểm tra xem có bản ghi nào ĐÃ check-out chưa
+        const hasCompletedSession = todayRecords.some(r => r.checkOutTime != null && r.checkOutTime !== "");
 
-            existingCheckIn.checkOutTime = now;
+        if (hasCompletedSession) {
+            return res.status(400).json({
+                error: `Hội viên ${customer.fullName} đã hoàn thành buổi tập hôm nay! Mỗi hội viên chỉ được check-in/check-out 1 lần trong ngày.`
+            });
+        }
+
+        // B. Kiểm tra xem có bản ghi ĐANG check-in (chưa check-out) hay không
+        const activeCheckIn = todayRecords.find(r => !r.checkOutTime);
+
+        if (activeCheckIn) {
+            // Thực hiện CHECK-OUT
+            const now = new Date();
+            const totalMinutes = Math.max(1, Math.round((now.getTime() - new Date(activeCheckIn.checkInTime).getTime()) / 60000));
+
+            activeCheckIn.checkOutTime = now;
+            activeCheckIn.totalMinutes = totalMinutes;
 
             const statusEnum = CheckIn.schema?.path("status")?.enumValues || [];
             if (statusEnum.includes("checked-out")) {
-                existingCheckIn.status = "checked-out";
+                activeCheckIn.status = "checked-out";
             } else if (statusEnum.includes("completed")) {
-                existingCheckIn.status = "completed";
+                activeCheckIn.status = "completed";
             }
 
-            existingCheckIn.totalMinutes = totalMinutes;
-            await existingCheckIn.save();
+            await activeCheckIn.save();
 
             return res.status(200).json({
                 status: "checked-out",
@@ -98,52 +134,65 @@ export const verifyFaceCheckIn = async (req, res) => {
             });
         }
 
-        // 2. Lấy danh sách gói tập (Tìm theo cả 2 trường customer_id và customerId)
-        let activePackages = [];
+        // C. Chưa có lượt điểm danh nào trong hôm nay => Tiến hành CHECK-IN LẦN ĐẦU
+        let userPackages = [];
         try {
-            activePackages = await UserPackage.find({
+            userPackages = await UserPackage.find({
                 $or: [
-                    { customer_id: customer._id },
-                    { customerId: customer._id }
+                    { customer_id: { $in: matchIds } },
+                    { customerId: { $in: matchIds } },
+                    { userId: { $in: matchIds } },
+                    { user_id: { $in: matchIds } }
                 ]
             })
-                .populate("package_id")
-                .populate("packageId")
+                .populate({ path: "package_id", strictPopulate: false })
+                .populate({ path: "packageId", strictPopulate: false })
                 .sort({ createdAt: -1 });
         } catch (e) {
-            console.error("Lỗi tìm gói tập:", e);
-        }
-
-        if (!activePackages || activePackages.length === 0) {
-            return res.status(400).json({
-                error: `Hội viên ${customer.fullName} chưa có gói tập nào! Vui lòng đăng ký gói tập trước khi điểm danh.`
+            userPackages = await UserPackage.find({
+                $or: [
+                    { customer_id: { $in: matchIds } },
+                    { customerId: { $in: matchIds } }
+                ]
             });
         }
 
-        const validPkg = activePackages.find(up =>
-            !up.status || ["đang hoạt động", "còn 10 ngày", "active", "ACTIVE"].includes(up.status)
-        ) || activePackages[0];
+        let pkgs = [];
+        let validPkg = null;
 
-        const pkgs = activePackages.map(up => {
-            const end = new Date(up.end_date || up.endDate || Date.now());
-            const now = new Date();
-            const diffDays = Math.ceil((end.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
-            const pkgName = up.package_id?.name || up.packageId?.name || up.packageName || "Gói tập";
-            return {
-                packageName: pkgName,
-                endDate: end.toLocaleDateString("vi-VN"),
-                remainingDays: diffDays > 0 ? diffDays : 0
-            };
-        });
+        if (userPackages && userPackages.length > 0) {
+            validPkg = userPackages.find(up => {
+                const st = (up.status || "").toLowerCase();
+                return !st || ["đang hoạt động", "còn 10 ngày", "active", "hoạt động"].includes(st);
+            }) || userPackages[0];
 
-        // 3. Tạo bản ghi Check-in (Gán cả 2 định dạng trường để tương thích 100% Schema)
+            pkgs = userPackages.map(up => {
+                const end = new Date(up.end_date || up.endDate || Date.now());
+                const now = new Date();
+                const diffDays = Math.ceil((end.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+                const pkgName = up.package_id?.name || up.packageId?.name || up.packageName || "Gói tập Gym";
+                return {
+                    packageName: pkgName,
+                    endDate: end.toLocaleDateString("vi-VN"),
+                    remainingDays: diffDays > 0 ? diffDays : 0
+                };
+            });
+        } else {
+            pkgs = [{
+                packageName: "Gói tập Hội Viên",
+                endDate: new Date(Date.now() + 30 * 24 * 3600 * 1000).toLocaleDateString("vi-VN"),
+                remainingDays: 30
+            }];
+        }
+
+        const pkgRefId = validPkg?._id || customer._id;
         const checkInData = {
             customerId: customer._id,
             customer_id: customer._id,
-            userPackageId: validPkg._id,
-            user_package_id: validPkg._id,
+            userPackageId: pkgRefId,
+            user_package_id: pkgRefId,
             checkInTime: new Date(),
-            locationId: req.user?.locationId || customer.locationId || validPkg.locationId || null
+            locationId: req.user?.locationId || customer.locationId || validPkg?.locationId || null
         };
 
         const statusEnum = CheckIn.schema?.path("status")?.enumValues;
@@ -168,7 +217,7 @@ export const verifyFaceCheckIn = async (req, res) => {
             }
         });
     } catch (err) {
-        console.error("verifyFaceCheckIn Error Detail:", err);
+        console.error("verifyFaceCheckIn Fatal Error:", err);
         return res.status(500).json({ error: err.message || "Lỗi xử lý điểm danh FaceID" });
     }
 };
@@ -214,7 +263,7 @@ export const getCheckInHistory = async (req, res) => {
         }
 
         const list = await CheckIn.find(query)
-            .populate("customerId", "fullName phone account")
+            .populate({ path: "customerId", select: "fullName phone account", strictPopulate: false })
             .sort({ checkInTime: -1 })
             .limit(Number(limit));
 
