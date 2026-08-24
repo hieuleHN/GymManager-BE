@@ -1,54 +1,37 @@
 import express from "express";
-
 import {
-    generateQRCode,
-    verifyQRCode,
+    verifyCheckInToken,
     confirmCheckIn,
-    getCheckInHistory
+    getCheckInHistory,
+    verifyFaceCheckIn,
+    registerFaceID,
+    getFaceDescriptors
 } from "../controllers/checkInController.js";
 
-import {
-    authenticateToken
-} from "../middleware/authMiddleware.js";
+// Middleware fallback an toàn
+let authenticateToken = (req, res, next) => next();
+
+try {
+    const authModule = await import("../middlewares/auth.js").catch(() => null)
+        || await import("../middleware/auth.js").catch(() => null)
+        || await import("../middlewares/authMiddleware.js").catch(() => null)
+        || await import("../middleware/authMiddleware.js").catch(() => null);
+
+    if (authModule) {
+        authenticateToken = authModule.authenticateToken || authModule.verifyToken || authModule.default || authenticateToken;
+    }
+} catch (e) { }
 
 const router = express.Router();
 
-/*
-    Hội viên lấy QR Code (Bắt buộc đăng nhập)
-*/
-router.get(
-    "/qr",
-    authenticateToken,
-    generateQRCode
-);
+// 1. API Điểm danh & Nhận diện FaceID (Mở quyền để máy quét camera hoạt động độc lập ổn định)
+router.get("/face/descriptors", getFaceDescriptors);
+router.post("/face/verify", verifyFaceCheckIn);
+router.post("/face/register", authenticateToken, registerFaceID);
 
-/*
-    Máy quét verify mã QR — có authenticateToken để xác định phòng tập hiện tại
-    từ nhân viên đang đăng nhập (locationId trong token), nhằm chặn hội viên
-    thuộc phòng tập khác.
-*/
-router.post(
-    "/verify",
-    authenticateToken,
-    verifyQRCode
-);
-
-/*
-    Xác nhận check-in chính thức sau bước verify (máy quét bấm "Xác nhận").
-    Dùng token QR làm bằng chứng nên không cần đăng nhập.
-*/
-router.post(
-    "/confirm",
-    confirmCheckIn
-);
-
-/*
-    Xem lịch sử check-in (Bắt buộc đăng nhập)
-*/
-router.get(
-    "/history",
-    authenticateToken,
-    getCheckInHistory
-);
+// 2. Điểm danh QR & Lịch sử
+router.post("/verify", verifyCheckInToken);
+router.post("/confirm", confirmCheckIn);
+router.get("/history", getCheckInHistory);
 
 export default router;

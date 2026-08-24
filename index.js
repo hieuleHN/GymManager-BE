@@ -9,7 +9,9 @@ import packageRoutes from "./routes/packageRoutes.js";
 import { initPackageStatusScheduler } from "./services/cronService.js";
 import messageMonitorRoutes from "./routes/messageMonitorRoutes.js";
 import sensitiveKeywordRoutes from "./routes/sensitiveKeywordRoutes.js";
+import { startEquipmentCron } from "./cronjobs/equipmentCron.js";
 
+import userPackageRoutes from "./routes/userPackageRoutes.js";
 import productRoutes from "./routes/productRoutes.js";
 import equipmentRoutes from "./routes/equipmentRoutes.js";
 import disciplineRoutes from "./routes/disciplineRoutes.js";
@@ -23,7 +25,6 @@ import permissionRoutes from "./routes/permissionRoutes.js";
 import policyRoutes from "./routes/policyRoutes.js";
 import expenseRoutes from "./routes/expenseRoutes.js";
 import lockerRoutes from "./routes/lockerRoutes.js";
-import userPackageRoutes from "./routes/userPackageRoutes.js";
 import bookingRoutes from "./routes/bookingRoutes.js";
 import notificationRoutes from "./routes/notificationRoutes.js";
 import checkInRoutes from "./routes/checkInRoutes.js";
@@ -127,6 +128,7 @@ app.use("/api/service-requests", serviceRequestRoutes);
 app.use("/api/audit-logs", auditLogRoutes);
 
 initPackageStatusScheduler();
+startEquipmentCron();
 
 // Chạy sau khi MongoDB đã kết nối thành công
 setTimeout(async () => {
@@ -136,7 +138,7 @@ setTimeout(async () => {
     await autoCancelPendingBookings();
     await autoCancelPendingPackages();
   } catch (err) {
-    console.error('[Startup] Lỗi:', err.message);
+    console.error("[Startup] Lỗi:", err.message);
   }
 }, 5000);
 
