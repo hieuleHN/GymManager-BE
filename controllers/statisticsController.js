@@ -7,6 +7,8 @@ import Equipment from "../models/schemas/equipmentSchema.js";
 import CheckIn from "../models/schemas/checkInSchema.js";
 import Booking from "../models/schemas/bookingSchema.js";
 import Customer from "../models/schemas/customerSchema.js";
+import Staff from "../models/schemas/staffSchema.js";
+import Location from "../models/schemas/locationSchema.js";
 import mongoose from "mongoose";
 
 const toObjectId = (id) => {
@@ -765,6 +767,303 @@ export const getFinanceStatistics = async (req, res) => {
         duration: up.duration_months || up.package_id?.duration_months || 1,
         paymentDate: up.payment_date || up.createdAt,
       })),
+
+      // ============ 1. PHÂN TÍCH HỘI VIÊN ============
+      ...await (async () => {
+        const allPkgs = await UserPackage.find({
+          ...(locationId ? { locationId } : {}),
+          payment_status: 'đã thanh toán',
+        }).populate('package_id', 'name title price');
+        const allCustomers = await Customer.find(locationId ? { locationId } : {});
+
+        // Hội viên active (có gói còn hiệu lực)
+        const activeCustomerIds = new Set();
+        allPkgs.forEach(up => {
+          if (new Date(up.end_date) >= now) activeCustomerIds.add(up.customer_id?.toString());
+        });
+        const activeMembers = activeCustomerIds.size;
+
+        // Tổng hội viên đã đăng ký
+        const totalMembers = allCustomers.length;
+
+        // Gói hết hạn trong kỳ này
+        const expiredThisPeriod = allPkgs.filter(up => {
+          const end = new Date(up.end_date);
+          return end >= start && end <= now;
+        });
+        const expiredCount = expiredThisPeriod.length;
+
+        // Trong số gói hết hạn, bao nhiêu gói có gói mới bắt đầu sau đó (giữ chân)
+        const renewedCount = expiredThisPeriod.filter(up => {
+          const customerId = up.customer_id?.toString();
+          return allPkgs.some(other =>
+            other.customer_id?.toString() === customerId &&
+            other._id.toString() !== up._id.toString() &&
+            new Date(other.start_date) > new Date(up.end_date) &&
+            other.payment_status === 'đã thanh toán'
+          );
+        }).length;
+
+        const retentionRate = expiredCount > 0 ? Math.round((renewedCount / expiredCount) * 100) : 100;
+        const churnRate = 100 - retentionRate;
+
+        // ARPU = DT thực thu / Số hội viên active
+        const arpu = activeMembers > 0 ? Math.round(realCashInThis / activeMembers) : 0;
+
+        // TB thời gian giữ chân (tháng)
+        const lifetimes = allPkgs
+          .filter(up => up.duration_months)
+          .map(up => up.duration_months);
+        const avgLifetime = lifetimes.length > 0
+          ? +(lifetimes.reduce((a, b) => a + b, 0) / lifetimes.length).toFixed(1)
+          : 0;
+
+        // Hội viên mới trong kỳ
+        const newMembers = allCustomers.filter(c => {
+          const reg = new Date(c.registerDate || c.createdAt);
+          return reg >= start && reg <= now;
+        }).length;
+
+        // Check-in trong kỳ
+        const checkinsThisPeriod = await CheckIn.countDocuments({
+          ...(locationId ? { locationId } : {}),
+          checkInTime: { $gte: start, $lte: now },
+        });
+
+        // === Danh sách chi tiết cho drill-down ===
+        const customerMap = {};
+        allCustomers.forEach(c => { customerMap[c._id.toString()] = c; });
+
+        // 1. Hội viên active
+        const activeList = [];
+        const activeSeen = new Set();
+        allPkgs.forEach(up => {
+          if (new Date(up.end_date) >= now) {
+            const cid = up.customer_id?.toString();
+            if (cid && !activeSeen.has(cid)) {
+              activeSeen.add(cid);
+              const cust = customerMap[cid];
+              activeList.push({
+                name: cust?.fullName || 'N/A',
+                phone: cust?.phone || '',
+                package: up.package_id?.name || up.package_id?.title || 'N/A',
+                startDate: up.start_date,
+                endDate: up.end_date,
+                totalPrice: up.total_price,
+              });
+            }
+          }
+        });
+
+        // 2. Hội viên rời bỏ (gói hết hạn không gia hạn)
+        const churnedList = expiredThisPeriod.filter(up => {
+          const cid = up.customer_id?.toString();
+          return !allPkgs.some(other =>
+            other.customer_id?.toString() === cid &&
+            other._id.toString() !== up._id.toString() &&
+            new Date(other.start_date) > new Date(up.end_date) &&
+            other.payment_status === 'đã thanh toán'
+          );
+        }).map(up => {
+          const cust = customerMap[up.customer_id?.toString()];
+          return {
+            name: cust?.fullName || 'N/A',
+            phone: cust?.phone || '',
+            package: up.package_id?.name || up.package_id?.title || 'N/A',
+            endDate: up.end_date,
+            totalPrice: up.total_price,
+          };
+        });
+
+        // 3. Hội viên giữ chân (gói hết hạn nhưng có gia hạn)
+        const retainedList = expiredThisPeriod.filter(up => {
+          const cid = up.customer_id?.toString();
+          return allPkgs.some(other =>
+            other.customer_id?.toString() === cid &&
+            other._id.toString() !== up._id.toString() &&
+            new Date(other.start_date) > new Date(up.end_date) &&
+            other.payment_status === 'đã thanh toán'
+          );
+        }).map(up => {
+          const cust = customerMap[up.customer_id?.toString()];
+          return {
+            name: cust?.fullName || 'N/A',
+            phone: cust?.phone || '',
+            package: up.package_id?.name || up.package_id?.title || 'N/A',
+            endDate: up.end_date,
+            totalPrice: up.total_price,
+          };
+        });
+
+        // 4. Hội viên mới
+        const newList = allCustomers.filter(c => {
+          const reg = new Date(c.registerDate || c.createdAt);
+          return reg >= start && reg <= now;
+        }).map(c => ({
+          name: c.fullName || 'N/A',
+          phone: c.phone || '',
+          registerDate: c.registerDate || c.createdAt,
+          gender: c.gender || '',
+        }));
+
+        return {
+          memberAnalytics: {
+            activeMembers,
+            totalMembers,
+            newMembers,
+            retentionRate,
+            churnRate,
+            arpu,
+            avgLifetime,
+            expiredPackages: expiredCount,
+            renewedPackages: renewedCount,
+            checkinsThisPeriod,
+            activeList,
+            churnedList,
+            retainedList,
+            newList,
+          },
+        };
+      })(),
+
+      // ============ 2. HIỆU SUẤT HLV ============
+      ...await (async () => {
+        const bookings = await Booking.find({
+          ...(locationId ? { locationId } : {}),
+          status: { $in: ['confirmed'] },
+          trainerId: { $ne: null },
+        }).populate('trainerId', 'fullName rating totalReviews pricePerSession locationId commissionPT')
+          .populate('customerId', 'fullName');
+
+        const trainerMap = {};
+        bookings.forEach(b => {
+          const tid = b.trainerId?._id?.toString() || b.trainerId?.toString() || 'unknown';
+          if (!tid || tid === 'unknown') return;
+          const trainerName = b.trainerId?.fullName || `HLV #${tid.slice(-4)}`;
+          const price = b.price || 500000;
+          if (!trainerMap[tid]) {
+            trainerMap[tid] = {
+              name: trainerName,
+              rating: b.trainerId?.rating || 0,
+              totalReviews: b.trainerId?.totalReviews || 0,
+              pricePerSession: b.trainerId?.pricePerSession || price,
+              commissionPT: b.trainerId?.commissionPT || 0,
+              revenue: 0,
+              sessions: 0,
+              customers: new Set(),
+            };
+          }
+          trainerMap[tid].revenue += price;
+          trainerMap[tid].sessions += 1;
+          trainerMap[tid].customers.add(b.customerId?._id?.toString() || b.customerId?.toString());
+        });
+
+        const trainerPerformance = Object.values(trainerMap)
+          .map(t => ({
+            name: t.name,
+            revenue: t.revenue,
+            sessions: t.sessions,
+            uniqueCustomers: t.customers.size,
+            rating: t.rating,
+            totalReviews: t.totalReviews,
+            estimatedCommission: Math.round(t.revenue * (t.commissionPT / 100)),
+          }))
+          .sort((a, b) => b.revenue - a.revenue);
+
+        return { trainerPerformance };
+      })(),
+
+      // ============ 3. SO SÁNH CLB ============
+      ...await (async () => {
+        const locations = await Location.find({});
+        if (locations.length <= 1) return { clubComparison: [] };
+
+        const clubComparison = await Promise.all(locations.map(async (loc) => {
+          const lid = loc._id.toString();
+          const locFilter = { locationId: loc._id };
+
+          // DT thực thu theo CLB
+          const clubPaidSum = await UserPackage.aggregate([
+            { $match: { ...locFilter, payment_status: 'đã thanh toán', payment_date: { $gte: start, $lte: now } } },
+            { $group: { _id: null, total: { $sum: '$total_price' } } },
+          ]);
+          const clubBookingSum = await Booking.aggregate([
+            { $match: { ...locFilter, status: 'confirmed', trainerId: { $ne: null }, createdAt: { $gte: start, $lte: now } } },
+            { $group: { _id: null, total: { $sum: { $ifNull: ['$price', 500000] } } } },
+          ]);
+          const clubProducts = await Product.find({ location_id: loc._id });
+          const clubProductSum = clubProducts.reduce((sum, p) => {
+            const sold = (p.monthlySales || []).filter(s => {
+              const d = new Date(s.year, s.month - 1, 1);
+              return d >= start && d <= now;
+            }).reduce((m, s) => m + (s.revenue || 0), 0);
+            return sum + sold;
+          }, 0);
+          const revenue = (clubPaidSum[0]?.total || 0) + (clubBookingSum[0]?.total || 0) + clubProductSum;
+
+          // Chi phí cố định theo CLB
+          const clubExpense = await Expense.aggregate([
+            { $match: { ...locFilter, date: { $gte: start, $lte: now } } },
+            { $group: { _id: null, total: { $sum: '$amount' } } },
+          ]);
+          const fixedCost = clubExpense[0]?.total || 0;
+
+          // COGS theo CLB = costPrice × SL bán
+          const clubCogs = clubProducts.reduce((sum, p) => {
+            const soldInPeriod = (p.monthlySales || []).filter(s => {
+              const d = new Date(s.year, s.month - 1, 1);
+              return d >= start && d <= now;
+            }).reduce((m, s) => m + (s.quantity || 0), 0);
+            return sum + (p.costPrice || 0) * soldInPeriod;
+          }, 0);
+
+          // Khấu hao theo CLB
+          const clubEquipments = await Equipment.find({ location_id: loc._id });
+          const clubDepreciation = clubEquipments.reduce((sum, eq) => {
+            const total = eq.total || 0;
+            if (total <= 0) return sum;
+            const monthlyDepr = total / 60;
+            const eqStart = new Date(eq.createdAt);
+            if (eqStart > now) return sum;
+            const monthsFromStart = Math.min(60, Math.max(1, (now.getFullYear() - eqStart.getFullYear()) * 12 + (now.getMonth() - eqStart.getMonth()) + 1));
+            const totalDep = Math.min(monthlyDepr * monthsFromStart, total);
+            // Phân bổ theo kỳ
+            const overlapStart = eqStart > start ? eqStart : start;
+            const overlapEnd = now;
+            const monthsInPeriod = Math.max(1, (overlapEnd.getFullYear() - overlapStart.getFullYear()) * 12 + (overlapEnd.getMonth() - overlapStart.getMonth()) + 1);
+            return sum + Math.round(monthlyDepr * Math.min(monthsInPeriod, 1));
+          }, 0);
+
+          const expense = fixedCost + Math.round(clubCogs) + clubDepreciation;
+          const profit = revenue - expense;
+          const margin = revenue > 0 ? Math.round((profit / revenue) * 100) : 0;
+
+          // Số hội viên active
+          const memberCount = await UserPackage.countDocuments({
+            ...locFilter,
+            payment_status: 'đã thanh toán',
+            end_date: { $gte: now },
+          });
+
+          // Số HLV active
+          const trainerCount = await Staff.countDocuments({
+            locationId: loc._id,
+            status: 'active',
+          });
+
+          return {
+            name: loc.title || loc.address || 'CLB',
+            revenue,
+            expense,
+            profit,
+            margin,
+            memberCount,
+            trainerCount,
+          };
+        }));
+
+        return { clubComparison };
+      })(),
     });
   } catch (err) {
     return res.status(500).json({ error: err.message });
