@@ -235,14 +235,23 @@ export const getFinanceStatistics = async (req, res) => {
 
     // COGS = costPrice × số lượng đã bán trong kỳ (dựa trên monthlySales)
     let cogsThis = 0;
+    let cogsPrev = 0;
     products.forEach(p => {
-      const soldInPeriod = (p.monthlySales || [])
+      const soldThis = (p.monthlySales || [])
         .filter(s => {
           const saleDate = new Date(s.year, s.month - 1, 1);
           return saleDate >= start && saleDate <= new Date();
         })
         .reduce((mSum, s) => mSum + (s.quantity || 0), 0);
-      cogsThis += (p.costPrice || 0) * soldInPeriod;
+      cogsThis += (p.costPrice || 0) * soldThis;
+
+      const soldPrev = (p.monthlySales || [])
+        .filter(s => {
+          const saleDate = new Date(s.year, s.month - 1, 1);
+          return saleDate >= prevStart && saleDate <= prevEnd;
+        })
+        .reduce((mSum, s) => mSum + (s.quantity || 0), 0);
+      cogsPrev += (p.costPrice || 0) * soldPrev;
     });
 
     // ============ 3c. KHẤU HAO THIẾT BỊ (Nguyên giá / 60 tháng = 5 năm) ============
@@ -272,6 +281,9 @@ export const getFinanceStatistics = async (req, res) => {
 
     // Khấu hao kỳ này
     const equipmentCostThis = equipments.reduce((sum, e) => sum + calcDepreciation(e, start, now), 0);
+
+    // Khấu hao kỳ trước
+    const equipmentCostPrev = equipments.reduce((sum, e) => sum + calcDepreciation(e, prevStart, prevEnd), 0);
 
     // Tổng COGS năm (dùng cho expenseStructure pie chart)
     const yearStartForCogs = new Date(now.getFullYear(), 0, 1);
@@ -351,7 +363,7 @@ export const getFinanceStatistics = async (req, res) => {
 
     // ============ 4. LỢI NHUẬN ============
     const totalExpenseThis = Math.round(expenseThis + cogsThis + equipmentCostThis);
-    const totalExpensePrev = Math.round(expensePrev); // kỳ trước không có import cost đã bán
+    const totalExpensePrev = Math.round(expensePrev + cogsPrev + equipmentCostPrev);
     const profitThis = accrualThis - totalExpenseThis;
     const profitPrev = accrualPrev - totalExpensePrev;
 

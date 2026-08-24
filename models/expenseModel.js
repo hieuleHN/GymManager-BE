@@ -1,9 +1,10 @@
 import Expense from "./schemas/expenseSchema.js";
 
-export const getAll = async (page = 1, limit = 15, locationId, callback) => {
+export const getAll = async (page = 1, limit = 15, filters = {}, callback) => {
   try {
     const filter = {};
-    if (locationId) filter.locationId = locationId;
+    if (filters.locationId) filter.locationId = filters.locationId;
+    if (filters.category) filter.category = filters.category;
     const skip = (page - 1) * limit;
     const [data, total] = await Promise.all([
       Expense.find(filter).sort({ date: -1 }).skip(skip).limit(limit),
@@ -16,6 +17,32 @@ export const getAll = async (page = 1, limit = 15, locationId, callback) => {
       limit,
       totalPages: Math.ceil(total / limit),
     });
+  } catch (err) {
+    callback(err);
+  }
+};
+
+export const getSummary = async (filters = {}, callback) => {
+  try {
+    const filter = {};
+    if (filters.locationId) filter.locationId = filters.locationId;
+    const result = await Expense.aggregate([
+      { $match: filter },
+      {
+        $group: {
+          _id: '$category',
+          total: { $sum: '$amount' },
+          count: { $sum: 1 },
+        },
+      },
+    ]);
+    const totals = { equipment: 0, utilities: 0, tax: 0, other: 0, all: 0, count: 0 };
+    result.forEach(r => {
+      totals[r._id] = r.total;
+      totals.all += r.total;
+      totals.count += r.count;
+    });
+    callback(null, totals);
   } catch (err) {
     callback(err);
   }
