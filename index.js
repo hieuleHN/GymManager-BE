@@ -34,6 +34,7 @@ import walletRoutes from "./routes/walletRoutes.js";
 import staffShiftRoutes from "./routes/staffShiftRoutes.js";
 import dashboardRoutes from "./routes/dashboardRoutes.js";
 import statisticsRoutes from "./routes/statisticsRoutes.js";
+import packageAnalyticsRoutes from "./routes/packageAnalyticsRoutes.js";
 import staffWalletRoutes from "./routes/staffWalletRoutes.js";
 import staffAttendanceRoutes from "./routes/staffAttendanceRoutes.js";
 import authRoutes from "./routes/authRoutes.js";
@@ -102,6 +103,7 @@ app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/articles", articleRoutes);
 
 app.use("/api/statistics", statisticsRoutes);
+app.use("/api/package-analytics", packageAnalyticsRoutes);
 app.use("/api/staff-wallet", staffWalletRoutes);
 app.use("/api/staff-attendance", staffAttendanceRoutes);
 
