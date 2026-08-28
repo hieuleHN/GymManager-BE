@@ -606,9 +606,13 @@ export const handleRequest = async (req, res) => {
 
     let refundAmount = 0;
     if (action === 'accepted' && request.service_type === 'cancel-refund') {
-      refundAmount = Math.floor(Number(req.body.refund_amount));
-      if (!refundAmount || refundAmount <= 0) {
-        return res.status(400).json({ error: 'Vui lòng nhập số tiền hoàn hợp lệ!' });
+      if (request.data?.noRefund) {
+        refundAmount = 0;
+      } else {
+        refundAmount = Math.floor(Number(req.body.refund_amount));
+        if (!refundAmount || refundAmount <= 0) {
+          return res.status(400).json({ error: 'Vui lòng nhập số tiền hoàn hợp lệ!' });
+        }
       }
     }
 

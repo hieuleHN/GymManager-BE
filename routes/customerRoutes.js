@@ -161,11 +161,33 @@ router.get('/:id/detail360', authenticateToken, async (req, res) => {
 
     const now = new Date();
     const enrich = packages.map(p => {
-      const end = new Date(p.end_date);
-      const diff = Math.ceil((end - now) / (1000*60*60*24));
+      let diff;
+      let displayEnd = p.end_date;
+      if (p.status === 'đang tạm ngưng' && p.frozenAt) {
+        if (p.frozenUntil) {
+          // Đã có kỳ hạn: hiển thị hạn đã cộng bù (nếu đã cộng) hoặc sẽ cộng
+          const isExtended = new Date(p.end_date) > new Date(p.frozenUntil);
+          if (isExtended) {
+            diff = Math.ceil((new Date(p.end_date) - new Date(p.frozenUntil)) / (1000*60*60*24));
+            displayEnd = p.end_date;
+          } else {
+            diff = Math.ceil((new Date(p.end_date) - new Date(p.frozenAt)) / (1000*60*60*24));
+            // Hiển thị hạn dự kiến sau khi cộng bù
+            displayEnd = new Date(new Date(p.end_date).getTime() + (new Date(p.frozenUntil) - new Date(p.frozenAt)));
+          }
+        } else {
+          // Khóa vô thời hạn: còn lại = hạn gốc - lúc khóa
+          diff = Math.ceil((new Date(p.end_date) - new Date(p.frozenAt)) / (1000*60*60*24));
+          displayEnd = p.end_date;
+        }
+        diff = Math.max(0, diff);
+      } else {
+        const end = new Date(p.end_date);
+        diff = Math.ceil((end - now) / (1000*60*60*24));
+      }
       return {
         _id: p._id, packageName: p.package_id?.name || 'Gói tập',
-        start_date: p.start_date, end_date: p.end_date,
+        start_date: p.start_date, end_date: displayEnd,
         total_price: p.total_price, payment_status: p.payment_status, status: p.status,
         location: p.locationId?.title || '',
         daysLeft: diff,
@@ -198,12 +220,11 @@ router.post('/:id/packages/:pkgId/freeze', authenticateToken, async (req, res) =
     if (pkg.status === 'đang tạm ngưng') return res.status(400).json({ error: 'Gói đang đóng băng rồi' });
     const now = new Date();
     const frozenUntil = new Date(now); frozenUntil.setMonth(frozenUntil.getMonth() + months);
-    const newEnd = new Date(pkg.end_date); newEnd.setMonth(newEnd.getMonth() + months);
-    pkg.frozenAt = now; pkg.frozenUntil = frozenUntil; pkg.status = 'đang tạm ngưng'; pkg.end_date = newEnd;
+    pkg.frozenAt = now; pkg.frozenUntil = frozenUntil; pkg.status = 'đang tạm ngưng';
     await pkg.save();
     const cust = await Customer.findById(id).select('fullName phone locationId');
-    await ServiceRequest.create({ customer_id: id, customer_name: cust?.fullName||'', customer_phone: cust?.phone||'', service_type: 'freeze', description: `Admin đóng băng 1 gói ${months} tháng - hạn mới ${newEnd.toLocaleDateString('vi-VN')}`, data: { packageId: pkgId, duration: months, newEnd }, location_id: cust?.locationId||null, status: 'accepted', processed_by: req.user.id, processed_at: new Date() });
-    res.json({ message: `Đã đóng băng ${months} tháng, hạn mới ${newEnd.toLocaleDateString('vi-VN')}`, data: pkg });
+    await ServiceRequest.create({ customer_id: id, customer_name: cust?.fullName||'', customer_phone: cust?.phone||'', service_type: 'freeze', description: `Admin đóng băng 1 gói ${months} tháng (tạm ngưng từ ${now.toLocaleDateString('vi-VN')} đến ${frozenUntil.toLocaleDateString('vi-VN')})`, data: { packageId: pkgId, duration: months }, location_id: cust?.locationId||null, status: 'accepted', processed_by: req.user.id, processed_at: new Date() });
+    res.json({ message: `Đã đóng băng ${months} tháng (thời gian tạm ngưng, hạn sẽ cộng bù khi kích hoạt)`, data: pkg });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -214,11 +235,20 @@ router.post('/:id/packages/:pkgId/unfreeze', authenticateToken, async (req, res)
     const pkg = await UserPackage.findOne({ _id: pkgId, customer_id: id });
     if (!pkg) return res.status(404).json({ error: 'Không tìm thấy gói' });
     if (pkg.status !== 'đang tạm ngưng') return res.status(400).json({ error: 'Gói không ở trạng thái đóng băng' });
+    // Cộng bù thời gian đã đóng băng (thực tế đã trôi qua) vào hạn
+    if (pkg.frozenAt) {
+      const now = new Date();
+      const elapsed = now - new Date(pkg.frozenAt);
+      const requested = pkg.frozenUntil ? new Date(pkg.frozenUntil) - new Date(pkg.frozenAt) : elapsed;
+      const diffMs = Math.min(elapsed, requested);
+      pkg.end_date = new Date(new Date(pkg.end_date).getTime() + diffMs);
+    }
+    const newEnd = pkg.end_date;
     pkg.status = 'đang hoạt động'; pkg.frozenAt = null; pkg.frozenUntil = null;
     await pkg.save();
     const cust = await Customer.findById(id).select('fullName phone locationId');
-    await ServiceRequest.create({ customer_id: id, customer_name: cust?.fullName||'', customer_phone: cust?.phone||'', service_type: 'activate', description: `Admin kích hoạt lại 1 gói`, data: { packageId: pkgId }, location_id: cust?.locationId||null, status: 'accepted', processed_by: req.user.id, processed_at: new Date() });
-    res.json({ message: 'Đã kích hoạt lại gói', data: pkg });
+    await ServiceRequest.create({ customer_id: id, customer_name: cust?.fullName||'', customer_phone: cust?.phone||'', service_type: 'activate', description: `Admin kích hoạt lại 1 gói - hạn mới ${new Date(newEnd).toLocaleDateString('vi-VN')}`, data: { packageId: pkgId }, location_id: cust?.locationId||null, status: 'accepted', processed_by: req.user.id, processed_at: new Date() });
+    res.json({ message: `Đã kích hoạt lại gói, hạn mới ${new Date(newEnd).toLocaleDateString('vi-VN')}`, data: pkg });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -248,7 +278,15 @@ router.post('/:id/unfreeze-all', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
     const pkgs = await UserPackage.find({ customer_id: id, status: 'đang tạm ngưng' });
-    for (const pkg of pkgs) { pkg.status = 'đang hoạt động'; pkg.frozenAt = null; pkg.frozenUntil = null; await pkg.save(); }
+    for (const pkg of pkgs) {
+      if (pkg.frozenAt) {
+        const elapsed = new Date() - new Date(pkg.frozenAt);
+        const requested = pkg.frozenUntil ? new Date(pkg.frozenUntil) - new Date(pkg.frozenAt) : elapsed;
+        const diffMs = Math.min(elapsed, requested);
+        pkg.end_date = new Date(new Date(pkg.end_date).getTime() + diffMs);
+      }
+      pkg.status = 'đang hoạt động'; pkg.frozenAt = null; pkg.frozenUntil = null; await pkg.save();
+    }
     const cust = await Customer.findById(id).select('fullName phone locationId');
     await ServiceRequest.create({ customer_id: id, customer_name: cust?.fullName||'', customer_phone: cust?.phone||'', service_type: 'activate', description: `Admin kích hoạt toàn bộ ${pkgs.length} gói`, data: { count: pkgs.length }, location_id: cust?.locationId||null, status: 'accepted', processed_by: req.user.id, processed_at: new Date() });
     res.json({ message: `Đã kích hoạt ${pkgs.length} gói` });
@@ -369,7 +407,15 @@ router.post('/bulk/unfreeze', authenticateToken, async (req, res) => {
     let count=0;
     for (const id of ids) {
       const pkgs = await UserPackage.find({ customer_id: id, status: 'đang tạm ngưng' });
-      for (const pkg of pkgs) { pkg.status='đang hoạt động'; pkg.frozenAt=null; pkg.frozenUntil=null; await pkg.save(); }
+      for (const pkg of pkgs) {
+        if (pkg.frozenAt) {
+          const elapsed = new Date() - new Date(pkg.frozenAt);
+          const requested = pkg.frozenUntil ? new Date(pkg.frozenUntil) - new Date(pkg.frozenAt) : elapsed;
+          const diffMs = Math.min(elapsed, requested);
+          pkg.end_date = new Date(new Date(pkg.end_date).getTime() + diffMs);
+        }
+        pkg.status='đang hoạt động'; pkg.frozenAt=null; pkg.frozenUntil=null; await pkg.save();
+      }
       if (pkgs.length) {
         const cust = await Customer.findById(id).select('fullName phone locationId');
         await ServiceRequest.create({ customer_id: id, customer_name: cust?.fullName||'', customer_phone: cust?.phone||'', service_type: 'activate', description: `Admin kích hoạt (bulk)`, data: {}, location_id: cust?.locationId||null, status: 'accepted', processed_by: req.user.id, processed_at: new Date() });
@@ -420,6 +466,27 @@ router.post('/:id/locker-request', authenticateToken, async (req, res) => {
       location_id: cust.locationId||null, status: 'pending'
     });
     res.json({ message: 'Đã tạo yêu cầu thuê tủ, chờ duyệt tại admin/services', data: sr });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Hủy gói / Hoàn phí: Admin tạo hộ
+router.post('/:id/cancel-refund-request', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { packageId, reason, noRefund } = req.body;
+    if (!packageId) return res.status(400).json({ error: 'Thiếu gói' });
+    const cust = await Customer.findById(id).select('fullName phone locationId');
+    if (!cust) return res.status(404).json({ error: 'Không tìm thấy khách hàng' });
+    const pkg = await UserPackage.findOne({ _id: packageId, customer_id: id }).populate('package_id','name');
+    if (!pkg) return res.status(404).json({ error: 'Không tìm thấy gói' });
+    const desc = noRefund ? `Hủy gói ${pkg.package_id?.name||''} (KHÔNG hoàn tiền)${reason?`: ${reason}`:''}` : (reason ? `Hủy gói ${pkg.package_id?.name||''}: ${reason}` : `Admin tạo hủy gói ${pkg.package_id?.name||''}`);
+    const sr = await ServiceRequest.create({
+      customer_id: id, customer_name: cust.fullName||'', customer_phone: cust.phone||'',
+      service_type: 'cancel-refund', description: desc,
+      data: { packageId, reason, packageName: pkg.package_id?.name||'', noRefund: !!noRefund },
+      location_id: cust.locationId||null, status: 'pending'
+    });
+    res.json({ message: 'Đã tạo yêu cầu hủy/hoàn phí, chờ duyệt tại admin/services', data: sr });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
