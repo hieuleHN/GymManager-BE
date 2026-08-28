@@ -52,6 +52,7 @@ const customerSchema = new mongoose.Schema({
     default: 0
   },
   infoFilledAt: Date,
+  lockedAt: Date,
   createdAt: {
     type: Date,
     default: Date.now

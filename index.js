@@ -10,6 +10,7 @@ import { initPackageStatusScheduler } from "./services/cronService.js";
 import messageMonitorRoutes from "./routes/messageMonitorRoutes.js";
 import sensitiveKeywordRoutes from "./routes/sensitiveKeywordRoutes.js";
 import { startEquipmentCron } from "./cronjobs/equipmentCron.js";
+import { startCustomerExpiryCron } from "./cronjobs/customerExpiryCron.js";
 
 import userPackageRoutes from "./routes/userPackageRoutes.js";
 import productRoutes from "./routes/productRoutes.js";
@@ -129,6 +130,7 @@ app.use("/api/audit-logs", auditLogRoutes);
 
 initPackageStatusScheduler();
 startEquipmentCron();
+startCustomerExpiryCron();
 
 // Chạy sau khi MongoDB đã kết nối thành công
 setTimeout(async () => {
