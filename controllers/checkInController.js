@@ -70,6 +70,30 @@ export const verifyFaceCheckIn = async (req, res) => {
             return res.status(404).json({ error: "Không tìm thấy thông tin hội viên" });
         }
 
+        // Chặn nếu tài khoản bị khóa
+        if (customer.status === 'locked') {
+            return res.status(403).json({ error: `Tài khoản ${customer.fullName} đã bị khóa, vui lòng liên hệ lễ tân để kích hoạt lại!` });
+        }
+
+        // Chặn nếu tất cả gói đang bị đóng băng
+        const activePkgs = await UserPackage.find({ customer_id: customer._id, status: 'đang tạm ngưng' }).lean();
+        if (activePkgs.length) {
+            const hasFrozen = activePkgs.some(p => p.frozenUntil && new Date(p.frozenUntil) > new Date());
+            if (hasFrozen) {
+                const until = activePkgs.find(p => p.frozenUntil)?.frozenUntil;
+                const untilStr = until ? new Date(until).toLocaleDateString('vi-VN') : '';
+                return res.status(403).json({ error: `Gói tập của ${customer.fullName} đang được đóng băng${untilStr?` đến ${untilStr}`:''}. Vui lòng kích hoạt lại trước khi điểm danh!` });
+            }
+            // Nếu đang tạm ngưng nhưng không có frozenUntil -> cũng chặn (do khóa TK)
+            if (activePkgs.length && customer.status !== 'locked') {
+                // Kiểm tra nếu tất cả gói đang hoạt động đều bị đóng băng
+                const allFrozen = (await UserPackage.countDocuments({ customer_id: customer._id, status: { $in: ['đang hoạt động','còn 10 ngày'] }, payment_status: 'đã thanh toán', end_date: { $gte: new Date() } })) === 0;
+                if (allFrozen && activePkgs.length) {
+                    return res.status(403).json({ error: `Gói tập của ${customer.fullName} đang được đóng băng. Vui lòng kích hoạt lại trước khi điểm danh!` });
+                }
+            }
+        }
+
         // Mốc thời gian trọn vẹn trong ngày hôm nay (00:00:00 -> 23:59:59)
         const startOfDay = new Date();
         startOfDay.setHours(0, 0, 0, 0);

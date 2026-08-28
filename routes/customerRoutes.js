@@ -6,6 +6,11 @@ import {
   search
 } from '../controllers/customerController.js';
 import { login } from '../controllers/customerAuthController.js';
+import Customer from '../models/schemas/customerSchema.js';
+import UserPackage from '../models/schemas/userPackageSchema.js';
+import CheckIn from '../models/schemas/checkInSchema.js';
+import ServiceRequest from '../models/schemas/serviceRequestSchema.js';
+import mongoose from 'mongoose';
 
 const router = express.Router();
 const uploadCustomer = uploadDynamic('customers');
@@ -20,9 +25,446 @@ const handleUpload = (req, res, next) => {
   });
 };
 
+router.get('/alerts', authenticateToken, async (req, res) => {
+  try {
+    const locationId = req.query.locationId && req.query.locationId !== 'all' ? req.query.locationId : null;
+    const locFilter = locationId ? { locationId: new mongoose.Types.ObjectId(locationId) } : {};
+    const custLocFilter = locationId ? { locationId: new mongoose.Types.ObjectId(locationId) } : {};
+    const now = new Date();
+    const in7Days = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+
+    // Sắp hết hạn 7 ngày
+    const expiringSoon = await UserPackage.find({
+      ...locFilter,
+      payment_status: 'đã thanh toán',
+      status: { $in: ['đang hoạt động', 'còn 10 ngày'] },
+      end_date: { $gte: now, $lte: in7Days }
+    }).populate('customer_id', 'fullName account phone email').populate('package_id', 'name').limit(50).lean();
+
+    // Đã hết hạn (quá hạn nhưng chưa hủy)
+    const expired = await UserPackage.find({
+      ...locFilter,
+      payment_status: 'đã thanh toán',
+      end_date: { $lt: now },
+      status: { $ne: 'đã hủy' }
+    }).populate('customer_id', 'fullName account phone email').populate('package_id', 'name').sort({ end_date: -1 }).limit(50).lean();
+
+    // Chờ duyệt quá 48h
+    const twoDaysAgo = new Date(now.getTime() - 48 * 60 * 60 * 1000);
+    const pendingOverdue = await Customer.find({
+      ...custLocFilter,
+      status: 'pending_approval',
+      createdAt: { $lte: twoDaysAgo }
+    }).select('fullName account phone email createdAt status').sort({ createdAt: 1 }).limit(50).lean();
+
+    // Chờ duyệt tất cả (để badge)
+    const pendingCount = await Customer.countDocuments({ ...custLocFilter, status: 'pending_approval' });
+
+    res.json({
+      expiring_soon: expiringSoon.map(up => ({
+        _id: up._id,
+        customer: up.customer_id,
+        packageName: up.package_id?.name || 'Gói tập',
+        end_date: up.end_date,
+        daysLeft: Math.ceil((new Date(up.end_date) - now) / (1000*60*60*24)),
+        total_price: up.total_price
+      })),
+      expired: expired.map(up => ({
+        _id: up._id,
+        customer: up.customer_id,
+        packageName: up.package_id?.name || 'Gói tập',
+        end_date: up.end_date,
+        daysOverdue: Math.ceil((now - new Date(up.end_date)) / (1000*60*60*24)),
+        total_price: up.total_price
+      })),
+      pending_overdue: pendingOverdue,
+      pendingCount,
+      summary: {
+        expiringSoonCount: expiringSoon.length,
+        expiredCount: expired.length,
+        pendingOverdueCount: pendingOverdue.length,
+        pendingCount
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/kpi', authenticateToken, async (req, res) => {
+  try {
+    const locationId = req.query.locationId && req.query.locationId !== 'all' ? req.query.locationId : null;
+    const custFilter = locationId ? { locationId: new mongoose.Types.ObjectId(locationId) } : {};
+    const pkgFilter = locationId ? { locationId: new mongoose.Types.ObjectId(locationId) } : {};
+    const now = new Date();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const startOfPrevMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const endOfPrevMonth = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59);
+
+    const totalMembers = await Customer.countDocuments(custFilter);
+    const newThisMonth = await Customer.countDocuments({ ...custFilter, createdAt: { $gte: startOfMonth } });
+    const newPrevMonth = await Customer.countDocuments({ ...custFilter, createdAt: { $gte: startOfPrevMonth, $lte: endOfPrevMonth } });
+
+    const activePkgs = await UserPackage.find({ ...pkgFilter, payment_status: 'đã thanh toán', end_date: { $gte: now } }).lean();
+    const activeMembers = new Set(activePkgs.map(p => String(p.customer_id))).size;
+
+    const expiredThisMonth = await UserPackage.find({ ...pkgFilter, payment_status: 'đã thanh toán', end_date: { $gte: startOfMonth, $lte: now } }).lean();
+    const renewedCount = await Promise.all(expiredThisMonth.map(async up => {
+      const hasRenew = await UserPackage.findOne({ customer_id: up.customer_id, payment_status: 'đã thanh toán', start_date: { $gt: up.end_date } });
+      return hasRenew ? 1 : 0;
+    }));
+    const totalRenewed = renewedCount.reduce((a,b)=>a+b,0);
+    const retentionRate = expiredThisMonth.length ? Math.round((totalRenewed/expiredThisMonth.length)*100) : 100;
+
+    const startMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const realCash = await UserPackage.aggregate([{ $match: { ...pkgFilter, payment_status: 'đã thanh toán', payment_date: { $gte: startMonth, $lte: now } } }, { $group: { _id: null, total: { $sum: '$total_price' } } }]);
+    const cashThisMonth = realCash[0]?.total || 0;
+    const arpu = activeMembers ? Math.round(cashThisMonth / activeMembers) : 0;
+
+    const pct = (cur, prev) => prev===0 ? (cur>0?100:0) : Number((((cur-prev)/prev)*100).toFixed(1));
+
+    res.json({
+      totalMembers, activeMembers, newThisMonth, retentionRate,
+      arpu, cashThisMonth,
+      change: {
+        newMembers: pct(newThisMonth, newPrevMonth),
+        retention: 0,
+        arpu: 0
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/:id/detail360', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const customer = await Customer.findById(id).lean();
+    if (!customer) return res.status(404).json({ error: 'Không tìm thấy khách hàng' });
+
+    const packages = await UserPackage.find({ customer_id: id })
+      .populate('package_id', 'name unitPrice duration_months')
+      .populate('locationId', 'title address')
+      .sort({ createdAt: -1 }).lean();
+
+    const checkins = await CheckIn.find({ customerId: id }).sort({ checkInTime: -1 }).limit(20).lean();
+
+    const ltvAgg = await UserPackage.aggregate([
+      { $match: { customer_id: new mongoose.Types.ObjectId(id), payment_status: 'đã thanh toán' } },
+      { $group: { _id: null, total: { $sum: '$total_price' }, count: { $sum: 1 } } }
+    ]);
+    const ltv = ltvAgg[0]?.total || 0;
+    const packageCount = ltvAgg[0]?.count || 0;
+
+    const activePkg = packages.find(p => new Date(p.end_date) >= new Date() && p.payment_status === 'đã thanh toán');
+
+    const now = new Date();
+    const enrich = packages.map(p => {
+      const end = new Date(p.end_date);
+      const diff = Math.ceil((end - now) / (1000*60*60*24));
+      return {
+        _id: p._id, packageName: p.package_id?.name || 'Gói tập',
+        start_date: p.start_date, end_date: p.end_date,
+        total_price: p.total_price, payment_status: p.payment_status, status: p.status,
+        location: p.locationId?.title || '',
+        daysLeft: diff,
+        isFrozen: p.status === 'đang tạm ngưng',
+        frozenAt: p.frozenAt, frozenUntil: p.frozenUntil
+      };
+    });
+
+    res.json({
+      customer: { _id: customer._id, fullName: customer.fullName, account: customer.account, phone: customer.phone, email: customer.email, status: customer.status, lockedAt: customer.lockedAt },
+      packages: enrich,
+      checkins: checkins.map(c => ({ _id: c._id, checkInTime: c.checkInTime, checkOutTime: c.checkOutTime, status: c.status, method: c.method })),
+      ltv, packageCount,
+      activePackage: activePkg ? { packageName: activePkg.package_id?.name, end_date: activePkg.end_date } : null,
+      totalCheckins: checkins.length
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Đóng băng 1 gói
+router.post('/:id/packages/:pkgId/freeze', authenticateToken, async (req, res) => {
+  try {
+    const { id, pkgId } = req.params;
+    const months = parseInt(req.body.months);
+    if (!months || months < 1 || months > 10) return res.status(400).json({ error: 'Thời gian đóng băng 1-10 tháng' });
+    const pkg = await UserPackage.findOne({ _id: pkgId, customer_id: id });
+    if (!pkg) return res.status(404).json({ error: 'Không tìm thấy gói' });
+    if (pkg.status === 'đang tạm ngưng') return res.status(400).json({ error: 'Gói đang đóng băng rồi' });
+    const now = new Date();
+    const frozenUntil = new Date(now); frozenUntil.setMonth(frozenUntil.getMonth() + months);
+    const newEnd = new Date(pkg.end_date); newEnd.setMonth(newEnd.getMonth() + months);
+    pkg.frozenAt = now; pkg.frozenUntil = frozenUntil; pkg.status = 'đang tạm ngưng'; pkg.end_date = newEnd;
+    await pkg.save();
+    const cust = await Customer.findById(id).select('fullName phone locationId');
+    await ServiceRequest.create({ customer_id: id, customer_name: cust?.fullName||'', customer_phone: cust?.phone||'', service_type: 'freeze', description: `Admin đóng băng 1 gói ${months} tháng - hạn mới ${newEnd.toLocaleDateString('vi-VN')}`, data: { packageId: pkgId, duration: months, newEnd }, location_id: cust?.locationId||null, status: 'accepted', processed_by: req.user.id, processed_at: new Date() });
+    res.json({ message: `Đã đóng băng ${months} tháng, hạn mới ${newEnd.toLocaleDateString('vi-VN')}`, data: pkg });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Kích hoạt lại 1 gói
+router.post('/:id/packages/:pkgId/unfreeze', authenticateToken, async (req, res) => {
+  try {
+    const { id, pkgId } = req.params;
+    const pkg = await UserPackage.findOne({ _id: pkgId, customer_id: id });
+    if (!pkg) return res.status(404).json({ error: 'Không tìm thấy gói' });
+    if (pkg.status !== 'đang tạm ngưng') return res.status(400).json({ error: 'Gói không ở trạng thái đóng băng' });
+    pkg.status = 'đang hoạt động'; pkg.frozenAt = null; pkg.frozenUntil = null;
+    await pkg.save();
+    const cust = await Customer.findById(id).select('fullName phone locationId');
+    await ServiceRequest.create({ customer_id: id, customer_name: cust?.fullName||'', customer_phone: cust?.phone||'', service_type: 'activate', description: `Admin kích hoạt lại 1 gói`, data: { packageId: pkgId }, location_id: cust?.locationId||null, status: 'accepted', processed_by: req.user.id, processed_at: new Date() });
+    res.json({ message: 'Đã kích hoạt lại gói', data: pkg });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Đóng băng toàn bộ gói đang hoạt động
+router.post('/:id/freeze-all', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const months = parseInt(req.body.months);
+    if (!months || months < 1 || months > 10) return res.status(400).json({ error: 'Thời gian đóng băng 1-10 tháng' });
+    const now = new Date();
+    const pkgs = await UserPackage.find({ customer_id: id, status: { $in: ['đang hoạt động','còn 10 ngày'] }, payment_status: 'đã thanh toán' });
+    if (!pkgs.length) return res.status(400).json({ error: 'Không có gói đang hoạt động để đóng băng' });
+    for (const pkg of pkgs) {
+      const frozenUntil = new Date(now); frozenUntil.setMonth(frozenUntil.getMonth() + months);
+      const newEnd = new Date(pkg.end_date); newEnd.setMonth(newEnd.getMonth() + months);
+      pkg.frozenAt = now; pkg.frozenUntil = frozenUntil; pkg.status = 'đang tạm ngưng'; pkg.end_date = newEnd;
+      await pkg.save();
+    }
+    const cust = await Customer.findById(id).select('fullName phone locationId');
+    await ServiceRequest.create({ customer_id: id, customer_name: cust?.fullName||'', customer_phone: cust?.phone||'', service_type: 'freeze', description: `Admin đóng băng toàn bộ ${pkgs.length} gói ${months} tháng`, data: { duration: months, count: pkgs.length }, location_id: cust?.locationId||null, status: 'accepted', processed_by: req.user.id, processed_at: new Date() });
+    res.json({ message: `Đã đóng băng ${pkgs.length} gói ${months} tháng` });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Kích hoạt toàn bộ
+router.post('/:id/unfreeze-all', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const pkgs = await UserPackage.find({ customer_id: id, status: 'đang tạm ngưng' });
+    for (const pkg of pkgs) { pkg.status = 'đang hoạt động'; pkg.frozenAt = null; pkg.frozenUntil = null; await pkg.save(); }
+    const cust = await Customer.findById(id).select('fullName phone locationId');
+    await ServiceRequest.create({ customer_id: id, customer_name: cust?.fullName||'', customer_phone: cust?.phone||'', service_type: 'activate', description: `Admin kích hoạt toàn bộ ${pkgs.length} gói`, data: { count: pkgs.length }, location_id: cust?.locationId||null, status: 'accepted', processed_by: req.user.id, processed_at: new Date() });
+    res.json({ message: `Đã kích hoạt ${pkgs.length} gói` });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Khóa / Mở khóa tài khoản
+router.post('/:id/lock', authenticateToken, async (req, res) => {
+  try {
+    const cust = await Customer.findById(req.params.id);
+    if (!cust) return res.status(404).json({ error: 'Không tìm thấy khách hàng' });
+    cust.status = 'locked'; cust.lockedAt = new Date(); await cust.save();
+    // Đóng băng tất cả gói đang hoạt động khi khóa (giữ nguyên hạn, sẽ cộng bù khi mở)
+    const now = new Date();
+    const pkgs = await UserPackage.find({ customer_id: cust._id, status: { $in: ['đang hoạt động','còn 10 ngày'] } });
+    for (const pkg of pkgs) { pkg.status = 'đang tạm ngưng'; pkg.frozenAt = now; await pkg.save(); }
+    await ServiceRequest.create({ customer_id: cust._id, customer_name: cust.fullName||'', customer_phone: cust.phone||'', service_type: 'freeze', description: `Admin khóa tài khoản - đóng băng ${pkgs.length} gói`, data: { action: 'lock', count: pkgs.length }, location_id: cust.locationId||null, status: 'accepted', processed_by: req.user.id, processed_at: new Date() });
+    res.json({ message: 'Đã khóa tài khoản, mọi hoạt động tạm dừng' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+router.post('/:id/unlock', authenticateToken, async (req, res) => {
+  try {
+    const cust = await Customer.findById(req.params.id);
+    if (!cust) return res.status(404).json({ error: 'Không tìm thấy khách hàng' });
+    const lockedAt = cust.lockedAt ? new Date(cust.lockedAt) : null;
+    cust.status = 'approved'; cust.lockedAt = null; await cust.save();
+    // Cộng bù thời gian khóa vào hạn gói
+    if (lockedAt) {
+      const diffMonths = Math.max(0, Math.ceil((new Date() - lockedAt) / (1000*60*60*24*30)));
+      const monthsToAdd = diffMonths || 0;
+      const pkgs = await UserPackage.find({ customer_id: cust._id, status: 'đang tạm ngưng' });
+      for (const pkg of pkgs) {
+        if (pkg.frozenAt) {
+          const newEnd = new Date(pkg.end_date); newEnd.setMonth(newEnd.getMonth() + monthsToAdd);
+          pkg.end_date = newEnd;
+        }
+        pkg.status = 'đang hoạt động'; pkg.frozenAt = null; pkg.frozenUntil = null; await pkg.save();
+      }
+    } else {
+      const pkgs = await UserPackage.find({ customer_id: cust._id, status: 'đang tạm ngưng' });
+      for (const pkg of pkgs) { pkg.status = 'đang hoạt động'; pkg.frozenAt = null; pkg.frozenUntil = null; await pkg.save(); }
+    }
+    await ServiceRequest.create({ customer_id: cust._id, customer_name: cust.fullName||'', customer_phone: cust.phone||'', service_type: 'activate', description: `Admin mở khóa tài khoản`, data: {}, location_id: cust.locationId||null, status: 'accepted', processed_by: req.user.id, processed_at: new Date() });
+    res.json({ message: 'Đã mở khóa tài khoản và kích hoạt lại gói' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Bulk thao tác hàng loạt
+router.post('/bulk/lock', authenticateToken, async (req, res) => {
+  try {
+    const { ids } = req.body;
+    if (!Array.isArray(ids) || !ids.length) return res.status(400).json({ error: 'Thiếu danh sách ID' });
+    let count=0;
+    for (const id of ids) {
+      const cust = await Customer.findById(id);
+      if (!cust || cust.status==='locked') continue;
+      cust.status='locked'; cust.lockedAt=new Date(); await cust.save();
+      const pkgs = await UserPackage.find({ customer_id: cust._id, status: { $in: ['đang hoạt động','còn 10 ngày'] } });
+      for (const pkg of pkgs) { pkg.status='đang tạm ngưng'; pkg.frozenAt=new Date(); await pkg.save(); }
+      await ServiceRequest.create({ customer_id: cust._id, customer_name: cust.fullName||'', customer_phone: cust.phone||'', service_type: 'freeze', description: `Admin khóa tài khoản (bulk)`, data: {}, location_id: cust.locationId||null, status: 'accepted', processed_by: req.user.id, processed_at: new Date() });
+      count++;
+    }
+    res.json({ message: `Đã khóa ${count} tài khoản` });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+router.post('/bulk/unlock', authenticateToken, async (req, res) => {
+  try {
+    const { ids } = req.body;
+    if (!Array.isArray(ids) || !ids.length) return res.status(400).json({ error: 'Thiếu danh sách ID' });
+    let count=0;
+    for (const id of ids) {
+      const cust = await Customer.findById(id);
+      if (!cust || cust.status!=='locked') continue;
+      const lockedAt = cust.lockedAt ? new Date(cust.lockedAt) : null;
+      cust.status='approved'; cust.lockedAt=null; await cust.save();
+      const monthsToAdd = lockedAt ? Math.max(0, Math.ceil((new Date()-lockedAt)/(1000*60*60*24*30))) : 0;
+      const pkgs = await UserPackage.find({ customer_id: cust._id, status: 'đang tạm ngưng' });
+      for (const pkg of pkgs) {
+        if (monthsToAdd) { const newEnd=new Date(pkg.end_date); newEnd.setMonth(newEnd.getMonth()+monthsToAdd); pkg.end_date=newEnd; }
+        pkg.status='đang hoạt động'; pkg.frozenAt=null; pkg.frozenUntil=null; await pkg.save();
+      }
+      await ServiceRequest.create({ customer_id: cust._id, customer_name: cust.fullName||'', customer_phone: cust.phone||'', service_type: 'activate', description: `Admin mở khóa tài khoản (bulk)`, data: {}, location_id: cust.locationId||null, status: 'accepted', processed_by: req.user.id, processed_at: new Date() });
+      count++;
+    }
+    res.json({ message: `Đã mở khóa ${count} tài khoản` });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+router.post('/bulk/freeze', authenticateToken, async (req, res) => {
+  try {
+    const { ids, months } = req.body;
+    const m = parseInt(months);
+    if (!Array.isArray(ids) || !ids.length || !m || m<1 || m>10) return res.status(400).json({ error: 'Thiếu IDs hoặc months 1-10' });
+    let count=0;
+    for (const id of ids) {
+      const pkgs = await UserPackage.find({ customer_id: id, status: { $in: ['đang hoạt động','còn 10 ngày'] }, payment_status: 'đã thanh toán' });
+      for (const pkg of pkgs) {
+        const frozenUntil=new Date(); frozenUntil.setMonth(frozenUntil.getMonth()+m);
+        const newEnd=new Date(pkg.end_date); newEnd.setMonth(newEnd.getMonth()+m);
+        pkg.frozenAt=new Date(); pkg.frozenUntil=frozenUntil; pkg.status='đang tạm ngưng'; pkg.end_date=newEnd; await pkg.save();
+      }
+      if (pkgs.length) {
+        const cust = await Customer.findById(id).select('fullName phone locationId');
+        await ServiceRequest.create({ customer_id: id, customer_name: cust?.fullName||'', customer_phone: cust?.phone||'', service_type: 'freeze', description: `Admin đóng băng (bulk) ${m} tháng`, data: { duration: m }, location_id: cust?.locationId||null, status: 'accepted', processed_by: req.user.id, processed_at: new Date() });
+        count++;
+      }
+    }
+    res.json({ message: `Đã đóng băng ${count} khách ${m} tháng` });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+router.post('/bulk/unfreeze', authenticateToken, async (req, res) => {
+  try {
+    const { ids } = req.body;
+    if (!Array.isArray(ids) || !ids.length) return res.status(400).json({ error: 'Thiếu danh sách ID' });
+    let count=0;
+    for (const id of ids) {
+      const pkgs = await UserPackage.find({ customer_id: id, status: 'đang tạm ngưng' });
+      for (const pkg of pkgs) { pkg.status='đang hoạt động'; pkg.frozenAt=null; pkg.frozenUntil=null; await pkg.save(); }
+      if (pkgs.length) {
+        const cust = await Customer.findById(id).select('fullName phone locationId');
+        await ServiceRequest.create({ customer_id: id, customer_name: cust?.fullName||'', customer_phone: cust?.phone||'', service_type: 'activate', description: `Admin kích hoạt (bulk)`, data: {}, location_id: cust?.locationId||null, status: 'accepted', processed_by: req.user.id, processed_at: new Date() });
+        count++;
+      }
+    }
+    res.json({ message: `Đã kích hoạt ${count} khách` });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Chuyển nhượng: Admin tạo hộ yêu cầu chuyển nhượng gói
+router.post('/:id/transfer-request', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { packageId, recipient, reason } = req.body;
+    if (!packageId || !recipient) return res.status(400).json({ error: 'Thiếu gói hoặc người nhận (SĐT/tài khoản)' });
+    const cust = await Customer.findById(id).select('fullName phone locationId');
+    if (!cust) return res.status(404).json({ error: 'Không tìm thấy khách hàng' });
+    const pkg = await UserPackage.findOne({ _id: packageId, customer_id: id });
+    if (!pkg) return res.status(404).json({ error: 'Không tìm thấy gói của khách' });
+    // Tìm người nhận để validate
+    const recipientCust = await Customer.findOne({ $or: [{ phone: recipient }, { account: recipient }] }).select('_id fullName phone');
+    if (!recipientCust) return res.status(404).json({ error: 'Không tìm thấy người nhận với SĐT/tài khoản này' });
+    if (String(recipientCust._id) === String(id)) return res.status(400).json({ error: 'Không thể chuyển cho chính mình' });
+    const sr = await ServiceRequest.create({
+      customer_id: id, customer_name: cust.fullName||'', customer_phone: cust.phone||'',
+      service_type: 'transfer', description: reason ? `Chuyển nhượng: ${reason}` : `Admin tạo chuyển nhượng gói ${pkg.package_id} cho ${recipient}`,
+      data: { packageId, recipient, recipientId: recipientCust._id, reason },
+      location_id: cust.locationId||null, status: 'pending'
+    });
+    res.json({ message: 'Đã tạo yêu cầu chuyển nhượng, chờ duyệt tại admin/services', data: sr });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Thuê tủ: Admin tạo hộ yêu cầu thuê tủ
+router.post('/:id/locker-request', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { lockerId, lockerNumber, durationDays, reason } = req.body;
+    if (!lockerId) return res.status(400).json({ error: 'Thiếu tủ' });
+    const cust = await Customer.findById(id).select('fullName phone locationId');
+    if (!cust) return res.status(404).json({ error: 'Không tìm thấy khách hàng' });
+    const days = Math.min(20, Math.max(1, parseInt(durationDays)||1));
+    const sr = await ServiceRequest.create({
+      customer_id: id, customer_name: cust.fullName||'', customer_phone: cust.phone||'',
+      service_type: 'locker', description: reason ? `Thuê tủ: ${reason}` : `Admin tạo thuê tủ ${lockerNumber||lockerId} ${days} ngày`,
+      data: { lockerId, lockerNumber, durationDays: days, reason },
+      location_id: cust.locationId||null, status: 'pending'
+    });
+    res.json({ message: 'Đã tạo yêu cầu thuê tủ, chờ duyệt tại admin/services', data: sr });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+router.get('/', authenticateToken, async (req, res) => {
+  const hasFaceId = req.query.hasFaceId;
+  const hasActivePackage = req.query.hasActivePackage;
+  // Nếu có filter đặc biệt -> xử lý riêng (kết hợp với list gốc để giữ phân trang)
+  if (hasFaceId !== undefined || hasActivePackage !== undefined) {
+    try {
+      const page = parseInt(req.query.page) || 1;
+      const limit = parseInt(req.query.limit) || 15;
+      const locationId = req.query.locationId && req.query.locationId !== 'all' ? req.query.locationId : null;
+      const baseFilter = locationId ? { locationId: new mongoose.Types.ObjectId(locationId) } : {};
+
+      // FaceID filter
+      if (hasFaceId === 'false') baseFilter.$or = [{ faceDescriptor: { $exists: false } }, { faceDescriptor: { $size: 0 } }];
+      if (hasFaceId === 'true') baseFilter.faceDescriptor = { $exists: true, $not: { $size: 0 } };
+
+      let customers = await Customer.find(baseFilter).sort({ createdAt: -1 }).lean();
+
+      // ActivePackage filter: cần kiểm tra UserPackage
+      if (hasActivePackage !== undefined) {
+        const now = new Date();
+        const activeIds = new Set(
+          (await UserPackage.find({ payment_status: 'đã thanh toán', end_date: { $gte: now }, status: { $in: ['đang hoạt động','còn 10 ngày'] } }).select('customer_id').lean())
+            .map(p => String(p.customer_id))
+        );
+        customers = customers.filter(c => {
+          const hasActive = activeIds.has(String(c._id));
+          return hasActivePackage === 'true' ? hasActive : !hasActive;
+        });
+      }
+
+      const total = customers.length;
+      const skip = (page - 1) * limit;
+      const data = customers.slice(skip, skip + limit);
+      return res.json({ data, total, page, limit, totalPages: Math.ceil(total / limit) });
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  }
+  return list(req, res);
+});
 router.post('/register', register);
 router.post('/login', login);
-router.get('/', authenticateToken, list);
 router.get('/search', authenticateToken, search);
 router.get('/profile/:id', publicProfile);
 router.get('/pending', authenticateToken, pendingList);
