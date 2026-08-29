@@ -59,11 +59,7 @@ const equipmentSchema = new mongoose.Schema({
       },
       reason: { type: String, required: [true, "Lý do báo cáo là bắt buộc"] },
       reportedAt: { type: Date, default: Date.now },
-      assigned_to: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "Staff",
-        default: null,
-      },
+      assigned_to: { type: String, default: "" },
       cost: { type: Number, default: 0, min: 0 },
       result: { type: String, default: "" },
       resolvedAt: { type: Date, default: null },

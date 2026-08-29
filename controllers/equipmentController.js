@@ -160,7 +160,7 @@ export const reportEquipment = async (req, res) => {
 export const resolveReport = async (req, res) => {
   try {
     const { id, reportId } = req.params;
-    const { cost, result, downtime_days } = req.body;
+    const { cost, result, downtime_days, assigned_to } = req.body;
 
     const eq = await Equipment.findOne({ _id: id, "reports._id": reportId });
     if (!eq)
@@ -178,6 +178,7 @@ export const resolveReport = async (req, res) => {
           "reports.$.status": "resolved",
           "reports.$.cost": newCost,
           "reports.$.result": result ? result.trim() : "",
+          "reports.$.assigned_to": assigned_to || null,
           "reports.$.resolvedAt": new Date(),
           "reports.$.downtime_days": newDowntime,
           status: "hoạt động",
@@ -203,17 +204,15 @@ export const resolveReport = async (req, res) => {
     }
     res.status(500).json({ message: "Lỗi server!", error: error.message });
   }
-}; // CHÚ Ý: Dấu ngoặc này là để đóng hàm resolveReport
+};
 
 export const exportEquipmentsToExcel = async (req, res) => {
   try {
     const { locationId } = req.query;
     let filter = {};
-
     if (locationId) {
-      if (!mongoose.Types.ObjectId.isValid(locationId)) {
+      if (!mongoose.Types.ObjectId.isValid(locationId))
         return res.status(400).json({ message: "Dữ liệu không hợp lệ!" });
-      }
       filter.location_id = locationId;
     }
 
@@ -221,10 +220,8 @@ export const exportEquipmentsToExcel = async (req, res) => {
       "location_id",
       "name",
     );
-
-    if (!equipments || equipments.length === 0) {
+    if (!equipments || equipments.length === 0)
       return res.status(404).json({ message: "Không có dữ liệu thiết bị!" });
-    }
 
     const workbook = new excelJS.Workbook();
     const worksheet = workbook.addWorksheet("Bao_Cao_Thiet_Bi");
@@ -233,49 +230,48 @@ export const exportEquipmentsToExcel = async (req, res) => {
       { header: "STT", key: "stt", width: 5 },
       { header: "Tên thiết bị", key: "name", width: 25 },
       { header: "Trạng thái", key: "status", width: 15 },
-      { header: "Nhà cung cấp", key: "supplier", width: 20 },
-      { header: "Ngày mua", key: "purchase_date", width: 15 },
+      { header: "Thời gian SD (Ngày)", key: "usage_days", width: 18 },
       { header: "Nguyên giá (VNĐ)", key: "unitPrice", width: 15 },
       {
-        header: "Phí bảo trì (VNĐ)",
+        header: "Tổng phí sửa (VNĐ)",
         key: "total_maintenance_cost",
-        width: 20,
+        width: 18,
       },
-      { header: "Downtime (Ngày)", key: "total_downtime_days", width: 18 },
-      { header: "Tỷ lệ sẵn sàng (%)", key: "availability", width: 18 },
+      { header: "TCO - Tổng chi phí sở hữu", key: "tco", width: 25 },
+      { header: "Downtime (Ngày)", key: "total_downtime_days", width: 15 },
+      { header: "Đề xuất thay mới", key: "replace_warning", width: 20 },
+      { header: "Link Hóa đơn", key: "invoice_url", width: 30 },
+      { header: "Link Bảo hành", key: "warranty_card_url", width: 30 },
     ];
 
     worksheet.getRow(1).font = { bold: true };
-    worksheet.getRow(1).alignment = {
-      vertical: "middle",
-      horizontal: "center",
-    };
-
     const now = new Date();
 
     equipments.forEach((eq, index) => {
-      const purchaseDate = new Date(eq.purchase_date);
-      let totalDays = Math.floor(
-        (now.getTime() - purchaseDate.getTime()) / (1000 * 60 * 60 * 24),
+      const purchaseDate = new Date(eq.purchase_date || eq.createdAt);
+      const usageDays = Math.max(
+        1,
+        Math.floor(
+          (now.getTime() - purchaseDate.getTime()) / (1000 * 60 * 60 * 24),
+        ),
       );
-
-      if (totalDays <= 0) totalDays = 1;
-
-      const downtimeDays = eq.total_downtime_days || 0;
-      let availability = ((totalDays - downtimeDays) / totalDays) * 100;
-
-      availability = Math.max(0, Math.min(100, availability));
+      const tco = (eq.unitPrice || 0) + (eq.total_maintenance_cost || 0);
+      const needsReplacement =
+        eq.total_maintenance_cost > eq.unitPrice * 0.5 ||
+        eq.total_downtime_days > 30;
 
       worksheet.addRow({
         stt: index + 1,
         name: eq.name,
         status: eq.status.toUpperCase(),
-        supplier: eq.supplier,
-        purchase_date: purchaseDate.toLocaleDateString("vi-VN"),
+        usage_days: usageDays,
         unitPrice: eq.unitPrice,
         total_maintenance_cost: eq.total_maintenance_cost,
-        total_downtime_days: downtimeDays,
-        availability: availability.toFixed(2) + "%",
+        tco: tco,
+        total_downtime_days: eq.total_downtime_days || 0,
+        replace_warning: needsReplacement ? "CẦN THAY MỚI" : "Bình thường",
+        invoice_url: eq.invoice_url || "Chưa cập nhật",
+        warranty_card_url: eq.warranty_card_url || "Chưa cập nhật",
       });
     });
 
@@ -287,10 +283,126 @@ export const exportEquipmentsToExcel = async (req, res) => {
       "Content-Disposition",
       "attachment; filename=Bao_Cao_Thiet_Bi.xlsx",
     );
-
     await workbook.xlsx.write(res);
     res.status(200).end();
   } catch (error) {
     res.status(500).json({ message: "Lỗi server!", error: error.message });
+  }
+};
+
+export const getEquipmentAlerts = async (req, res) => {
+  try {
+    const now = new Date();
+    const thirtyDaysFromNow = new Date(
+      now.getTime() + 30 * 24 * 60 * 60 * 1000,
+    );
+    const threeDaysAgo = new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000);
+    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+    const allEquipments = await Equipment.find({});
+    const alerts = {
+      maintenance_due: [],
+      warranty_expiring: [],
+      overdue_tickets: [],
+      broken_long_time: [],
+    };
+
+    allEquipments.forEach((eq) => {
+      try {
+        if (!eq) return;
+
+        // 1. Đến hạn bảo trì
+        if (eq.status === "bảo trì") {
+          alerts.maintenance_due.push(eq);
+        }
+
+        // 2. Hết hạn bảo hành trong vòng 30 ngày tới
+        const wPeriod = Number(eq.warranty_period) || 0;
+        let isWarrantyExpiring = false;
+
+        if (wPeriod > 0 && (eq.purchase_date || eq.createdAt)) {
+          const purchaseDate = new Date(eq.purchase_date || eq.createdAt);
+          if (!isNaN(purchaseDate.getTime())) {
+            const warrantyEndDate = new Date(purchaseDate);
+            warrantyEndDate.setMonth(warrantyEndDate.getMonth() + wPeriod);
+
+            if (
+              warrantyEndDate >= now &&
+              warrantyEndDate <= thirtyDaysFromNow
+            ) {
+              isWarrantyExpiring = true;
+            }
+          }
+        }
+
+        if (isWarrantyExpiring) {
+          const exists = alerts.warranty_expiring.some(
+            (item) =>
+              item &&
+              item._id &&
+              eq._id &&
+              item._id.toString() === eq._id.toString(),
+          );
+          if (!exists) alerts.warranty_expiring.push(eq);
+        }
+
+        const reports = Array.isArray(eq.reports) ? eq.reports : [];
+
+        // 3. Hỏng quá N ngày (ví dụ: hỏng quá 7 ngày)
+        if (eq.status === "hỏng hóc") {
+          const hasOldBrokenReport = reports.some((r) => {
+            try {
+              if (
+                !r ||
+                r.status !== "pending" ||
+                r.statusType !== "hỏng hóc" ||
+                !r.reportedAt
+              )
+                return false;
+              const repDate = new Date(r.reportedAt);
+              return !isNaN(repDate.getTime()) && repDate <= sevenDaysAgo;
+            } catch (e) {
+              return false;
+            }
+          });
+          if (hasOldBrokenReport) alerts.broken_long_time.push(eq);
+        }
+
+        // 4. Phiếu quá hạn (chờ xử lý quá 3 ngày)
+        const overdue = reports.filter((r) => {
+          try {
+            if (!r || r.status !== "pending" || !r.reportedAt) return false;
+            const repDate = new Date(r.reportedAt);
+            return !isNaN(repDate.getTime()) && repDate <= threeDaysAgo;
+          } catch (e) {
+            return false;
+          }
+        });
+
+        if (overdue.length > 0) {
+          alerts.overdue_tickets.push({
+            equipment_id: eq._id,
+            name: eq.name,
+            tickets: overdue,
+          });
+        }
+      } catch (innerErr) {
+        console.error("Lỗi xử lý thiết bị:", innerErr);
+      }
+    });
+
+    return res.status(200).json({
+      success: true,
+      data: alerts,
+      maintenance_due: alerts.maintenance_due,
+      warranty_expiring: alerts.warranty_expiring,
+      broken_long_time: alerts.broken_long_time,
+      overdue_tickets: alerts.overdue_tickets,
+    });
+  } catch (error) {
+    console.error("Lỗi API Alerts:", error);
+    return res
+      .status(500)
+      .json({ message: "Lỗi server!", error: error.message });
   }
 };
