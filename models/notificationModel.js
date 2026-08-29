@@ -10,7 +10,8 @@ export const createNotification = async (data, callback) => {
       type: data.type,
       relatedBookingId: data.relatedBookingId,
       relatedArticleId: data.relatedArticleId,
-      relatedPostId: data.relatedPostId
+      relatedPostId: data.relatedPostId,
+      relatedUserPackageId: data.relatedUserPackageId
     });
     const saved = await notification.save();
     callback(null, saved);

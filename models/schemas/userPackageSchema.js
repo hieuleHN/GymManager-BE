@@ -52,8 +52,46 @@ const userPackageSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ["đang hoạt động", "còn 10 ngày", "đang tạm ngưng", "hết hạn", "đã hủy"],
+    enum: ["chờ xác nhận", "đang hoạt động", "còn 10 ngày", "đang tạm ngưng", "hết hạn", "đã hủy"],
     default: "đang hoạt động",
+  },
+  // Phiếu gia hạn hộ do admin tạo, chờ duyệt
+  is_renewal_ticket: {
+    type: Boolean,
+    default: false,
+  },
+  original_registration_id: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "UserPackage",
+    default: null,
+  },
+  // Ngày bắt đầu dự kiến của phiếu gia hạn (chốt lại khi duyệt)
+  proposed_start_date: {
+    type: Date,
+    default: null,
+  },
+  renewal_note: {
+    type: String,
+    default: "",
+  },
+  // Giá chốt tại thời điểm mua (hợp đồng cũ giữ giá cũ khi gói đổi giá)
+  unit_price_applied: {
+    type: Number,
+    default: null,
+  },
+  price_snapshot: {
+    unit_price: { type: Number, default: null },
+    months: { type: Number, default: null },
+    discount_percent: { type: Number, default: null },
+  },
+  // Theo dõi gửi nhắc thanh toán / nhắc gia hạn để chống spam
+  payment_reminder_sent_at: {
+    type: Date,
+    default: null,
+  },
+  last_renewal_reminder_at: {
+    type: Date,
+    default: null,
   },
   frozenAt: {
     type: Date,
@@ -70,7 +108,7 @@ const userPackageSchema = new mongoose.Schema({
   },
   payment_method: {
     type: String,
-    enum: ["bank-transfer", "qr-code", "vnpay", "momo", "bank-card", ""],
+    enum: ["bank-transfer", "qr-code", "vnpay", "momo", "bank-card", "wallet", ""],
     default: "",
   },
   vnpay_txn_ref: {

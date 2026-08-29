@@ -10,7 +10,9 @@ import { initPackageStatusScheduler } from "./services/cronService.js";
 import messageMonitorRoutes from "./routes/messageMonitorRoutes.js";
 import sensitiveKeywordRoutes from "./routes/sensitiveKeywordRoutes.js";
 import { startEquipmentCron } from "./cronjobs/equipmentCron.js";
+import { startCustomerExpiryCron } from "./cronjobs/customerExpiryCron.js";
 
+import userPackageRoutes from "./routes/userPackageRoutes.js";
 import productRoutes from "./routes/productRoutes.js";
 import equipmentRoutes from "./routes/equipmentRoutes.js";
 import disciplineRoutes from "./routes/disciplineRoutes.js";
@@ -24,7 +26,6 @@ import permissionRoutes from "./routes/permissionRoutes.js";
 import policyRoutes from "./routes/policyRoutes.js";
 import expenseRoutes from "./routes/expenseRoutes.js";
 import lockerRoutes from "./routes/lockerRoutes.js";
-import userPackageRoutes from "./routes/userPackageRoutes.js";
 import bookingRoutes from "./routes/bookingRoutes.js";
 import notificationRoutes from "./routes/notificationRoutes.js";
 import checkInRoutes from "./routes/checkInRoutes.js";
@@ -42,9 +43,11 @@ import lockerManagementRoutes from "./routes/lockerManagementRoutes.js";
 import ttsRoutes from "./routes/ttsRoutes.js";
 import messageRoutes from "./routes/messageRoutes.js";
 import serviceRequestRoutes from "./routes/serviceRequestRoutes.js";
+import auditLogRoutes from "./routes/auditLogRoutes.js";
 
 import { autoCancelPendingBookings } from "./jobs/autoCancelBooking.js";
 import { autoCancelPendingPackages } from "./jobs/autoCancelPendingPackages.js";
+import { migratePackageLifecycleStatus } from "./services/startupMigrations.js";
 
 // Khai báo route cấu hình trang chủ mới thêm
 import siteSettingRoutes from "./routes/siteSettingRoutes.js";
@@ -122,13 +125,18 @@ app.use("/api/sensitive-keywords", sensitiveKeywordRoutes);
 // Yêu cầu dịch vụ từ hội viên
 app.use("/api/service-requests", serviceRequestRoutes);
 
+// Audit log: nhật ký mọi thao tác quản trị (ai/làm gì/khi nào)
+app.use("/api/audit-logs", auditLogRoutes);
+
 initPackageStatusScheduler();
 startEquipmentCron();
+startCustomerExpiryCron();
 
 // Chạy sau khi MongoDB đã kết nối thành công
 setTimeout(async () => {
   try {
-    console.log("[Startup] Đang xử lý các giao dịch chờ thanh toán quá hạn...");
+    console.log('[Startup] Đang xử lý dữ liệu cũ + giao dịch chờ thanh toán quá hạn...');
+    await migratePackageLifecycleStatus();
     await autoCancelPendingBookings();
     await autoCancelPendingPackages();
   } catch (err) {

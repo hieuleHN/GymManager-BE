@@ -27,6 +27,26 @@ import Policy from "../models/schemas/policySchema.js";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import { computeTierPrice } from "../services/pricingService.js";
+import { addMonths, allocatePtSessions } from "../services/ptSessionService.js";
+import { logAudit } from "../services/auditService.js";
+import Notification from "../models/schemas/notificationSchema.js";
+
+// Gửi notification cho hội viên (best-effort, không chặn flow chính)
+const notifyMember = async ({ customerId, title, message, type, userPackageId }) => {
+  try {
+    await Notification.create({
+      recipientId: customerId,
+      recipientRole: "member",
+      title,
+      message,
+      type,
+      relatedUserPackageId: userPackageId || undefined,
+    });
+  } catch (err) {
+    console.error("[UserPackage] Lỗi tạo thông báo:", err.message);
+  }
+};
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -39,49 +59,44 @@ export const registerPackage = (req, res) => {
     package_id,
     locationId,
     duration_months,
-    total_price,
     signature,
     payment_method,
   } = req.body;
-  if (!package_id || !locationId || !duration_months || !total_price)
+  if (!package_id || !locationId || !duration_months)
     return res.status(400).json({ error: "Thiếu thông tin!" });
-  // if (!signature || !signature.trim())
-  //   return res.status(400).json({ error: "Thiếu chữ ký!" });
 
       Package.findById(package_id)
     .exec()
     .then((pkg) => {
       if (!pkg) return res.status(404).json({ error: "Gói không tồn tại!" });
+
+      // Gói phải đang "đang bán" mới được đăng ký (nháp/tạm ngưng/ngừng bán tự ẩn)
+      if (
+        pkg.lifecycle_status &&
+        pkg.lifecycle_status !== "đang bán"
+      ) {
+        return res
+          .status(400)
+          .json({ error: "Gói tập này hiện không bán, vui lòng chọn gói khác!" });
+      }
+
+      // QUY TẮC GIÁ: hệ thống tự tính theo giá tháng gốc + bảng giảm giá,
+      // tuyệt đối không nhận total_price gõ tay từ client.
+      let pricing;
+      try {
+        pricing = computeTierPrice(pkg, duration_months);
+      } catch (e) {
+        return res.status(400).json({ error: e.message });
+      }
+
       const start_date = new Date();
-      const end_date = new Date(start_date);
-      end_date.setMonth(end_date.getMonth() + duration_months);
+      const end_date = addMonths(start_date, duration_months);
 
       const ptSessionsPerMonth = pkg.isFullMonth ? 0 : (pkg.ptSessionsPerMonth || 0);
       const isFullMonth = pkg.isFullMonth || false;
-      const monthlySessions = [];
-      if (isFullMonth) {
-        for (let i = 0; i < duration_months; i++) {
-          const d = new Date(start_date);
-          d.setMonth(d.getMonth() + i);
-          monthlySessions.push({
-            month: d.getMonth() + 1,
-            year: d.getFullYear(),
-            total: 999,
-            used: 0
-          });
-        }
-      } else if (ptSessionsPerMonth > 0) {
-        for (let i = 0; i < duration_months; i++) {
-          const d = new Date(start_date);
-          d.setMonth(d.getMonth() + i);
-          monthlySessions.push({
-            month: d.getMonth() + 1,
-            year: d.getFullYear(),
-            total: ptSessionsPerMonth,
-            used: 0
-          });
-        }
-      }
+
+      // TỰ PHÂN BỔ BUỔI PT: tháng nào được cấp bao nhiêu buổi
+      const monthlySessions = allocatePtSessions(start_date, duration_months, pkg);
 
       createRegistration(
         {
@@ -92,7 +107,13 @@ export const registerPackage = (req, res) => {
           ptSessionsPerMonth,
           isFullMonth,
           monthlySessions,
-          total_price,
+          total_price: pricing.total_price,
+          unit_price_applied: pricing.unit_price,
+          price_snapshot: {
+            unit_price: pricing.unit_price,
+            months: pricing.months,
+            discount_percent: pricing.discount_percent,
+          },
           signature,
           start_date,
           end_date,
@@ -103,7 +124,7 @@ export const registerPackage = (req, res) => {
           if (err) return res.status(500).json({ error: err.message });
           res
             .status(201)
-            .json({ message: "Đăng ký thành công!", registration: result });
+            .json({ message: "Đăng ký thành công!", registration: result, pricing });
         },
       );
     })
@@ -146,11 +167,227 @@ export const listAllRegistrations = (req, res) => {
     (err, result) => res.status(200).json(result),
   );
 };
-export const confirmPayment = (req, res) => {
+
+// Quản lý đăng ký gói tập hộ hội viên tại quầy (tạo bởi admin/lễ tân)
+export const adminRegisterPackage = (req, res) => {
+  const {
+    customerId,
+    package_id,
+    locationId,
+    duration_months,
+    signature,
+  } = req.body;
+
+  if (!customerId) return res.status(400).json({ error: "Thiếu mã khách hàng!" });
+  if (!package_id || !duration_months)
+    return res.status(400).json({ error: "Vui lòng chọn gói tập và thời hạn!" });
+
+  Package.findById(package_id)
+    .exec()
+    .then((pkg) => {
+      if (!pkg) return res.status(404).json({ error: "Gói tập không tồn tại!" });
+
+      // QUY TẮC GIÁ: giá luôn do hệ thống tính theo bảng giá hiện hành của gói
+      let pricing;
+      try {
+        pricing = computeTierPrice(pkg, duration_months);
+      } catch (e) {
+        return res.status(400).json({ error: e.message });
+      }
+
+      const start_date = new Date();
+      const end_date = addMonths(start_date, duration_months);
+
+      const ptSessionsPerMonth = pkg.isFullMonth ? 0 : (pkg.ptSessionsPerMonth || 0);
+      const isFullMonth = pkg.isFullMonth || false;
+      const monthlySessions = allocatePtSessions(start_date, duration_months, pkg);
+
+      createRegistration(
+        {
+          customer_id: customerId,
+          package_id,
+          locationId: locationId || pkg.locationId || null,
+          duration_months: Number(duration_months),
+          ptSessionsPerMonth,
+          isFullMonth,
+          monthlySessions,
+          total_price: pricing.total_price,
+          unit_price_applied: pricing.unit_price,
+          price_snapshot: {
+            unit_price: pricing.unit_price,
+            months: pricing.months,
+            discount_percent: pricing.discount_percent,
+          },
+          signature: signature || "",
+          start_date,
+          end_date,
+          payment_status: "đã thanh toán",
+          status: "đang hoạt động",
+          confirmed_by: req.user?.id,
+          confirmed_at: new Date(),
+          payment_date: new Date(),
+        },
+        async (err, result) => {
+          if (err) return res.status(500).json({ error: err.message });
+          await logAudit(req, {
+            action: "ADMIN_REGISTER_PACKAGE",
+            entityType: "UserPackage",
+            entityId: result._id,
+            entityName: `${pkg.name}`,
+            after: { customerId, duration_months, total_price: pricing.total_price },
+            description: `Đăng ký hộ gói "${pkg.name}" (${duration_months} tháng, ${pricing.total_price.toLocaleString("vi-VN")} đ)`,
+          });
+          res
+            .status(201)
+            .json({ message: "Đăng ký gói tập thành công!", registration: result, pricing });
+        },
+      );
+    })
+    .catch((err) => res.status(500).json({ error: err.message }));
+};
+
+// Duyệt / từ chối đăng ký gói tập của hội viên - bao gồm cả PHIẾU GIA HẠN HỘ
+export const approveRegistration = async (req, res) => {
+  try {
+    const { action } = req.body;
+    if (!["approve", "reject"].includes(action)) {
+      return res.status(400).json({ error: "Hành động không hợp lệ!" });
+    }
+
+    const reg = await UserPackage.findById(req.params.id)
+      .populate("package_id", "name ptSessionsPerMonth isFullMonth unitPrice");
+    if (!reg) return res.status(404).json({ error: "Không tìm thấy đăng ký!" });
+
+    if (action === "reject") {
+      reg.status = "đã hủy";
+      if (reg.payment_status === "chờ thanh toán") reg.payment_status = "đã hủy";
+      await reg.save();
+
+      await logAudit(req, {
+        action: "REGISTRATION_REJECT",
+        entityType: "UserPackage",
+        entityId: reg._id,
+        entityName: reg.package_id?.name || "",
+        description: reg.is_renewal_ticket
+          ? `Từ chối phiếu gia hạn gói "${reg.package_id?.name}"`
+          : `Từ chối đăng ký gói "${reg.package_id?.name}"`,
+      });
+
+      await notifyMember({
+        customerId: reg.customer_id,
+        title: reg.is_renewal_ticket
+          ? "Phiếu gia hạn bị từ chối"
+          : "Đăng ký gói tập bị từ chối",
+        message: reg.is_renewal_ticket
+          ? `Phiếu gia hạn gói "${reg.package_id?.name}" của bạn đã bị từ chối bởi nhân viên. Vui lòng liên hệ quầy để biết thêm chi tiết.`
+          : `Đăng ký gói "${reg.package_id?.name}" của bạn đã bị từ chối. Vui lòng liên hệ quầy để biết thêm chi tiết.`,
+        type: reg.is_renewal_ticket ? "package_renewed" : "booking_rejected",
+        userPackageId: reg._id,
+      });
+
+      return res.json({ message: "Đã từ chối đăng ký!", data: reg });
+    }
+
+    // ===== PHIẾU GIA HẠN HỘ: duyệt là xong =====
+    // Chốt ngày bắt đầu = max(now, ngày hết hạn của hợp đồng gốc) để hội viên
+    // không mất ngày; tự phân bổ lại buổi PT theo tháng; đánh dấu đã thanh toán tại quầy.
+    if (reg.is_renewal_ticket) {
+      let baseStart = new Date();
+      if (reg.original_registration_id) {
+        const original = await UserPackage.findById(reg.original_registration_id).select("end_date");
+        if (original?.end_date && new Date(original.end_date) > baseStart) {
+          baseStart = new Date(original.end_date);
+        }
+      }
+      if (reg.proposed_start_date && new Date(reg.proposed_start_date) > baseStart) {
+        baseStart = new Date(reg.proposed_start_date);
+      }
+
+      reg.start_date = baseStart;
+      reg.end_date = addMonths(baseStart, reg.duration_months);
+      reg.monthlySessions = allocatePtSessions(baseStart, reg.duration_months, reg.package_id);
+      reg.payment_status = "đã thanh toán";
+      reg.payment_date = reg.payment_date || new Date();
+      reg.confirmed_by = req.user.id;
+      reg.confirmed_at = new Date();
+      reg.status = "đang hoạt động";
+      await reg.save();
+
+      await logAudit(req, {
+        action: "ADMIN_RENEW_APPROVE",
+        entityType: "UserPackage",
+        entityId: reg._id,
+        entityName: reg.package_id?.name || "",
+        after: {
+          start_date: reg.start_date,
+          end_date: reg.end_date,
+          total_price: reg.total_price,
+        },
+        description: `Duyệt phiếu gia hạn gói "${reg.package_id?.name}" (${reg.duration_months} tháng)`,
+      });
+
+      await notifyMember({
+        customerId: reg.customer_id,
+        title: "Phiếu gia hạn đã được duyệt",
+        message: `Phiếu gia hạn gói "${reg.package_id?.name}" (${reg.duration_months} tháng) đã được duyệt. Hiệu lực từ ${new Date(reg.start_date).toLocaleDateString("vi-VN")} đến ${new Date(reg.end_date).toLocaleDateString("vi-VN")}.`,
+        type: "package_renewed",
+        userPackageId: reg._id,
+      });
+
+      return res.json({ message: "Đã duyệt gia hạn! Gói của khách có hiệu lực ngay.", data: reg });
+    }
+
+    // ===== Đăng ký thường =====
+    if (reg.payment_status === "đã thanh toán" && !reg.confirmed_at) {
+      reg.confirmed_by = req.user?.id;
+      reg.confirmed_at = new Date();
+    }
+    reg.status = "đang hoạt động";
+    await reg.save();
+
+    await logAudit(req, {
+      action: "REGISTRATION_APPROVE",
+      entityType: "UserPackage",
+      entityId: reg._id,
+      entityName: reg.package_id?.name || "",
+      description: `Duyệt đăng ký gói "${reg.package_id?.name}"`,
+    });
+
+    // Thông báo kích hoạt kèm số buổi PT hệ thống đã TỰ phân bổ theo từng tháng
+    const ptInfo = reg.isFullMonth
+      ? " Gói của bạn không giới hạn buổi tập với HLV."
+      : reg.ptSessionsPerMonth > 0
+        ? ` Hệ thống đã tự cấp ${reg.ptSessionsPerMonth} buổi tập với HLV mỗi tháng (tổng ${reg.ptSessionsPerMonth * reg.duration_months} buổi / ${reg.duration_months} tháng) — xem chi tiết từng tháng ở mục Gói tập của tôi.`
+        : "";
+    await notifyMember({
+      customerId: reg.customer_id,
+      title: "Gói tập đã được kích hoạt",
+      message: `Đăng ký gói "${reg.package_id?.name}" của bạn đã được duyệt và có hiệu lực từ ${new Date(reg.start_date).toLocaleDateString("vi-VN")} đến ${new Date(reg.end_date).toLocaleDateString("vi-VN")}.${ptInfo}`,
+      type: "package_activated",
+      userPackageId: reg._id,
+    });
+
+    return res.json({ message: "Đã duyệt đăng ký!", data: reg });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+export const confirmPayment = async (req, res) => {
   updatePaymentStatus(
     req.params.id,
     { payment_status: req.body.payment_status, confirmed_by: req.user.id },
-    (err, result) => res.status(200).json({ message: "OK" }),
+    async (err, result) => {
+      if (err) return res.status(500).json({ error: err.message });
+      await logAudit(req, {
+        action: "PAYMENT_CONFIRM",
+        entityType: "UserPackage",
+        entityId: req.params.id,
+        after: { payment_status: req.body.payment_status },
+        description: `Xác nhận thanh toán đơn đăng ký: ${req.body.payment_status}`,
+      });
+      res.status(200).json({ message: "OK" });
+    },
   );
 };
 export const setPaymentMethod = (req, res) => {
@@ -163,7 +400,7 @@ export const setPaymentMethod = (req, res) => {
 };
 
 export const createRenewOrUpgrade = async (req, res) => {
-  const { package_id, locationId, duration_months, total_price, action_type, currentRegistrationId, signature } =
+  const { package_id, locationId, duration_months, total_price, action_type, currentRegistrationId, signature, current_end_date } =
     req.body;
 
   if (action_type === 'upgrade') {
@@ -198,22 +435,63 @@ export const createRenewOrUpgrade = async (req, res) => {
     return;
   }
 
-  createRegistration(
-    {
-      customer_id: req.user.id,
-      package_id,
-      locationId,
-      duration_months,
-      total_price,
-      payment_status: "chờ thanh toán",
-      status: "đang hoạt động",
-      signature,
-      start_date: new Date(),
-      end_date: new Date(),
-    },
-    (err, result) =>
-      res.status(201).json({ message: "OK", registration: result }),
-  );
+  // ===== GIA HẬN (self-service): giá do hệ thống tính theo bảng giá hiện hành =====
+  try {
+    const pkg = await Package.findById(package_id);
+    if (!pkg) return res.status(404).json({ error: "Gói tập không tồn tại!" });
+    if (pkg.lifecycle_status && pkg.lifecycle_status !== "đang bán") {
+      return res.status(400).json({ error: "Gói tập này hiện không bán để gia hạn!" });
+    }
+
+    let pricing;
+    try {
+      pricing = computeTierPrice(pkg, duration_months);
+    } catch (e) {
+      return res.status(400).json({ error: e.message });
+    }
+
+    // Gia hạn liền mạch: còn hạn thì tính từ ngày hết hạn cũ, hết hạn rồi thì từ hôm nay
+    const now = new Date();
+    let start = now;
+    if (current_end_date && new Date(current_end_date) > now) {
+      start = new Date(current_end_date);
+    } else if (!current_end_date && currentRegistrationId) {
+      const cur = await UserPackage.findById(currentRegistrationId).select("end_date");
+      if (cur?.end_date && new Date(cur.end_date) > now) start = new Date(cur.end_date);
+    }
+    const end = addMonths(start, pricing.months);
+
+    createRegistration(
+      {
+        customer_id: req.user.id,
+        package_id,
+        locationId: locationId || pkg.locationId || null,
+        duration_months: pricing.months,
+        ptSessionsPerMonth: pkg.isFullMonth ? 0 : (pkg.ptSessionsPerMonth || 0),
+        isFullMonth: !!pkg.isFullMonth,
+        monthlySessions: allocatePtSessions(start, pricing.months, pkg),
+        total_price: pricing.total_price,
+        unit_price_applied: pricing.unit_price,
+        price_snapshot: {
+          unit_price: pricing.unit_price,
+          months: pricing.months,
+          discount_percent: pricing.discount_percent,
+        },
+        original_registration_id: currentRegistrationId || null,
+        signature,
+        start_date: start,
+        end_date: end,
+        payment_status: "chờ thanh toán",
+        status: "chờ xác nhận",
+      },
+      (err, result) => {
+        if (err) return res.status(500).json({ error: err.message });
+        return res.status(201).json({ message: "OK", registration: result, pricing });
+      },
+    );
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 };
 
 // ==========================================
@@ -258,6 +536,14 @@ export const getMyPtSessions = async (req, res) => {
         ptSessionsPerMonth: reg.ptSessionsPerMonth,
         isFullMonth: reg.isFullMonth,
         currentMonthRemaining: remaining,
+        // Lịch cấp buổi PT theo từng tháng do hệ thống tự phân bổ lúc mua/gia hạn
+        monthlySchedule: (reg.monthlySessions || []).map((m) => ({
+          month: m.month,
+          year: m.year,
+          total: m.total,
+          used: m.used,
+          remaining: Math.max(0, m.total - m.used),
+        })),
         currentMonth,
         currentYear,
         startDate: reg.start_date,
@@ -802,6 +1088,80 @@ export const generateContractPdf = async (req, res) => {
     y += 6;
     doc.text(`Ngay ket thuc: ${endDate}`, margin + 2, y);
     y += 12;
+
+    // ===== BẢNG GIÁ ÁP DỤNG TẠI THỜI ĐIỂM KÝ KẾT =====
+    // Bắt buộc dùng giá CHỐT LÚC MUA (price_snapshot / unit_price_applied / total_price),
+    // tuyệt đối không lấy pkg.unitPrice hiện hành vì gói có thể đã đổi giá sau này.
+    if (y > 225) { doc.addPage(); y = 20; }
+    doc.setFontSize(13);
+    doc.setFont("NotoSans", "bold");
+    doc.text("BANG GIA AP DUNG (THEO THOI DIEM KY KET)", margin, y);
+    y += 8;
+    doc.setFontSize(11);
+    doc.setFont("NotoSans", "normal");
+
+    const snap = reg.price_snapshot || {};
+    const unitApplied = Number(reg.unit_price_applied ?? snap.unit_price ?? pkg?.unitPrice ?? 0);
+    const monthsApplied = Number(snap.months) || Number(reg.duration_months) || 1;
+    const discountPct = Number(snap.discount_percent ?? 0);
+    const totalDue = Number(reg.total_price ?? 0);
+
+    doc.text(
+      `Don gia/thang tai thoi diem mua: ${unitApplied.toLocaleString("vi-VN")} VND`,
+      margin + 2,
+      y
+    );
+    y += 6;
+    doc.text(`So thang: ${monthsApplied}`, margin + 2, y);
+    y += 6;
+    if (discountPct > 0) {
+      doc.text(
+        `Giam gia theo bang gia cua goi: ${discountPct}%`,
+        margin + 2,
+        y
+      );
+      y += 6;
+    }
+    doc.setFont("NotoSans", "bold");
+    doc.text(
+      `Thanh tien: ${totalDue.toLocaleString("vi-VN")} VND`,
+      margin + 2,
+      y
+    );
+    doc.setFont("NotoSans", "normal");
+    y += 8;
+    addVietnameseText(
+      doc,
+      "Gia tri hop dong duoc giu nguyen theo thoi diem ky ket. Neu goi tap thay doi gia sau nay, hop dong nay khong bi dieu chinh.",
+      margin + 2,
+      y,
+      { fontSize: 9, maxWidth: 165 }
+    );
+    y += 14;
+
+    // ===== PHÂN BỔ BUỔI PT THEO TỪNG THÁNG (hệ thống tự cấp lúc mua) =====
+    const ptRows = (reg.monthlySessions || []).filter(
+      (m) => m.total > 0 && m.total < 999
+    );
+    if ((pkg?.ptSessionsPerMonth > 0 || pkg?.isFullMonth) && ptRows.length > 0) {
+      if (y > 230) { doc.addPage(); y = 20; }
+      doc.setFontSize(13);
+      doc.setFont("NotoSans", "bold");
+      doc.text("PHAN BO BUOI TAP VOI HLV THEO TUNG THANG:", margin, y);
+      y += 8;
+      doc.setFontSize(11);
+      doc.setFont("NotoSans", "normal");
+      ptRows.forEach((m) => {
+        if (y > 270) { doc.addPage(); y = 20; }
+        doc.text(
+          `- Thang ${m.month}/${m.year}: ${m.total} buoi (con lai ${Math.max(0, m.total - m.used)})`,
+          margin + 2,
+          y
+        );
+        y += 6;
+      });
+      y += 6;
+    }
 
     if (pkg?.features && pkg.features.length > 0) {
       doc.setFontSize(13);
