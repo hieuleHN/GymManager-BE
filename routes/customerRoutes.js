@@ -187,6 +187,7 @@ router.get('/:id/detail360', authenticateToken, async (req, res) => {
       }
       return {
         _id: p._id, packageName: p.package_id?.name || 'Gói tập',
+        packageId: p.package_id?._id || p.package_id || null,
         start_date: p.start_date, end_date: displayEnd,
         total_price: p.total_price, payment_status: p.payment_status, status: p.status,
         location: p.locationId?.title || '',
@@ -426,7 +427,24 @@ router.post('/bulk/unfreeze', authenticateToken, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Chuyển nhượng: Admin tạo hộ yêu cầu chuyển nhượng gói
+router.post('/bulk/clear-face', authenticateToken, async (req, res) => {
+  try {
+    const { ids } = req.body;
+    if (!Array.isArray(ids) || !ids.length) return res.status(400).json({ error: 'Thiếu danh sách ID' });
+    let count = 0;
+    for (const id of ids) {
+      const cust = await Customer.findById(id);
+      if (!cust) continue;
+      if (!cust.faceDescriptor || cust.faceDescriptor.length === 0) continue;
+      cust.faceDescriptor = [];
+      await cust.save();
+      count++;
+    }
+    res.json({ message: `Đã xóa FaceID của ${count} tài khoản (trở về chưa có FaceID)` });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Chuyển nhượng: Admin tạo hộ - xử lý thẳng, không cần phê duyệt (đi thẳng vào Tất cả)
 router.post('/:id/transfer-request', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
@@ -437,20 +455,42 @@ router.post('/:id/transfer-request', authenticateToken, async (req, res) => {
     const pkg = await UserPackage.findOne({ _id: packageId, customer_id: id });
     if (!pkg) return res.status(404).json({ error: 'Không tìm thấy gói của khách' });
     // Tìm người nhận để validate
-    const recipientCust = await Customer.findOne({ $or: [{ phone: recipient }, { account: recipient }] }).select('_id fullName phone');
+    const recipientCust = await Customer.findOne({ $or: [{ phone: recipient }, { account: recipient }] }).select('_id fullName phone locationId');
     if (!recipientCust) return res.status(404).json({ error: 'Không tìm thấy người nhận với SĐT/tài khoản này' });
     if (String(recipientCust._id) === String(id)) return res.status(400).json({ error: 'Không thể chuyển cho chính mình' });
+    // Kiểm tra cùng câu lạc bộ
+    const senderLocationId = (pkg.locationId || cust.locationId)?.toString?.();
+    const recipientLocationId = recipientCust.locationId?.toString?.();
+    if (senderLocationId && recipientLocationId && senderLocationId !== recipientLocationId) {
+      return res.status(400).json({ error: 'Không thể chuyển nhượng khác câu lạc bộ' });
+    }
+    // Thực hiện chuyển nhượng ngay (giống applyServiceEffect)
+    const result = await UserPackage.updateMany(
+      { customer_id: id, package_id: pkg.package_id, status: { $in: ['đang hoạt động', 'còn 10 ngày'] } },
+      { $set: { customer_id: recipientCust._id } }
+    );
+    if (result.matchedCount === 0) {
+      pkg.customer_id = recipientCust._id;
+      await pkg.save();
+    }
+    // Tạo bản ghi dịch vụ đã duyệt thẳng (hiển thị ở Tất cả) - phân biệt bằng trạng thái Thành công
     const sr = await ServiceRequest.create({
       customer_id: id, customer_name: cust.fullName||'', customer_phone: cust.phone||'',
       service_type: 'transfer', description: reason ? `Chuyển nhượng: ${reason}` : `Admin tạo chuyển nhượng gói ${pkg.package_id} cho ${recipient}`,
       data: { packageId, recipient, recipientId: recipientCust._id, reason },
-      location_id: cust.locationId||null, status: 'pending'
+      location_id: cust.locationId||null, status: 'success', processed_by: req.user.id, processed_at: new Date(), admin_note: 'Nhân viên tạo từ danh sách khách hàng - Thành công'
     });
-    res.json({ message: 'Đã tạo yêu cầu chuyển nhượng, chờ duyệt tại admin/services', data: sr });
+    // Thông báo cho người nhận
+    try {
+      const { createNotification } = await import('../models/notificationModel.js');
+      createNotification({ recipientId: recipientCust._id, recipientRole: 'member', title: 'Gói tập được chuyển nhượng', message: `Hội viên "${cust.fullName}" đã chuyển nhượng gói tập cho bạn.`, type: 'service' }, () => {});
+    } catch {}
+    res.json({ message: 'Đã chuyển nhượng thành công (Thành công - do nhân viên tạo)', data: sr });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Thuê tủ: Admin tạo hộ yêu cầu thuê tủ
+// Thuê tủ: Admin tạo hộ - duyệt thẳng (không cần phê duyệt, hiển thị ở Tất cả)
+// Tủ đã được gán qua /api/v2/lockers/:id/assign ở FE, đây chỉ ghi lịch sử đã duyệt
 router.post('/:id/locker-request', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
@@ -461,15 +501,15 @@ router.post('/:id/locker-request', authenticateToken, async (req, res) => {
     const days = Math.min(20, Math.max(1, parseInt(durationDays)||1));
     const sr = await ServiceRequest.create({
       customer_id: id, customer_name: cust.fullName||'', customer_phone: cust.phone||'',
-      service_type: 'locker', description: reason ? `Thuê tủ: ${reason}` : `Admin tạo thuê tủ ${lockerNumber||lockerId} ${days} ngày`,
+      service_type: 'locker', description: reason ? `Thuê tủ: ${reason}` : `Nhân viên tạo thuê tủ ${lockerNumber||lockerId} ${days} ngày`,
       data: { lockerId, lockerNumber, durationDays: days, reason },
-      location_id: cust.locationId||null, status: 'pending'
+      location_id: cust.locationId||null, status: 'success', processed_by: req.user.id, processed_at: new Date(), admin_note: 'Nhân viên tạo từ danh sách khách hàng - Thành công'
     });
-    res.json({ message: 'Đã tạo yêu cầu thuê tủ, chờ duyệt tại admin/services', data: sr });
+    res.json({ message: 'Đã ghi nhận thuê tủ (Thành công - do nhân viên tạo)', data: sr });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Hủy gói / Hoàn phí: Admin tạo hộ
+// Hủy gói / Hoàn phí: Admin tạo hộ - duyệt thẳng (không cần phê duyệt)
 router.post('/:id/cancel-refund-request', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
@@ -480,13 +520,16 @@ router.post('/:id/cancel-refund-request', authenticateToken, async (req, res) =>
     const pkg = await UserPackage.findOne({ _id: packageId, customer_id: id }).populate('package_id','name');
     if (!pkg) return res.status(404).json({ error: 'Không tìm thấy gói' });
     const desc = noRefund ? `Hủy gói ${pkg.package_id?.name||''} (KHÔNG hoàn tiền)${reason?`: ${reason}`:''}` : (reason ? `Hủy gói ${pkg.package_id?.name||''}: ${reason}` : `Admin tạo hủy gói ${pkg.package_id?.name||''}`);
+    // Thực hiện hủy ngay
+    pkg.status = 'đã hủy';
+    await pkg.save();
     const sr = await ServiceRequest.create({
       customer_id: id, customer_name: cust.fullName||'', customer_phone: cust.phone||'',
       service_type: 'cancel-refund', description: desc,
       data: { packageId, reason, packageName: pkg.package_id?.name||'', noRefund: !!noRefund },
-      location_id: cust.locationId||null, status: 'pending'
+      location_id: cust.locationId||null, status: 'success', processed_by: req.user.id, processed_at: new Date(), admin_note: 'Nhân viên tạo từ danh sách khách hàng - Thành công'
     });
-    res.json({ message: 'Đã tạo yêu cầu hủy/hoàn phí, chờ duyệt tại admin/services', data: sr });
+    res.json({ message: 'Đã hủy gói thành công (Thành công - do nhân viên tạo)', data: sr });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
