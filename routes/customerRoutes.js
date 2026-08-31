@@ -10,6 +10,8 @@ import Customer from '../models/schemas/customerSchema.js';
 import UserPackage from '../models/schemas/userPackageSchema.js';
 import CheckIn from '../models/schemas/checkInSchema.js';
 import ServiceRequest from '../models/schemas/serviceRequestSchema.js';
+import WalletTransaction from '../models/schemas/walletTransactionSchema.js';
+import Location from '../models/schemas/locationSchema.js';
 import mongoose from 'mongoose';
 
 const router = express.Router();
@@ -39,7 +41,7 @@ router.get('/alerts', authenticateToken, async (req, res) => {
       payment_status: 'đã thanh toán',
       status: { $in: ['đang hoạt động', 'còn 10 ngày'] },
       end_date: { $gte: now, $lte: in7Days }
-    }).populate('customer_id', 'fullName account phone email').populate('package_id', 'name').limit(50).lean();
+    }).populate('customer_id', 'fullName account phone email gender address locationId').populate({ path: 'package_id', select: 'name disciplineId unitPrice', populate: { path: 'disciplineId', select: 'name' } }).limit(50).lean();
 
     // Đã hết hạn (quá hạn nhưng chưa hủy)
     const expired = await UserPackage.find({
@@ -47,7 +49,7 @@ router.get('/alerts', authenticateToken, async (req, res) => {
       payment_status: 'đã thanh toán',
       end_date: { $lt: now },
       status: { $ne: 'đã hủy' }
-    }).populate('customer_id', 'fullName account phone email').populate('package_id', 'name').sort({ end_date: -1 }).limit(50).lean();
+    }).populate('customer_id', 'fullName account phone email gender address locationId').populate({ path: 'package_id', select: 'name disciplineId unitPrice', populate: { path: 'disciplineId', select: 'name' } }).sort({ end_date: -1 }).limit(50).lean();
 
     // Chờ duyệt quá 48h
     const twoDaysAgo = new Date(now.getTime() - 48 * 60 * 60 * 1000);
@@ -63,16 +65,22 @@ router.get('/alerts', authenticateToken, async (req, res) => {
     res.json({
       expiring_soon: expiringSoon.map(up => ({
         _id: up._id,
-        customer: up.customer_id,
         packageName: up.package_id?.name || 'Gói tập',
+        packageId: up.package_id?._id || up.package_id || null,
+        disciplineName: up.package_id?.disciplineId?.name || '',
+        disciplineId: up.package_id?.disciplineId?._id || up.package_id?.disciplineId || null,
+        customer: up.customer_id,
         end_date: up.end_date,
         daysLeft: Math.ceil((new Date(up.end_date) - now) / (1000*60*60*24)),
         total_price: up.total_price
       })),
       expired: expired.map(up => ({
         _id: up._id,
-        customer: up.customer_id,
         packageName: up.package_id?.name || 'Gói tập',
+        packageId: up.package_id?._id || up.package_id || null,
+        disciplineName: up.package_id?.disciplineId?.name || '',
+        disciplineId: up.package_id?.disciplineId?._id || up.package_id?.disciplineId || null,
+        customer: up.customer_id,
         end_date: up.end_date,
         daysOverdue: Math.ceil((now - new Date(up.end_date)) / (1000*60*60*24)),
         total_price: up.total_price
@@ -143,21 +151,35 @@ router.get('/:id/detail360', authenticateToken, async (req, res) => {
     const customer = await Customer.findById(id).lean();
     if (!customer) return res.status(404).json({ error: 'Không tìm thấy khách hàng' });
 
-    const packages = await UserPackage.find({ customer_id: id })
+    const oid = (()=>{ try{ return new mongoose.Types.ObjectId(id); }catch{ return null; } })();
+    const orCustomer = oid ? [{ customer_id: oid }, { customerId: oid }, { customer_id: id }, { customerId: id }] : [{ customer_id: id }, { customerId: id }];
+    const packages = await UserPackage.find({ $or: orCustomer })
       .populate('package_id', 'name unitPrice duration_months')
       .populate('locationId', 'title address')
       .sort({ createdAt: -1 }).lean();
 
-    const checkins = await CheckIn.find({ customerId: id }).sort({ checkInTime: -1 }).limit(20).lean();
+    const checkins = await CheckIn.find({ $or: [{ customerId: id }, { customerId: oid }, { customerId: String(id) }] }).sort({ checkInTime: -1 }).limit(20).lean();
 
+    // LTV tính tất cả gói (khách trả tiền mặt là xong, không có "chờ thanh toán")
     const ltvAgg = await UserPackage.aggregate([
-      { $match: { customer_id: new mongoose.Types.ObjectId(id), payment_status: 'đã thanh toán' } },
-      { $group: { _id: null, total: { $sum: '$total_price' }, count: { $sum: 1 } } }
+      { $match: { $or: orCustomer } },
+      { $match: { status: { $ne: 'đã hủy' } } },
+      { $group: { _id: null, total: { $sum: { $ifNull: ['$total_price', '$totalPrice'] } }, count: { $sum: 1 } } }
     ]);
-    const ltv = ltvAgg[0]?.total || 0;
-    const packageCount = ltvAgg[0]?.count || 0;
+    let ltv = ltvAgg[0]?.total || 0;
+    let packageCount = ltvAgg[0]?.count || 0;
 
-    const activePkg = packages.find(p => new Date(p.end_date) >= new Date() && p.payment_status === 'đã thanh toán');
+    const activePkg = packages.find(p => new Date(p.end_date) >= new Date() && p.status !== 'đã hủy');
+
+    // Lịch sử liên quan đến tiền: ServiceRequest + WalletTransaction
+    const serviceRequests = await ServiceRequest.find({ customer_id: id }).sort({ createdAt: -1 }).lean();
+    let walletTxs = [];
+    try { walletTxs = await WalletTransaction.find({ customerId: id }).sort({ createdAt: -1 }).limit(50).lean(); } catch {}
+
+    // Tính lại LTV mở rộng gồm cả phí dịch vụ đã thanh toán (nếu có)
+    const servicePaidTotal = serviceRequests
+      .filter((r) => r.payment_status === 'paid' || r.status === 'success' || r.status === 'accepted')
+      .reduce((sum, r) => sum + (Number(r.amount) || 0), 0);
 
     const now = new Date();
     const enrich = packages.map(p => {
@@ -190,6 +212,13 @@ router.get('/:id/detail360', authenticateToken, async (req, res) => {
         packageId: p.package_id?._id || p.package_id || null,
         start_date: p.start_date, end_date: displayEnd,
         total_price: p.total_price, payment_status: p.payment_status, status: p.status,
+        payment_method: p.payment_method || '',
+        payment_date: p.payment_date || p.createdAt || null,
+        createdAt: p.createdAt,
+        duration_months: p.duration_months || 0,
+        unit_price_applied: p.unit_price_applied || null,
+        price_snapshot: p.price_snapshot || null,
+        vnpay_txn_ref: p.vnpay_txn_ref || null,
         location: p.locationId?.title || '',
         daysLeft: diff,
         isFrozen: p.status === 'đang tạm ngưng',
@@ -197,13 +226,84 @@ router.get('/:id/detail360', authenticateToken, async (req, res) => {
       };
     });
 
+    // Build unified payment history: gói tập + thuê tủ + các dịch vụ có phí
+    const packagePayments = enrich.map((p) => ({
+      _id: p._id,
+      type: 'package',
+      title: p.packageName,
+      amount: Number(p.total_price) || 0,
+      durationLabel: p.duration_months ? `${p.duration_months} tháng` : '',
+      date: p.payment_date || p.createdAt,
+      payment_status: p.payment_status,
+      payment_method: p.payment_method,
+      status: p.status,
+      location: p.location,
+      start_date: p.start_date,
+      end_date: p.end_date,
+      raw: p
+    }));
+
+    const lockerPayments = serviceRequests.map((r) => {
+      const isLocker = r.service_type === 'locker';
+      const amt = Number(r.amount) || 0;
+      const days = r.data?.durationDays || r.data?.duration || null;
+      // Chỉ đưa vào lịch sử thanh toán nếu liên quan đến tiền (có amount >0) hoặc là thuê tủ / hoàn phí / đổi gói có phí
+      const moneyRelated = isLocker || amt > 0 || ['cancel-refund','transfer','change-club','freeze'].includes(r.service_type);
+      // vẫn giữ tất cả locker kể cả amount=0 để hiển thị thuê tủ miễn phí
+      if (!moneyRelated && amt === 0) return null;
+      return {
+        _id: r._id,
+        type: r.service_type === 'locker' ? 'locker' : 'service',
+        title: r.service_type === 'locker'
+          ? `Thuê tủ ${r.data?.lockerNumber ? `#${r.data.lockerNumber}` : ''}${days ? ` • ${days} ngày` : ''}`.trim()
+          : r.service_type === 'cancel-refund' ? `Hủy/hoàn phí${r.data?.packageName ? `: ${r.data.packageName}` : ''}` : `${r.service_type}${r.description ? `: ${r.description.slice(0,60)}` : ''}`,
+        amount: amt,
+        durationLabel: days ? `${days} ngày` : '',
+        date: r.paid_at || r.createdAt,
+        payment_status: r.payment_status,
+        payment_method: r.payment_method || '',
+        status: r.status,
+        description: r.description,
+        data: r.data,
+        raw: r
+      };
+    }).filter(Boolean);
+
+    const walletPayments = walletTxs
+      .filter((w) => w.type === 'payment' || w.type === 'refund' || w.amount !== 0)
+      .map((w) => ({
+        _id: w._id,
+        type: 'wallet',
+        title: w.description || (w.type === 'topup' ? 'Nạp ví' : w.type === 'payment' ? 'Thanh toán ví' : 'Hoàn ví'),
+        amount: Math.abs(Number(w.amount) || 0),
+        durationLabel: '',
+        date: w.createdAt,
+        payment_status: w.status === 'completed' ? 'paid' : w.status,
+        payment_method: 'wallet',
+        status: w.status,
+        raw: w
+      }));
+
+    const allPayments = [...packagePayments, ...lockerPayments, ...walletPayments]
+      .sort((a, b) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime());
+
     res.json({
       customer: { _id: customer._id, fullName: customer.fullName, account: customer.account, phone: customer.phone, email: customer.email, status: customer.status, lockedAt: customer.lockedAt },
       packages: enrich,
       checkins: checkins.map(c => ({ _id: c._id, checkInTime: c.checkInTime, checkOutTime: c.checkOutTime, status: c.status, method: c.method })),
       ltv, packageCount,
+      servicePaidTotal,
+      ltvWithService: ltv + servicePaidTotal,
       activePackage: activePkg ? { packageName: activePkg.package_id?.name, end_date: activePkg.end_date } : null,
-      totalCheckins: checkins.length
+      totalCheckins: checkins.length,
+      serviceRequests: serviceRequests.map((r) => ({
+        _id: r._id, service_type: r.service_type, description: r.description,
+        amount: r.amount, payment_status: r.payment_status, payment_method: r.payment_method,
+        status: r.status, data: r.data, createdAt: r.createdAt, paid_at: r.paid_at
+      })),
+      walletTransactions: walletTxs,
+      payments: allPayments,
+      paymentHistory: allPayments
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -499,11 +599,23 @@ router.post('/:id/locker-request', authenticateToken, async (req, res) => {
     const cust = await Customer.findById(id).select('fullName phone locationId');
     if (!cust) return res.status(404).json({ error: 'Không tìm thấy khách hàng' });
     const days = Math.min(20, Math.max(1, parseInt(durationDays)||1));
+    let lockerAmount = 0;
+    try {
+      if (cust.locationId) {
+        const loc = await Location.findById(cust.locationId).select('serviceFees');
+        const feeCfg = (loc?.serviceFees || []).find((f) => f.service_type === 'locker');
+        if (feeCfg && feeCfg.hasFee && Number(feeCfg.fee) > 0) {
+          lockerAmount = Math.floor(Number(feeCfg.fee) * days);
+        }
+      }
+    } catch {}
     const sr = await ServiceRequest.create({
       customer_id: id, customer_name: cust.fullName||'', customer_phone: cust.phone||'',
       service_type: 'locker', description: reason ? `Thuê tủ: ${reason}` : `Nhân viên tạo thuê tủ ${lockerNumber||lockerId} ${days} ngày`,
       data: { lockerId, lockerNumber, durationDays: days, reason },
-      location_id: cust.locationId||null, status: 'success', processed_by: req.user.id, processed_at: new Date(), admin_note: 'Nhân viên tạo từ danh sách khách hàng - Thành công'
+      location_id: cust.locationId||null, status: 'success',
+      amount: lockerAmount, payment_status: lockerAmount > 0 ? 'paid' : 'unpaid', paid_at: lockerAmount > 0 ? new Date() : null,
+      processed_by: req.user.id, processed_at: new Date(), admin_note: 'Nhân viên tạo từ danh sách khách hàng - Thành công'
     });
     res.json({ message: 'Đã ghi nhận thuê tủ (Thành công - do nhân viên tạo)', data: sr });
   } catch (err) { res.status(500).json({ error: err.message }); }

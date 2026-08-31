@@ -294,8 +294,16 @@ export const confirmCheckIn = async (req, res) => {
 // 6. Lịch sử điểm danh
 export const getCheckInHistory = async (req, res) => {
     try {
-        const { date, limit = 100 } = req.query;
+        const { date, limit = 100, locationId } = req.query;
         let query = {};
+
+        if (locationId && locationId !== 'all' && String(locationId) !== 'undefined') {
+            if (mongoose.Types.ObjectId.isValid(locationId)) {
+                query.locationId = new mongoose.Types.ObjectId(locationId);
+            } else {
+                query.locationId = locationId;
+            }
+        }
 
         if (date) {
             const start = new Date(date);
