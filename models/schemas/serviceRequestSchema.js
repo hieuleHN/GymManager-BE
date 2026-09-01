@@ -3,9 +3,7 @@ import mongoose from 'mongoose';
 export const SERVICE_TYPES = [
   'freeze',
   'activate',
-  'reactivate-expired',
   'transfer',
-  'change-club',
   'contract',
   'support',
   'cancel-refund',
