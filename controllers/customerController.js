@@ -4,11 +4,13 @@ import {
   searchCustomers
 } from '../models/customerModel.js';
 import { findStaffByAccount } from '../models/staffModel.js';
+import Customer from '../models/schemas/customerSchema.js';
+import bcrypt from 'bcryptjs';
 import fs from 'fs';
 import path from 'path';
 
 export const register = (req, res) => {
-  const { account, password, locationId } = req.body;
+  const { account, password, locationId, fullName, gender, phone, email, address, idNumber, registerDate } = req.body;
   if (!account || !password) {
     return res.status(400).json({ error: 'Vui lòng nhập tài khoản và mật khẩu!' });
   }
@@ -24,6 +26,38 @@ export const register = (req, res) => {
       if (err) return res.status(500).json({ error: err.message });
       if (staff) return res.status(400).json({ error: 'Tên tài khoản đã tồn tại trong hệ thống!' });
 
+      // Nếu admin đăng ký tại quầy có đủ thông tin (fullName/phone/email) -> tạo luôn với đầy đủ TT, hiển thị ngay ở danh sách, không vào "Chưa điền TT"
+      const hasFullInfo = !!(fullName && phone && email);
+      if (hasFullInfo) {
+        (async () => {
+          try {
+            const salt = await bcrypt.genSalt(10);
+            const hashedPassword = await bcrypt.hash(password, salt);
+            const cust = new Customer({
+              account,
+              password: hashedPassword,
+              locationId: locationId || null,
+              fullName,
+              gender: gender || 'Nam',
+              phone,
+              email,
+              address: address || '',
+              idNumber: idNumber || '',
+              registerDate: registerDate ? new Date(registerDate) : new Date(),
+              status: 'approved',
+              createdAt: new Date(),
+              updatedAt: new Date()
+            });
+            const saved = await cust.save();
+            return res.status(201).json({ message: 'Đăng ký khách hàng thành công!', customerId: saved._id });
+          } catch (e) {
+            return res.status(400).json({ error: e.message || 'Lỗi đăng ký!' });
+          }
+        })();
+        return;
+      }
+
+      // Hội viên tự đăng ký ở nhà (auth?mode=register) chỉ có account/password/locationId -> pending
       createCustomer({ account, password, locationId }, (err, result) => {
         if (err) {
           return res.status(400).json({ error: err.message || 'Lỗi đăng ký!' });
