@@ -1,6 +1,10 @@
 import mongoose from 'mongoose';
 
 const policySchema = new mongoose.Schema({
+  menuTitle: {
+    type: String,
+    required: true
+  },
   title: {
     type: String,
     required: true
