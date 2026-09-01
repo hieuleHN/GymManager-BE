@@ -4,6 +4,10 @@ export const getAllSimple = async () => {
   return Policy.find().sort({ createdAt: -1 });
 };
 
+export const getAllPublic = async () => {
+  return Policy.find().select('menuTitle title description').sort({ createdAt: 1 });
+};
+
 export const getByIds = async (ids) => {
   return Policy.find({ _id: { $in: ids } });
 };
@@ -33,8 +37,8 @@ export const getById = async (id, callback) => {
 
 export const create = async (data, callback) => {
   try {
-    const { title, description, locationId } = data;
-    const policy = new Policy({ title, description, locationId });
+    const { menuTitle, title, description, locationId } = data;
+    const policy = new Policy({ menuTitle, title, description, locationId });
     const saved = await policy.save();
     callback(null, { id: saved._id });
   } catch (err) {
