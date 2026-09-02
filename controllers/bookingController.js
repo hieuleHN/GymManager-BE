@@ -573,16 +573,16 @@ export const listTransferRequests = (req, res) => {
 
 export const getMyTrainerBookings = async (req, res) => {
   const trainerId = req.user.id;
-  const { dateFrom, dateTo } = req.query;
+  const { dateFrom, dateTo, locationId } = req.query;
 
   const manageAll = await isScheduleManager(req.user);
   if (manageAll) {
-    getAllScheduleBookings(dateFrom, dateTo, (err, bookings) => {
+    getAllScheduleBookings(dateFrom, dateTo, locationId || null, (err, bookings) => {
       if (err) return res.status(500).json({ error: err.message });
       res.json(bookings);
     });
   } else {
-    getTrainerBookings(trainerId, dateFrom, dateTo, (err, bookings) => {
+    getTrainerBookings(trainerId, dateFrom, dateTo, locationId || null, (err, bookings) => {
       if (err) return res.status(500).json({ error: err.message });
       res.json(bookings);
     });
