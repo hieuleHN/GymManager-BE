@@ -3,9 +3,7 @@ import mongoose from 'mongoose';
 export const SERVICE_TYPES = [
   'freeze',
   'activate',
-  'reactivate-expired',
   'transfer',
-  'change-club',
   'contract',
   'support',
   'cancel-refund',
@@ -13,7 +11,7 @@ export const SERVICE_TYPES = [
   'complaint'
 ];
 
-export const SERVICE_STATUSES = ['pending', 'awaiting_payment', 'accepted', 'rejected', 'cancelled'];
+export const SERVICE_STATUSES = ['pending', 'awaiting_payment', 'accepted', 'rejected', 'cancelled', 'success'];
 export const PAYMENT_STATUSES = ['unpaid', 'paid', 'refunded'];
 
 const serviceRequestSchema = new mongoose.Schema({

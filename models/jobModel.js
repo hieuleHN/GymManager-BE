@@ -6,7 +6,6 @@ export const createJob = async (data, callback) => {
     if (existing) return callback({ message: 'Tên công việc đã tồn tại!' });
     const job = new Job({
       name: data.name,
-      salary: data.salary || 0,
       description: data.description || '',
       isAdmin: data.isAdmin || false,
       permissions: data.permissions || []

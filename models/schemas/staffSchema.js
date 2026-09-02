@@ -26,6 +26,9 @@ const staffSchema = new mongoose.Schema({
     enum: ['Nam', 'Nữ', 'Khác'],
     default: 'Nam'
   },
+  dateOfBirth: {
+    type: Date
+  },
   job: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Job',
@@ -95,6 +98,10 @@ const staffSchema = new mongoose.Schema({
   pricePerSession: {
     type: Number,
     default: 500000
+  },
+  faceDescriptor: {
+    type: [Number],
+    default: []
   },
   balance: {
     type: Number,

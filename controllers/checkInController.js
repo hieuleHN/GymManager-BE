@@ -75,22 +75,37 @@ export const verifyFaceCheckIn = async (req, res) => {
             return res.status(403).json({ error: `Tài khoản ${customer.fullName} đã bị khóa, vui lòng liên hệ lễ tân để kích hoạt lại!` });
         }
 
-        // Chặn nếu tất cả gói đang bị đóng băng
-        const activePkgs = await UserPackage.find({ customer_id: customer._id, status: 'đang tạm ngưng' }).lean();
-        if (activePkgs.length) {
-            const hasFrozen = activePkgs.some(p => p.frozenUntil && new Date(p.frozenUntil) > new Date());
-            if (hasFrozen) {
-                const until = activePkgs.find(p => p.frozenUntil)?.frozenUntil;
+        // Kiểm tra gói đóng băng: cho phép điểm danh nếu còn ít nhất 1 gói đang hoạt động
+        // Chỉ chặn khi TẤT CẢ gói đều đóng băng, còn lại thì chỉ thông báo
+        const nowForFrozen = new Date();
+        const activeValidPkgs = await UserPackage.find({
+            customer_id: customer._id,
+            status: { $in: ['đang hoạt động', 'còn 10 ngày'] },
+            payment_status: 'đã thanh toán',
+            end_date: { $gte: nowForFrozen }
+        }).lean();
+        const frozenPkgs = await UserPackage.find({ customer_id: customer._id, status: 'đang tạm ngưng' }).lean().then(list => list.map(p => ({ ...p, _populate: null })));
+        // Populate package names cho frozen để hiển thị thông báo
+        let frozenWithNames = [];
+        if (frozenPkgs.length) {
+            const populated = await UserPackage.find({ _id: { $in: frozenPkgs.map(p => p._id) } }).populate('package_id', 'name').lean();
+            frozenWithNames = populated;
+        }
+        let frozenNotice = null;
+        if (frozenPkgs.length) {
+            if (activeValidPkgs.length === 0) {
+                // Tất cả đều đóng băng -> chặn
+                const until = frozenWithNames.find(p => p.frozenUntil)?.frozenUntil;
                 const untilStr = until ? new Date(until).toLocaleDateString('vi-VN') : '';
-                return res.status(403).json({ error: `Gói tập của ${customer.fullName} đang được đóng băng${untilStr?` đến ${untilStr}`:''}. Vui lòng kích hoạt lại trước khi điểm danh!` });
-            }
-            // Nếu đang tạm ngưng nhưng không có frozenUntil -> cũng chặn (do khóa TK)
-            if (activePkgs.length && customer.status !== 'locked') {
-                // Kiểm tra nếu tất cả gói đang hoạt động đều bị đóng băng
-                const allFrozen = (await UserPackage.countDocuments({ customer_id: customer._id, status: { $in: ['đang hoạt động','còn 10 ngày'] }, payment_status: 'đã thanh toán', end_date: { $gte: new Date() } })) === 0;
-                if (allFrozen && activePkgs.length) {
-                    return res.status(403).json({ error: `Gói tập của ${customer.fullName} đang được đóng băng. Vui lòng kích hoạt lại trước khi điểm danh!` });
-                }
+                const names = frozenWithNames.map(p => p.package_id?.name || 'Gói tập').join(', ');
+                return res.status(403).json({ error: `Tất cả gói tập của ${customer.fullName} đang được đóng băng${untilStr ? ` đến ${untilStr}` : ''} (${names}). Vui lòng kích hoạt lại trước khi điểm danh!` });
+            } else {
+                // Còn gói hoạt động -> cho phép, chỉ ghi nhận thông báo để FE hiển thị
+                frozenNotice = `${frozenWithNames.length} gói đang đóng băng: ${frozenWithNames.map(p => {
+                    const n = p.package_id?.name || 'Gói';
+                    const untilStr2 = p.frozenUntil ? ` đến ${new Date(p.frozenUntil).toLocaleDateString('vi-VN')}` : '';
+                    return `${n}${untilStr2}`;
+                }).join(', ')}`;
             }
         }
 
@@ -117,21 +132,22 @@ export const verifyFaceCheckIn = async (req, res) => {
             checkInTime: { $gte: startOfDay, $lte: endOfDay }
         }).sort({ checkInTime: -1 });
 
-        // A. Kiểm tra xem có bản ghi nào ĐÃ check-out chưa
-        const hasCompletedSession = todayRecords.some(r => r.checkOutTime != null && r.checkOutTime !== "");
-
-        if (hasCompletedSession) {
-            return res.status(400).json({
-                error: `Hội viên ${customer.fullName} đã hoàn thành buổi tập hôm nay! Mỗi hội viên chỉ được check-in/check-out 1 lần trong ngày.`
-            });
-        }
+        // Cho phép check-in/out nhiều lần trong ngày - chỉ chặn nếu đang có phiên chưa checkout
+        // Đếm số lần đã check-in hôm nay để hiển thị
+        const checkCountToday = todayRecords.length;
 
         // B. Kiểm tra xem có bản ghi ĐANG check-in (chưa check-out) hay không
         const activeCheckIn = todayRecords.find(r => !r.checkOutTime);
 
         if (activeCheckIn) {
-            // Thực hiện CHECK-OUT
+            // Chặn checkout quá nhanh: phải đợi 10s sau check-in mới được checkout
             const now = new Date();
+            const elapsedMs = now.getTime() - new Date(activeCheckIn.checkInTime).getTime();
+            const CHECKOUT_COOLDOWN_MS = 10000;
+            if (elapsedMs < CHECKOUT_COOLDOWN_MS) {
+                const remain = Math.ceil((CHECKOUT_COOLDOWN_MS - elapsedMs) / 1000);
+                return res.status(429).json({ error: `Vừa check-in lúc ${new Date(activeCheckIn.checkInTime).toLocaleTimeString('vi-VN')}. Vui lòng đợi ${remain}s nữa mới được check-out.` });
+            }
             const totalMinutes = Math.max(1, Math.round((now.getTime() - new Date(activeCheckIn.checkInTime).getTime()) / 60000));
 
             activeCheckIn.checkOutTime = now;
@@ -146,10 +162,15 @@ export const verifyFaceCheckIn = async (req, res) => {
 
             await activeCheckIn.save();
 
+            // Tính số lần check-in hôm nay (số phiên đã tạo)
+            const totalSessionsToday = checkCountToday;
+            const sessionIndex = Math.ceil(totalSessionsToday / 1); // mỗi record là 1 lần vào
             return res.status(200).json({
                 status: "checked-out",
-                message: "Check-out thành công!",
+                message: `Check-out thành công! (Lần ${sessionIndex} hôm nay)`,
                 totalMinutes,
+                checkCount: totalSessionsToday,
+                totalSessionsToday,
                 customer: {
                     id: customer._id,
                     fullName: customer.fullName,
@@ -158,7 +179,7 @@ export const verifyFaceCheckIn = async (req, res) => {
             });
         }
 
-        // C. Chưa có lượt điểm danh nào trong hôm nay => Tiến hành CHECK-IN LẦN ĐẦU
+        // C. Chưa có phiên đang mở => Tiến hành CHECK-IN (cho phép nhiều lần/ngày)
         let userPackages = [];
         try {
             userPackages = await UserPackage.find({
@@ -190,9 +211,19 @@ export const verifyFaceCheckIn = async (req, res) => {
                 return !st || ["đang hoạt động", "còn 10 ngày", "active", "hoạt động"].includes(st);
             }) || userPackages[0];
 
-            pkgs = userPackages.map(up => {
+            const now = new Date();
+            // Chỉ lấy gói đang hoạt động, đã thanh toán và chưa hết hạn
+            const activePkgs = userPackages.filter(up => {
+                const st = (up.status || "").toLowerCase();
+                const isActiveStatus = ["đang hoạt động", "còn 10 ngày", "active", "hoạt động"].includes(st);
+                const isPaid = !up.payment_status || up.payment_status === 'đã thanh toán' || up.paymentStatus === 'paid';
+                const end = new Date(up.end_date || up.endDate || 0);
+                const notExpired = end.getTime() >= now.getTime();
+                return isActiveStatus && isPaid && notExpired;
+            });
+            const pkgsToShow = activePkgs.length > 0 ? activePkgs : [];
+            pkgs = pkgsToShow.map(up => {
                 const end = new Date(up.end_date || up.endDate || Date.now());
-                const now = new Date();
                 const diffDays = Math.ceil((end.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
                 const pkgName = up.package_id?.name || up.packageId?.name || up.packageName || "Gói tập Gym";
                 return {
@@ -230,9 +261,14 @@ export const verifyFaceCheckIn = async (req, res) => {
         const newRecord = new CheckIn(checkInData);
         await newRecord.save();
 
+        const totalSessionsToday = checkCountToday + 1;
         return res.status(200).json({
             status: "checked-in",
-            message: "Check-in thành công!",
+            message: `Check-in thành công! (Lần ${totalSessionsToday} hôm nay)`,
+            checkCount: totalSessionsToday,
+            totalSessionsToday,
+            frozenNotice,
+            frozenPackages: frozenWithNames.map(p => ({ name: p.package_id?.name || 'Gói tập', frozenUntil: p.frozenUntil })),
             customer: {
                 id: customer._id,
                 fullName: customer.fullName,
@@ -274,8 +310,16 @@ export const confirmCheckIn = async (req, res) => {
 // 6. Lịch sử điểm danh
 export const getCheckInHistory = async (req, res) => {
     try {
-        const { date, limit = 100 } = req.query;
+        const { date, limit = 100, locationId } = req.query;
         let query = {};
+
+        if (locationId && locationId !== 'all' && String(locationId) !== 'undefined') {
+            if (mongoose.Types.ObjectId.isValid(locationId)) {
+                query.locationId = new mongoose.Types.ObjectId(locationId);
+            } else {
+                query.locationId = locationId;
+            }
+        }
 
         if (date) {
             const start = new Date(date);
