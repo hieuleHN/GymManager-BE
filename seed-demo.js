@@ -252,6 +252,9 @@ async function createPackages(locs, disciplines) {
         ptSessionsPerMonth: b.pt,
         isFullMonth: b.full,
         description: `Gói tập ${b.name} tại ${loc.title}`,
+        contractA: `Bên A (ZenFitness ${loc.title}) cam kết cung cấp đầy đủ cơ sở vật chất, HLV chuyên nghiệp, đảm bảo an toàn cho hội viên trong ${b.months} tháng.`,
+        contractB: `Bên B cam kết tuân thủ nội quy phòng tập, thanh toán đúng hạn, bảo quản tài sản chung và tập luyện đúng giáo án HLV giao.`,
+        contractTerms: `Điều khoản chung: Gói ${b.name} có thời hạn ${b.months} tháng, không hoàn phí sau 7 ngày kể từ ngày kích hoạt, được bảo lưu tối đa 2 tháng nếu có lý do chính đáng.`,
       });
     }
   }
@@ -358,8 +361,40 @@ async function createBookings(customers, staff) {
       updatedAt: createdAt,
     });
   }
+  // Đảm bảo mỗi HLV hôm nay có 1-3 lịch để cột Hoa hồng ở StaffList luôn có số
+  const todayStr = new Date().toISOString().slice(0,10);
+  const todayDate = new Date(todayStr);
+  for (const trainer of trainers) {
+    const countToday = Math.random() < 0.3 ? 0 : rand(1, 3);
+    for (let k = 0; k < countToday; k++) {
+      const cust = pick(customers.filter(c => String(c.locationId) === String(trainer.locationId) && c.status === "approved"));
+      if (!cust) continue;
+      const slot = pick([
+        { start: "06:00", end: "07:30" },
+        { start: "09:00", end: "10:30" },
+        { start: "15:00", end: "16:30" },
+        { start: "18:00", end: "19:30" },
+      ]);
+      // Tránh trùng giờ đã có
+      if (bookings.some(b => String(b.trainerId) === String(trainer._id) && b.date.getTime() === todayDate.getTime() && b.time === slot.start)) continue;
+      bookings.push({
+        customerId: cust._id,
+        trainerId: trainer._id,
+        date: todayDate,
+        time: slot.start,
+        startTime: slot.start,
+        endTime: slot.end,
+        locationId: trainer.locationId,
+        status: "confirmed",
+        price: trainer.pricePerSession || 500000,
+        paymentStatus: "paid",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+    }
+  }
   const docs = await Booking.insertMany(bookings);
-  console.log(`✅ Bookings: ${docs.length} (500 lịch, pending chỉ trong 24h, quá hạn -> cancelled)`);
+  console.log(`✅ Bookings: ${docs.length} (500 + hôm nay mỗi HLV 1-3 lịch, pending chỉ trong 24h)`);
   return docs;
 }
 
