@@ -287,18 +287,20 @@ export const getPendingTransferRequests = async (callback) => {
   }
 };
 
-export const getTrainerBookings = async (trainerId, dateFrom, dateTo, callback) => {
+export const getTrainerBookings = async (trainerId, dateFrom, dateTo, locationId, callback) => {
   try {
+    if (typeof locationId === 'function') { callback = locationId; locationId = null; }
     const dateFilter = {};
     if (dateFrom) dateFilter.$gte = new Date(dateFrom);
     if (dateTo) dateFilter.$lte = new Date(dateTo);
     const hasDateFilter = dateFrom || dateTo;
+    const locFilter = locationId ? { locationId } : {};
 
     const bookings = await Booking.find({
       $or: [
-        { trainerId, status: { $in: ['pending', 'confirmed'] }, ...(hasDateFilter ? { date: dateFilter } : {}) },
-        { transferToTrainerId: trainerId, transferStatus: 'approved', ...(hasDateFilter ? { date: dateFilter } : {}) },
-        { transferredFromTrainerId: trainerId, transferStatus: 'approved', ...(hasDateFilter ? { date: dateFilter } : {}) }
+        { trainerId, status: { $in: ['pending', 'confirmed'] }, ...(hasDateFilter ? { date: dateFilter } : {}), ...locFilter },
+        { transferToTrainerId: trainerId, transferStatus: 'approved', ...(hasDateFilter ? { date: dateFilter } : {}), ...locFilter },
+        { transferredFromTrainerId: trainerId, transferStatus: 'approved', ...(hasDateFilter ? { date: dateFilter } : {}), ...locFilter }
       ]
     })
       .populate('customerId', 'fullName phone email avatar')
@@ -312,17 +314,20 @@ export const getTrainerBookings = async (trainerId, dateFrom, dateTo, callback) 
   }
 };
 
-export const getAllScheduleBookings = async (dateFrom, dateTo, callback) => {
+export const getAllScheduleBookings = async (dateFrom, dateTo, locationId, callback) => {
   try {
+    if (typeof locationId === 'function') { callback = locationId; locationId = null; }
     const dateFilter = {};
     if (dateFrom) dateFilter.$gte = new Date(dateFrom);
     if (dateTo) dateFilter.$lte = new Date(dateTo);
     const hasDateFilter = dateFrom || dateTo;
+    const locFilter = locationId ? { locationId } : {};
 
     const bookings = await Booking.find({
       trainerId: { $ne: null },
       status: { $in: ['pending', 'confirmed'] },
-      ...(hasDateFilter ? { date: dateFilter } : {})
+      ...(hasDateFilter ? { date: dateFilter } : {}),
+      ...locFilter
     })
       .populate('customerId', 'fullName phone email avatar')
       .populate('trainerId', 'fullName')
