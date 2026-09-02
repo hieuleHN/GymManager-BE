@@ -135,6 +135,7 @@ export const updateStaffById = async (id, data, callback) => {
     if (data.certifications !== undefined) staff.certifications = data.certifications;
     if (data.disciplineId !== undefined) staff.disciplineId = data.disciplineId;
     if (data.pricePerSession !== undefined) staff.pricePerSession = data.pricePerSession;
+    if (data.commissionPT !== undefined) staff.commissionPT = data.commissionPT;
 
     const saved = await staff.save();
     callback(null, saved);

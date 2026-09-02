@@ -755,6 +755,132 @@ export const checkConflict = (req, res) => {
   });
 };
 
+// Admin tạo lịch tập cho hội viên (không qua thanh toán, tạo luôn và lưu lịch sử)
+export const adminCreateBooking = async (req, res) => {
+  const { customerId, trainerId, disciplineId, slots, dates, time, startTime, endTime, locationId, note, price } = req.body;
+  if (!customerId) return res.status(400).json({ error: 'Vui lòng chọn hội viên!' });
+  if (!trainerId) return res.status(400).json({ error: 'Vui lòng chọn HLV!' });
+
+  let bookingSlots;
+  if (slots && Array.isArray(slots) && slots.length > 0) {
+    bookingSlots = slots.map(s => ({
+      date: s.date,
+      time: s.time || '',
+      startTime: s.startTime || s.time || '',
+      endTime: s.endTime || (s.startTime || s.time ? (() => {
+        const start = s.startTime || s.time || '';
+        const [h, m] = start.split(':').map(Number);
+        const m2 = m + 90;
+        return `${String(h + Math.floor(m2 / 60)).padStart(2, '0')}:${String(m2 % 60).padStart(2, '0')}`;
+      })() : '')
+    }));
+  } else if (dates && Array.isArray(dates) && dates.length > 0) {
+    if (!time) return res.status(400).json({ error: 'Vui lòng chọn giờ!' });
+    const start = startTime || time || '';
+    const end = endTime || (start ? (() => {
+      const [h, m] = start.split(':').map(Number);
+      const m2 = m + 90;
+      return `${String(h + Math.floor(m2 / 60)).padStart(2, '0')}:${String(m2 % 60).padStart(2, '0')}`;
+    })() : '');
+    bookingSlots = dates.map(dateStr => ({ date: dateStr, time: time || '', startTime: start, endTime: end }));
+  } else {
+    return res.status(400).json({ error: 'Vui lòng chọn ít nhất một ngày!' });
+  }
+
+  const batchId = `BATCH${Date.now()}${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+  const resolved = await resolveDiscipline(disciplineId);
+
+  let freeSessionsRemaining = 0;
+  let ptRegistrationId = null;
+  if (trainerId && resolved.disciplineId) {
+    const now = new Date();
+    const month = now.getMonth() + 1;
+    const year = now.getFullYear();
+    const userPkgs = await UserPackage.find({
+      customer_id: customerId,
+      payment_status: 'đã thanh toán',
+      status: { $in: ['đang hoạt động', 'còn 10 ngày'] },
+      end_date: { $gt: new Date() }
+    }).populate({ path: 'package_id', select: 'disciplineId disciplines' });
+    const targetDiscId = resolved.disciplineId ? resolved.disciplineId.toString() : null;
+    const matched = userPkgs.find(r => {
+      const pkg = r.package_id || {};
+      const discId = pkg.disciplineId ? (pkg.disciplineId._id || pkg.disciplineId).toString() : null;
+      const comboIds = (pkg.disciplines || []).map(d => (d._id || d).toString());
+      return (discId && targetDiscId && discId === targetDiscId) || comboIds.includes(targetDiscId);
+    });
+    if (matched) {
+      ptRegistrationId = matched._id.toString();
+      if (matched.isFullMonth) freeSessionsRemaining = Infinity;
+      else {
+        const monthly = (matched.monthlySessions || []).find(m => m.month === month && m.year === year);
+        if (monthly) freeSessionsRemaining = monthly.total - monthly.used;
+      }
+    }
+  }
+
+  const created = [];
+  const errors = [];
+  let freeSlotIndex = 0;
+
+  for (const slot of bookingSlots) {
+    let slotPrice = price || 0;
+    let isFree = false;
+    if (trainerId && freeSlotIndex < freeSessionsRemaining) {
+      slotPrice = 0;
+      isFree = true;
+      freeSlotIndex++;
+    }
+    const bookingData = {
+      batchId,
+      customerId,
+      trainerId: trainerId || null,
+      date: slot.date,
+      time: slot.time,
+      startTime: slot.startTime,
+      endTime: slot.endTime,
+      disciplineId: resolved.disciplineId,
+      disciplineName: resolved.disciplineName,
+      locationId,
+      note,
+      price: slotPrice,
+      paymentStatus: 'paid',
+      status: 'confirmed'
+    };
+    const conflict = await new Promise((resolve) => {
+      checkTrainerConflict(trainerId, slot.date, slot.time, null, (err, conflict) => {
+        resolve(err ? null : conflict);
+      });
+    });
+    if (conflict) {
+      errors.push({ date: slot.date, time: slot.time, error: 'HLV đã có lịch vào thời gian này!' });
+      continue;
+    }
+    try {
+      const booking = await new Promise((resolve, reject) => {
+        createBooking(bookingData, (err, booking) => {
+          if (err) reject(err);
+          else resolve(booking);
+        });
+      });
+      if (isFree) await deductPtSession(customerId, ptRegistrationId);
+      created.push(booking);
+    } catch (e) {
+      errors.push({ date: slot.date, time: slot.time, error: e.message });
+    }
+  }
+
+  const freeCount = Math.min(freeSlotIndex, bookingSlots.length);
+  res.status(201).json({
+    message: errors.length > 0
+      ? `Đã tạo ${created.length} buổi thành công! ${errors.length} buổi bị lỗi.${freeCount ? ` (${freeCount} buổi miễn phí)` : ''}`
+      : `Đã tạo ${created.length} buổi thành công!${freeCount ? ` (${freeCount} buổi miễn phí)` : ''}`,
+    bookings: created,
+    errors,
+    freeSessionsUsed: freeCount
+  });
+};
+
 export const updatePayment = (req, res) => {
   const { id } = req.params;
   const { paymentMethod } = req.body;

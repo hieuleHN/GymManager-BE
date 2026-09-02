@@ -192,8 +192,8 @@ export const create = (req, res) => {
 };
 
 export const update = (req, res) => {
-  const { fullName, email, phone, gender, dateOfBirth, job, address, status, avatar, coverImage, description, specialties, gallery, experience, certifications, disciplineId, pricePerSession } = req.body;
-  const data = { fullName, email, phone, gender, dateOfBirth, job, address, status, avatar, coverImage, description, specialties, gallery, experience, certifications, disciplineId, pricePerSession };
+  const { fullName, email, phone, gender, dateOfBirth, job, address, status, avatar, coverImage, description, specialties, gallery, experience, certifications, disciplineId, pricePerSession, commissionPT } = req.body;
+  const data = { fullName, email, phone, gender, dateOfBirth, job, address, status, avatar, coverImage, description, specialties, gallery, experience, certifications, disciplineId, pricePerSession, commissionPT };
   Object.keys(data).forEach(k => data[k] === undefined && delete data[k]);
   updateStaffById(req.params.id, data, (err, staff) => {
     if (err) return res.status(400).json({ error: err.message || 'Lỗi cập nhật!' });

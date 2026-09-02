@@ -526,7 +526,7 @@ export const exportDailyDetail = async (req, res) => {
     if (loc) attMatch.locationId = loc;
 
     const records = await StaffAttendance.find(attMatch)
-      .populate({ path: 'staffId', select: 'fullName account phone email gender job locationId status avatar', populate: { path: 'job', select: 'name' } })
+      .populate({ path: 'staffId', select: 'fullName account phone email gender job locationId status avatar pricePerSession commissionPT', populate: { path: 'job', select: 'name permissions' } })
       .populate('shiftId', 'shift')
       .sort({ checkInTime: 1 })
       .lean();
@@ -583,6 +583,9 @@ export const exportDailyDetail = async (req, res) => {
       { header: "Tủ đồ", key: "locker", width: 14 },
       { header: "Số lịch dạy", key: "trainingCount", width: 12 },
       { header: "Chi tiết lịch dạy", key: "trainingDetail", width: 40 },
+      { header: "Phí/buổi (VNĐ)", key: "pricePerSession", width: 16 },
+      { header: "Hoa hồng (%)", key: "commissionRate", width: 12 },
+      { header: "Hoa hồng hôm nay (VNĐ)", key: "commissionToday", width: 18 },
     ];
     ws.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
     ws.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF4F46E5' } };
@@ -608,6 +611,16 @@ export const exportDailyDetail = async (req, res) => {
       const locker = lockerMap.get(st.fullName) || lockerMap.get(st.phone) || '-';
       const trainings = bookingMap.get(sid) || [];
       const trainingDetail = trainings.length ? trainings.map(t => `${t.customerId?.fullName || 'HV'} ${t.startTime||t.time||''} (${t.status})`).join('; ') : 'Không có lịch';
+      const isTrainer = (() => {
+        const j = st.job;
+        if (!j) return false;
+        const perms = j.permissions || [];
+        const nameNorm = (j.name || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+        return perms.includes('huan_luyen_vien') || nameNorm.includes('huan luyen vien') || nameNorm.includes('hlv') || nameNorm.includes('trainer') || nameNorm.includes('pt');
+      })();
+      const pricePerSession = isTrainer ? (st.pricePerSession ?? 500000) : null;
+      const commissionRate = isTrainer ? (st.commissionPT ?? 0) : null;
+      const commissionToday = isTrainer && trainings.length ? (commissionRate > 0 ? Math.round(pricePerSession * trainings.length * commissionRate / 100) : pricePerSession * trainings.length) : (isTrainer ? 0 : null);
       ws.addRow({
         stt: idx++,
         fullName: st.fullName || '',
@@ -628,6 +641,9 @@ export const exportDailyDetail = async (req, res) => {
         locker,
         trainingCount: trainings.length,
         trainingDetail,
+        pricePerSession: isTrainer ? pricePerSession.toLocaleString('vi-VN') : '-',
+        commissionRate: isTrainer ? `${commissionRate}%` : '-',
+        commissionToday: isTrainer ? commissionToday.toLocaleString('vi-VN') : '-',
       });
     }
     ws.eachRow((row, i) => {
