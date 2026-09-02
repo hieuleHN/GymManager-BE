@@ -12,6 +12,7 @@ const equipmentSchema = new mongoose.Schema({
   purchaser: { type: String, required: true },
   description: { type: String, default: '' },
   warranty_period: { type: Number, default: 12 },
+  depreciationMonths: { type: Number, default: 60 },
   location_id: { type: mongoose.Schema.Types.ObjectId, ref: 'Location', required: true },
   createdAt: { type: Date, default: Date.now },
   reports: [{

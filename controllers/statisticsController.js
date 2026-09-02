@@ -254,8 +254,7 @@ export const getFinanceStatistics = async (req, res) => {
       cogsPrev += (p.costPrice || 0) * soldPrev;
     });
 
-    // ============ 3c. KHẤU HAO THIẾT BỊ (Nguyên giá / 60 tháng = 5 năm) ============
-    const DEPRECIATION_MONTHS = 60;
+    // ============ 3c. KHẤU HAO THIẾT BỊ (Nguyên giá / depreciationMonths) ============
     const equipmentFilter = locationId ? { location_id: locationId } : {};
     const equipments = await Equipment.find(equipmentFilter);
     const now = new Date();
@@ -264,7 +263,8 @@ export const getFinanceStatistics = async (req, res) => {
     function calcDepreciation(eq, periodStart, periodEnd) {
       const total = eq.total || 0;
       if (total <= 0) return 0;
-      const monthlyDepr = total / DEPRECIATION_MONTHS;
+      const depMonths = eq.depreciationMonths || 60;
+      const monthlyDepr = total / depMonths;
       const eqStart = new Date(eq.createdAt);
       // Số tháng thiết bị tồn tại đến hết kỳ
       const monthsToEnd = (periodEnd.getFullYear() - eqStart.getFullYear()) * 12
@@ -274,8 +274,7 @@ export const getFinanceStatistics = async (req, res) => {
       const monthsToStart = (periodStart.getFullYear() - eqStart.getFullYear()) * 12
         + (periodStart.getMonth() - eqStart.getMonth());
       const activeMonths = Math.max(0, monthsToEnd - Math.max(0, monthsToStart));
-      // Không vượt quá 60 tháng và không vượt quá nguyên giá
-      const totalDepreciated = monthlyDepr * Math.min(activeMonths, DEPRECIATION_MONTHS);
+      const totalDepreciated = monthlyDepr * Math.min(activeMonths, depMonths);
       return Math.min(totalDepreciated, total);
     }
 
@@ -309,15 +308,15 @@ export const getFinanceStatistics = async (req, res) => {
       const value = equipments.reduce((sum, e) => {
         const total = e.total || 0;
         if (total <= 0) return sum;
-        const monthlyDepr = total / DEPRECIATION_MONTHS;
+        const depMonths = e.depreciationMonths || 60;
+        const monthlyDepr = total / depMonths;
         const eqStart = new Date(e.createdAt);
         // Kiểm tra thiết bị có hoạt động trong tháng này không
         if (eqStart > mEnd) return sum;
         const monthsFromStart = (mEnd.getFullYear() - eqStart.getFullYear()) * 12
           + (mEnd.getMonth() - eqStart.getMonth()) + 1;
         if (monthsFromStart <= 0) return sum;
-        // Đã khấu hao hết chưa?
-        const totalDepreciatedSoFar = monthlyDepr * Math.min(monthsFromStart, DEPRECIATION_MONTHS);
+        const totalDepreciatedSoFar = monthlyDepr * Math.min(monthsFromStart, depMonths);
         if (totalDepreciatedSoFar > total) return sum;
         return sum + monthlyDepr;
       }, 0);
@@ -327,10 +326,11 @@ export const getFinanceStatistics = async (req, res) => {
     // Chi tiết khấu hao từng thiết bị (dùng cho Excel export)
     const depreciationDetail = equipments.filter(e => (e.total || 0) > 0).map(e => {
       const total = e.total || 0;
-      const monthlyDepr = total / DEPRECIATION_MONTHS;
+      const depMonths = e.depreciationMonths || 60;
+      const monthlyDepr = total / depMonths;
       const eqStart = new Date(e.createdAt);
       const monthsActive = Math.min(
-        DEPRECIATION_MONTHS,
+        depMonths,
         Math.max(0, (now.getFullYear() - eqStart.getFullYear()) * 12 + (now.getMonth() - eqStart.getMonth()) + 1)
       );
       const totalDepreciated = Math.min(monthlyDepr * monthsActive, total);
@@ -692,7 +692,7 @@ export const getFinanceStatistics = async (req, res) => {
       if (depr > 0) {
           depreciationDetails.push({
             date: eq.createdAt, name: `Khấu hao: ${eq.name}`, category: 'Tiền thiết bị',
-            amount: Math.round(depr), note: `Nguyên giá ${(eq.total || 0).toLocaleString('vi-VN')}đ / 60 tháng`, type: 'depreciation'
+            amount: Math.round(depr), note: `Nguyên giá ${(eq.total || 0).toLocaleString('vi-VN')}đ / ${eq.depreciationMonths || 60} tháng`, type: 'depreciation'
           });
       }
     });
@@ -1034,10 +1034,11 @@ export const getFinanceStatistics = async (req, res) => {
           const clubDepreciation = clubEquipments.reduce((sum, eq) => {
             const total = eq.total || 0;
             if (total <= 0) return sum;
-            const monthlyDepr = total / 60;
+            const depMonths = eq.depreciationMonths || 60;
+            const monthlyDepr = total / depMonths;
             const eqStart = new Date(eq.createdAt);
             if (eqStart > now) return sum;
-            const monthsFromStart = Math.min(60, Math.max(1, (now.getFullYear() - eqStart.getFullYear()) * 12 + (now.getMonth() - eqStart.getMonth()) + 1));
+            const monthsFromStart = Math.min(depMonths, Math.max(1, (now.getFullYear() - eqStart.getFullYear()) * 12 + (now.getMonth() - eqStart.getMonth()) + 1));
             const totalDep = Math.min(monthlyDepr * monthsFromStart, total);
             // Phân bổ theo kỳ
             const overlapStart = eqStart > start ? eqStart : start;

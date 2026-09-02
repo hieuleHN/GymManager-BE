@@ -9,11 +9,12 @@ const expenseSchema = new mongoose.Schema({
   description: {
     type: String,
     required: true,
+    trim: true,
   },
   amount: {
     type: Number,
     required: true,
-    min: 0,
+    min: [0.01, 'Số tiền phải lớn hơn 0'],
   },
   date: {
     type: Date,
@@ -22,6 +23,7 @@ const expenseSchema = new mongoose.Schema({
   note: {
     type: String,
     default: "",
+    trim: true,
   },
   locationId: {
     type: mongoose.Schema.Types.ObjectId,

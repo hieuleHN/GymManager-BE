@@ -37,6 +37,11 @@ const expenseSchemaV2 = new mongoose.Schema({
     note: {
         type: String,
         default: ''
+    },
+    locationId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Location',
+        default: null
     }
 }, {
     timestamps: true

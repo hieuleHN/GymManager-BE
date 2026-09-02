@@ -3,10 +3,13 @@ import * as ExpenseModel from '../models/expenseModel.js';
 export const list = (req, res) => {
   const page = parseInt(req.query.page) || 1;
   const limit = parseInt(req.query.limit) || 15;
-  const { locationId, category } = req.query;
+  const { locationId, category, startDate, endDate, search } = req.query;
   const filters = {};
   if (locationId) filters.locationId = locationId;
   if (category) filters.category = category;
+  if (startDate) filters.startDate = startDate;
+  if (endDate) filters.endDate = endDate;
+  if (search) filters.search = search;
   ExpenseModel.getAll(page, limit, filters, (err, result) => {
     if (err) return res.status(500).json({ error: 'Lỗi lấy danh sách: ' + err.message });
     res.json(result);
@@ -14,9 +17,12 @@ export const list = (req, res) => {
 };
 
 export const summary = (req, res) => {
-  const { locationId } = req.query;
+  const { locationId, startDate, endDate, search } = req.query;
   const filters = {};
   if (locationId) filters.locationId = locationId;
+  if (startDate) filters.startDate = startDate;
+  if (endDate) filters.endDate = endDate;
+  if (search) filters.search = search;
   ExpenseModel.getSummary(filters, (err, result) => {
     if (err) return res.status(500).json({ error: 'Lỗi lấy tổng hợp: ' + err.message });
     res.json(result);

@@ -5,6 +5,17 @@ export const getAll = async (page = 1, limit = 15, filters = {}, callback) => {
     const filter = {};
     if (filters.locationId) filter.locationId = filters.locationId;
     if (filters.category) filter.category = filters.category;
+    if (filters.startDate || filters.endDate) {
+      filter.date = {};
+      if (filters.startDate) filter.date.$gte = new Date(filters.startDate);
+      if (filters.endDate) filter.date.$lte = new Date(filters.endDate + 'T23:59:59.999Z');
+    }
+    if (filters.search) {
+      filter.$or = [
+        { description: { $regex: filters.search, $options: 'i' } },
+        { note: { $regex: filters.search, $options: 'i' } },
+      ];
+    }
     const skip = (page - 1) * limit;
     const [data, total] = await Promise.all([
       Expense.find(filter).sort({ date: -1 }).skip(skip).limit(limit),
@@ -26,6 +37,17 @@ export const getSummary = async (filters = {}, callback) => {
   try {
     const filter = {};
     if (filters.locationId) filter.locationId = filters.locationId;
+    if (filters.startDate || filters.endDate) {
+      filter.date = {};
+      if (filters.startDate) filter.date.$gte = new Date(filters.startDate);
+      if (filters.endDate) filter.date.$lte = new Date(filters.endDate + 'T23:59:59.999Z');
+    }
+    if (filters.search) {
+      filter.$or = [
+        { description: { $regex: filters.search, $options: 'i' } },
+        { note: { $regex: filters.search, $options: 'i' } },
+      ];
+    }
     const result = await Expense.aggregate([
       { $match: filter },
       {
