@@ -10,6 +10,7 @@ import { initPackageStatusScheduler } from "./services/cronService.js";
 import messageMonitorRoutes from "./routes/messageMonitorRoutes.js";
 import sensitiveKeywordRoutes from "./routes/sensitiveKeywordRoutes.js";
 import { startEquipmentCron } from "./cronjobs/equipmentCron.js";
+import { startCustomerExpiryCron } from "./cronjobs/customerExpiryCron.js";
 
 import userPackageRoutes from "./routes/userPackageRoutes.js";
 import productRoutes from "./routes/productRoutes.js";
@@ -20,7 +21,6 @@ import recruitmentRoutes from "./routes/recruitmentRoutes.js";
 import customerRoutes from "./routes/customerRoutes.js";
 import staffRoutes from "./routes/staffRoutes.js";
 import jobRoutes from "./routes/jobRoutes.js";
-import salaryRoutes from "./routes/salaryRoutes.js";
 import permissionRoutes from "./routes/permissionRoutes.js";
 import policyRoutes from "./routes/policyRoutes.js";
 import expenseRoutes from "./routes/expenseRoutes.js";
@@ -34,6 +34,7 @@ import walletRoutes from "./routes/walletRoutes.js";
 import staffShiftRoutes from "./routes/staffShiftRoutes.js";
 import dashboardRoutes from "./routes/dashboardRoutes.js";
 import statisticsRoutes from "./routes/statisticsRoutes.js";
+import packageAnalyticsRoutes from "./routes/packageAnalyticsRoutes.js";
 import staffWalletRoutes from "./routes/staffWalletRoutes.js";
 import staffAttendanceRoutes from "./routes/staffAttendanceRoutes.js";
 import authRoutes from "./routes/authRoutes.js";
@@ -54,6 +55,7 @@ import siteSettingRoutes from "./routes/siteSettingRoutes.js";
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: "50mb" }));
+app.use(express.urlencoded({ limit: "50mb", extended: true }));
 app.use("/uploads", express.static("uploads"));
 
 // Chống crash do lỗi bất đồng bộ nền (cron job, callback...) - log ra thay vì thoát process
@@ -82,7 +84,6 @@ app.use("/api/product-returns", productReturnRoutes);
 app.use("/api/customers", customerRoutes);
 app.use("/api/staff", staffRoutes);
 app.use("/api/jobs", jobRoutes);
-app.use("/api/salary", salaryRoutes);
 app.use("/api/permissions", permissionRoutes);
 app.use("/api/policies", policyRoutes);
 app.use("/api/expenses", expenseRoutes);
@@ -102,6 +103,7 @@ app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/articles", articleRoutes);
 
 app.use("/api/statistics", statisticsRoutes);
+app.use("/api/package-analytics", packageAnalyticsRoutes);
 app.use("/api/staff-wallet", staffWalletRoutes);
 app.use("/api/staff-attendance", staffAttendanceRoutes);
 
@@ -129,11 +131,14 @@ app.use("/api/audit-logs", auditLogRoutes);
 
 initPackageStatusScheduler();
 startEquipmentCron();
+startCustomerExpiryCron();
 
 // Chạy sau khi MongoDB đã kết nối thành công
 setTimeout(async () => {
   try {
-    console.log('[Startup] Đang xử lý dữ liệu cũ + giao dịch chờ thanh toán quá hạn...');
+    console.log(
+      "[Startup] Đang xử lý dữ liệu cũ + giao dịch chờ thanh toán quá hạn...",
+    );
     await migratePackageLifecycleStatus();
     await autoCancelPendingBookings();
     await autoCancelPendingPackages();

@@ -226,10 +226,12 @@ export const update = async (req, res) => {
     }
 };
 
-// POST /api/v2/lockers/:id/assign - Gán tủ cho hội viên/nhân viên { personType, name, phone }
+// POST /api/v2/lockers/:id/assign - Gán tủ cho hội viên/nhân viên { personType, name, phone, rentalDays, note }
+// Luồng thuê tủ (có rentalDays) -> trạng thái ĐANG THUÊ (lưu rentalDays/rentedAt giống luồng hội viên Services)
+// Luồng mượn trong ngày (không rentalDays) -> trạng thái ĐANG SỬ DỤNG
 export const assign = async (req, res) => {
     try {
-        const { personType, name, phone } = req.body;
+        const { personType, name, phone, rentalDays, note } = req.body;
         const locker = await LockerV2.findById(req.params.id);
         if (!locker) return res.status(404).json({ success: false, message: "Không tìm thấy tủ!" });
         if (!ensureOwned(locker, stationLocationId(req))) {
@@ -241,12 +243,24 @@ export const assign = async (req, res) => {
         if (locker.status === LOCKER_STATUS.MAINTENANCE) {
             return res.status(400).json({ success: false, message: `Tủ ${locker.lockerNumber} đang bảo trì!` });
         }
+        // Phân biệt thuê tủ (có rentalDays) vs sử dụng trong ngày (không rentalDays)
+        const days = parseInt(rentalDays, 10);
+        const isRental = Number.isFinite(days) && days > 0;
+
         locker.status = LOCKER_STATUS.OCCUPIED;
         locker.previousStatus = null;
         locker.assignedType = personType === "STAFF" ? "STAFF" : "MEMBER";
         locker.assignedName = String(name || "").trim();
         locker.assignedPhone = String(phone || "").trim();
         locker.assignedAt = new Date();
+        if (isRental) {
+            locker.rentalDays = Math.min(20, Math.max(1, days));
+            locker.rentedAt = locker.assignedAt;
+        } else {
+            locker.rentalDays = 0;
+            locker.rentedAt = null;
+        }
+        if (note !== undefined) locker.note = String(note || "").trim();
         clearMaintenance(locker);
         await locker.save();
 
@@ -275,9 +289,10 @@ export const assign = async (req, res) => {
             } catch (e) { /* không chặn luồng gán tủ khi ghi thiếu thông tin tủ */ }
         }
 
+        const isRentMsg = isRental ? ` đã thuê tủ ${locker.lockerNumber} ${locker.rentalDays} ngày` : `Đã gán tủ ${locker.lockerNumber} cho ${locker.assignedName || "khách hàng"}`;
         return res.json({
             success: true,
-            message: `Đã gán tủ ${locker.lockerNumber} cho ${locker.assignedName || "khách hàng"}`,
+            message: isRental ? `Đã cho thuê tủ ${locker.lockerNumber} cho ${locker.assignedName || "khách hàng"} ${locker.rentalDays} ngày` : `Đã gán tủ ${locker.lockerNumber} cho ${locker.assignedName || "khách hàng"}`,
             data: locker
         });
     } catch (error) {

@@ -36,6 +36,9 @@ export const createServiceRequest = async (req, res) => {
     if (!service_type) {
       return res.status(400).json({ error: 'Thiếu loại dịch vụ!' });
     }
+    if (['reactivate-expired', 'change-club'].includes(service_type)) {
+      return res.status(400).json({ error: 'Dịch vụ này đã ngừng hỗ trợ!' });
+    }
 
     const customer = await Customer.findById(req.user.id).select('fullName phone locationId');
     if (!customer) {
@@ -119,31 +122,6 @@ export const listRequests = async (req, res) => {
       );
     });
 
-    // Đánh dấu yêu cầu chuyển cơ sở khi hội viên có lịch tập với HLV
-    const changeClubRequests = (result.data || []).filter(r => r.service_type === 'change-club');
-    if (changeClubRequests.length > 0) {
-      const now = new Date();
-      const customerIds = [...new Set(
-        changeClubRequests
-          .map(r => (r.customer_id?._id || r.customer_id)?.toString())
-          .filter(Boolean)
-      )];
-      const hlvBookings = await Booking.find({
-        customerId: { $in: customerIds },
-        trainerId: { $ne: null },
-        date: { $gte: now },
-        status: { $nin: ['cancelled', 'rejected'] }
-      }).select('customerId').lean();
-      const memberWithHlv = new Set(hlvBookings.map(b => b.customerId?.toString()).filter(Boolean));
-      result.data.forEach(r => {
-        if (r.service_type !== 'change-club') return;
-        const cid = (r.customer_id?._id || r.customer_id)?.toString();
-        if (cid && memberWithHlv.has(cid)) {
-          r.set?.('has_hlv_booking', true, { strict: false });
-        }
-      });
-    }
-
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -156,33 +134,6 @@ const applyServiceEffect = async (request) => {
     const result = await completeLockerRequest(request);
     if (result.ok) return { locker: result.locker };
     return result;
-  }
-
-  // Chuyển cơ sở: không cần packageId, xử lý trước khi check regId
-  if (request.service_type === 'change-club') {
-    const targetClub = request.data?.targetClub;
-    if (!targetClub) {
-      console.error('[ServiceRequest] Thiếu cơ sở chuyển đến:', request.data);
-      return;
-    }
-    const customer = await Customer.findByIdAndUpdate(
-      request.customer_id,
-      { locationId: targetClub, updatedAt: new Date() },
-      { new: true }
-    );
-    // Cập nhật cơ sở cho toàn bộ gói tập của hội viên
-    await UserPackage.updateMany(
-      { customer_id: request.customer_id },
-      { $set: { locationId: targetClub, updatedAt: new Date() } }
-    );
-    createNotification({
-      recipientId: request.customer_id,
-      recipientRole: 'member',
-      title: 'Chuyển cơ sở thành công',
-      message: `Yêu cầu chuyển cơ sở của bạn đã được duyệt. Cơ sở hiện tại của bạn đã được cập nhật.`,
-      type: 'service'
-    }, () => {});
-    return;
   }
 
   const regId = request.data?.packageId || request.data?.registrationId || request.data?.userPackageId;
@@ -213,18 +164,6 @@ const applyServiceEffect = async (request) => {
       reg.status = 'đang tạm ngưng';
       await reg.save();
     }
-  }
-
-  if (request.service_type === 'reactivate-expired') {
-    const months = parseInt(request.data?.duration) || 1;
-    const end = new Date(now);
-    end.setMonth(end.getMonth() + months);
-    reg.start_date = now;
-    reg.end_date = end;
-    reg.frozenAt = null;
-    reg.frozenUntil = null;
-    reg.status = 'đang hoạt động';
-    await reg.save();
   }
 
   if (request.service_type === 'activate') {
@@ -606,9 +545,13 @@ export const handleRequest = async (req, res) => {
 
     let refundAmount = 0;
     if (action === 'accepted' && request.service_type === 'cancel-refund') {
-      refundAmount = Math.floor(Number(req.body.refund_amount));
-      if (!refundAmount || refundAmount <= 0) {
-        return res.status(400).json({ error: 'Vui lòng nhập số tiền hoàn hợp lệ!' });
+      if (request.data?.noRefund) {
+        refundAmount = 0;
+      } else {
+        refundAmount = Math.floor(Number(req.body.refund_amount));
+        if (!refundAmount || refundAmount <= 0) {
+          return res.status(400).json({ error: 'Vui lòng nhập số tiền hoàn hợp lệ!' });
+        }
       }
     }
 
