@@ -3,7 +3,7 @@ import { authenticateToken } from '../middleware/authMiddleware.js';
 import { uploadDynamic } from '../middleware/uploadMiddleware.js';
 import {
   register, list, detail, update, remove, approve, reject, pendingList, myInfo, submitInfo, publicProfile, uploadAvatar,
-  search
+  search, changePassword
 } from '../controllers/customerController.js';
 import { login } from '../controllers/customerAuthController.js';
 import Customer from '../models/schemas/customerSchema.js';
@@ -693,6 +693,7 @@ router.get('/pending', authenticateToken, pendingList);
 router.get('/my-info', authenticateToken, myInfo);
 router.post('/submit-info', authenticateToken, handleUpload, submitInfo);
 router.post('/avatar', authenticateToken, uploadDynamic('customers').single('avatar'), uploadAvatar);
+router.post('/change-password', authenticateToken, changePassword);
 router.get('/:id', authenticateToken, detail);
 router.put('/:id', authenticateToken, handleUpload, update);
 router.delete('/:id', authenticateToken, remove);

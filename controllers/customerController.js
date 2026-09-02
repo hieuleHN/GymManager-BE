@@ -196,3 +196,28 @@ export const uploadAvatar = (req, res) => {
     res.json({ message: 'Cập nhật ảnh đại diện thành công!', avatar });
   });
 };
+
+export const changePassword = async (req, res) => {
+  try {
+    const customerId = req.user.id;
+    const { currentPassword, newPassword } = req.body;
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ error: 'Vui lòng nhập đầy đủ mật khẩu hiện tại và mật khẩu mới!' });
+    }
+    if (newPassword.length < 6) {
+      return res.status(400).json({ error: 'Mật khẩu mới phải có ít nhất 6 ký tự!' });
+    }
+    const customer = await Customer.findById(customerId);
+    if (!customer) return res.status(404).json({ error: 'Không tìm thấy tài khoản!' });
+    const isMatch = await bcrypt.compare(currentPassword, customer.password);
+    if (!isMatch) return res.status(400).json({ error: 'Mật khẩu hiện tại không đúng!' });
+    const salt = await bcrypt.genSalt(10);
+    const hashed = await bcrypt.hash(newPassword, salt);
+    customer.password = hashed;
+    customer.updatedAt = new Date();
+    await customer.save();
+    res.json({ message: 'Đổi mật khẩu thành công!' });
+  } catch (err) {
+    res.status(500).json({ error: err.message || 'Lỗi đổi mật khẩu!' });
+  }
+};
