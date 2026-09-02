@@ -10,6 +10,8 @@ import Staff from '../models/schemas/staffSchema.js';
 import StaffAttendance from '../models/schemas/staffAttendanceSchema.js';
 import StaffShift from '../models/schemas/staffShiftSchema.js';
 import Location from '../models/schemas/locationSchema.js';
+import Job from '../models/schemas/jobSchema.js';
+import Booking from '../models/schemas/bookingSchema.js';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'Phong_Gym_Master_Key_2026';
 
@@ -83,11 +85,65 @@ export const login = (req, res) => {
   });
 };
 
-export const list = (req, res) => {
+export const list = async (req, res) => {
   const page = parseInt(req.query.page) || 1;
   const limit = parseInt(req.query.limit) || 10;
   const { locationId, search, status, job, gender } = req.query;
   const filter = { locationId, search, status, job, gender };
+
+  // Phân quyền hiển thị danh sách nhân viên theo job của người đăng nhập:
+  // - Admin (isAdmin=true) => xem tất cả
+  // - Quản lý không phân quyền => ẩn những bản ghi có phân quyền (job.isAdmin=true)
+  // - Lễ tân => ẩn những bản ghi có quyền là quản lý (job.name chứa "quản lý" hoặc permissions chứa "quan_ly")
+  try {
+    const user = req.user;
+    const isAdminUser = !!user?.isAdmin;
+    const normalize = (s) => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+    const roleNorm = normalize(user?.role || '');
+
+    if (!isAdminUser && user?.isStaff) {
+      const isManager = roleNorm.includes('quan ly');
+      const isReception = roleNorm.includes('le tan');
+
+      if (isManager) {
+        // Quản lý: ẩn admin
+        const adminJobs = await Job.find({ isAdmin: true }).select('_id');
+        const excludeIds = adminJobs.map(j => j._id);
+        if (excludeIds.length) {
+          // nếu client đã filter theo job cụ thể mà job đó bị loại thì trả rỗng
+          if (filter.job && excludeIds.some(id => String(id) === String(filter.job))) {
+            return res.json({ data: [], total: 0, page, limit, totalPages: 0 });
+          }
+          filter.excludeJobIds = excludeIds;
+        }
+      } else if (isReception) {
+        // Lễ tân: ẩn quản lý (và ẩn luôn admin để đảm bảo phân cấp)
+        const excludedJobs = await Job.find({
+          $or: [
+            { isAdmin: true },
+            { name: { $regex: 'quản lý', $options: 'i' } },
+            { name: { $regex: 'quan ly', $options: 'i' } },
+            { permissions: 'quan_ly' }
+          ]
+        }).select('_id');
+        const excludeIds = excludedJobs.map(j => j._id);
+        if (excludeIds.length) {
+          if (filter.job && excludeIds.some(id => String(id) === String(filter.job))) {
+            return res.json({ data: [], total: 0, page, limit, totalPages: 0 });
+          }
+          filter.excludeJobIds = excludeIds;
+        }
+      } else {
+        // Các role khác (kế toán, HLV...) mặc định ẩn admin để không lộ tài khoản phân quyền
+        const adminJobs = await Job.find({ isAdmin: true }).select('_id');
+        const excludeIds = adminJobs.map(j => j._id);
+        if (excludeIds.length) filter.excludeJobIds = excludeIds;
+      }
+    }
+  } catch (e) {
+    console.error('[staff.list] filter error', e);
+  }
+
   getAllStaff(page, limit, filter, (err, result) => {
     if (err) return res.status(500).json({ error: 'Lỗi lấy danh sách: ' + err.message });
     res.json(result);
@@ -228,10 +284,41 @@ export const verifyFaceAttendance = async (req, res) => {
     const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0,0,0);
     const dayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23,59,59);
     const existing = await StaffAttendance.findOne({ staffId: staff._id, date: { $gte: dayStart, $lte: dayEnd }, checkOutTime: null }).sort({ checkInTime: -1 });
-    const shift = await StaffAttendance.findOne ? await StaffShift.findOne({ staffId: staff._id, date: { $gte: dayStart, $lte: dayEnd } }) : null;
+    // Lấy tất cả ca hôm nay để xác định Sáng/Chiều/Cả ngày
+    const shiftsToday = await StaffShift.find({ staffId: staff._id, date: { $gte: dayStart, $lte: dayEnd } });
+    const shiftTypes = shiftsToday.map(s => s.shift);
+    let shiftLabel = null;
+    if (shiftTypes.includes('morning-noon') && shiftTypes.includes('afternoon-evening')) shiftLabel = 'Cả ngày';
+    else if (shiftTypes.includes('morning-noon')) shiftLabel = 'Sáng';
+    else if (shiftTypes.includes('afternoon-evening')) shiftLabel = 'Chiều';
+    // Lấy ca chính để tính late/early (ưu tiên ca đầu tiên)
+    const primaryShift = shiftsToday[0] || null;
     let shiftInfo = null;
-    if (shift && SHIFT_TIMES[shift.shift]) shiftInfo = { type: shift.shift, start: SHIFT_TIMES[shift.shift].start, end: SHIFT_TIMES[shift.shift].end };
+    if (primaryShift && SHIFT_TIMES[primaryShift.shift]) shiftInfo = { type: primaryShift.shift, start: SHIFT_TIMES[primaryShift.shift].start, end: SHIFT_TIMES[primaryShift.shift].end };
+    // Kiểm tra lịch tập với hội viên hôm nay
+    const todayBookings = await Booking.find({ trainerId: staff._id, date: { $gte: dayStart, $lte: dayEnd } }).populate('customerId', 'fullName').lean();
+    const hasTrainingToday = todayBookings.length > 0;
+    const trainingCount = todayBookings.length;
+    const trainingSummary = todayBookings.slice(0, 3).map(b => ({ customerName: b.customerId?.fullName || 'Hội viên', time: b.startTime || b.time || '', status: b.status }));
+
+    // Build staff detail trả về
+    const staffDetail = {
+      id: staff._id,
+      fullName: staff.fullName,
+      phone: staff.phone || '',
+      avatar: staff.avatar || '',
+      job: staff.job?.name || '',
+      jobId: staff.job?._id || null,
+      locationId: staff.locationId || null
+    };
+
     if (existing) {
+      const elapsedMs = now.getTime() - new Date(existing.checkInTime).getTime();
+      const CHECKOUT_COOLDOWN_MS = 10000;
+      if (elapsedMs < CHECKOUT_COOLDOWN_MS) {
+        const remain = Math.ceil((CHECKOUT_COOLDOWN_MS - elapsedMs) / 1000);
+        return res.status(429).json({ error: `Vừa chấm công vào lúc ${new Date(existing.checkInTime).toLocaleTimeString('vi-VN')}. Vui lòng đợi ${remain}s nữa mới được chấm công ra.` });
+      }
       existing.checkOutTime = now;
       existing.status = 'checked-out';
       await existing.save();
@@ -244,13 +331,45 @@ export const verifyFaceAttendance = async (req, res) => {
       if (todayPenalty > 0) staff.latePenalty = (staff.latePenalty || 0) + todayPenalty;
       if (todayBonus > 0) staff.attendanceBonus = (staff.attendanceBonus || 0) + todayBonus;
       await staff.save();
-      return res.json({ message: 'Check-out thành công!', staff: { id: staff._id, fullName: staff.fullName, job: staff.job?.name }, shift: shiftInfo, status: 'checked-out', checkInTime: existing.checkInTime, checkOutTime: now, minutesLate: checkInMinutesLate, minutesEarly, overtime, totalMinutes: Math.round((now - existing.checkInTime)/60000), todayBonus, todayPenalty });
+      return res.json({
+        message: 'Check-out thành công!',
+        type: 'staff',
+        staff: staffDetail,
+        shift: shiftInfo,
+        shiftLabel,
+        shiftsToday: shiftTypes,
+        hasTrainingToday,
+        trainingCount,
+        trainingSummary,
+        status: 'checked-out',
+        checkInTime: existing.checkInTime,
+        checkOutTime: now,
+        minutesLate: checkInMinutesLate,
+        minutesEarly,
+        overtime,
+        totalMinutes: Math.round((now - existing.checkInTime)/60000),
+        todayBonus,
+        todayPenalty
+      });
     }
     let status = 'checked-in';
     let minutesLate = 0;
     if (shiftInfo) { minutesLate = calcMinutesLate(now, shiftInfo.start); if (minutesLate > 0) status = 'late'; }
-    const attendance = await StaffAttendance.create({ staffId: staff._id, shiftId: shift?._id || null, date: now, checkInTime: now, locationId: staff.locationId, status, minutesLate });
-    res.json({ message: 'Check-in thành công!', staff: { id: staff._id, fullName: staff.fullName, job: staff.job?.name }, shift: shiftInfo, status, checkInTime: now, minutesLate });
+    await StaffAttendance.create({ staffId: staff._id, shiftId: primaryShift?._id || null, date: now, checkInTime: now, locationId: staff.locationId, status, minutesLate });
+    res.json({
+      message: 'Check-in thành công!',
+      type: 'staff',
+      staff: staffDetail,
+      shift: shiftInfo,
+      shiftLabel,
+      shiftsToday: shiftTypes,
+      hasTrainingToday,
+      trainingCount,
+      trainingSummary,
+      status,
+      checkInTime: now,
+      minutesLate
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

@@ -1,7 +1,7 @@
 import express from 'express';
 import excelJS from "exceljs";
 import { authenticateToken } from '../middleware/authMiddleware.js';
-import { generateQR, verifyQR, todayAttendance, attendanceHistory, attendanceStats, attendanceAbsences } from '../controllers/staffAttendanceController.js';
+import { generateQR, verifyQR, todayAttendance, attendanceHistory, attendanceStats, attendanceAbsences, exportDailyDetail } from '../controllers/staffAttendanceController.js';
 import StaffAttendance from '../models/schemas/staffAttendanceSchema.js';
 
 const router = express.Router();
@@ -66,5 +66,6 @@ router.get('/today', authenticateToken, todayAttendance);
 router.get('/history', authenticateToken, attendanceHistory);
 router.get('/stats', authenticateToken, attendanceStats);
 router.get('/absences', authenticateToken, attendanceAbsences);
+router.get('/export/daily-detail', authenticateToken, exportDailyDetail);
 
 export default router;

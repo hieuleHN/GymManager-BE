@@ -140,8 +140,14 @@ export const verifyFaceCheckIn = async (req, res) => {
         const activeCheckIn = todayRecords.find(r => !r.checkOutTime);
 
         if (activeCheckIn) {
-            // Thực hiện CHECK-OUT
+            // Chặn checkout quá nhanh: phải đợi 10s sau check-in mới được checkout
             const now = new Date();
+            const elapsedMs = now.getTime() - new Date(activeCheckIn.checkInTime).getTime();
+            const CHECKOUT_COOLDOWN_MS = 10000;
+            if (elapsedMs < CHECKOUT_COOLDOWN_MS) {
+                const remain = Math.ceil((CHECKOUT_COOLDOWN_MS - elapsedMs) / 1000);
+                return res.status(429).json({ error: `Vừa check-in lúc ${new Date(activeCheckIn.checkInTime).toLocaleTimeString('vi-VN')}. Vui lòng đợi ${remain}s nữa mới được check-out.` });
+            }
             const totalMinutes = Math.max(1, Math.round((now.getTime() - new Date(activeCheckIn.checkInTime).getTime()) / 60000));
 
             activeCheckIn.checkOutTime = now;
@@ -205,9 +211,19 @@ export const verifyFaceCheckIn = async (req, res) => {
                 return !st || ["đang hoạt động", "còn 10 ngày", "active", "hoạt động"].includes(st);
             }) || userPackages[0];
 
-            pkgs = userPackages.map(up => {
+            const now = new Date();
+            // Chỉ lấy gói đang hoạt động, đã thanh toán và chưa hết hạn
+            const activePkgs = userPackages.filter(up => {
+                const st = (up.status || "").toLowerCase();
+                const isActiveStatus = ["đang hoạt động", "còn 10 ngày", "active", "hoạt động"].includes(st);
+                const isPaid = !up.payment_status || up.payment_status === 'đã thanh toán' || up.paymentStatus === 'paid';
+                const end = new Date(up.end_date || up.endDate || 0);
+                const notExpired = end.getTime() >= now.getTime();
+                return isActiveStatus && isPaid && notExpired;
+            });
+            const pkgsToShow = activePkgs.length > 0 ? activePkgs : [];
+            pkgs = pkgsToShow.map(up => {
                 const end = new Date(up.end_date || up.endDate || Date.now());
-                const now = new Date();
                 const diffDays = Math.ceil((end.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
                 const pkgName = up.package_id?.name || up.packageId?.name || up.packageName || "Gói tập Gym";
                 return {

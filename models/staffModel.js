@@ -70,6 +70,15 @@ export const getAllStaff = async (page = 1, limit = 10, filterOrLocationId, call
     if (filter.status) mongoFilter.status = filter.status;
     if (filter.job) mongoFilter.job = filter.job;
     if (filter.gender) mongoFilter.gender = filter.gender;
+    if (filter.excludeJobIds && Array.isArray(filter.excludeJobIds) && filter.excludeJobIds.length) {
+      // Loại bỏ các job bị cấm xem (admin/manager) – kết hợp với filter.job nếu có
+      if (mongoFilter.job) {
+        // đã có job cụ thể, nếu job đó nằm trong exclude thì đã return rỗng ở controller
+        mongoFilter.job = { $in: [mongoFilter.job], $nin: filter.excludeJobIds };
+      } else {
+        mongoFilter.job = { $nin: filter.excludeJobIds };
+      }
+    }
     if (filter.search) {
       const esc = filter.search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const regex = new RegExp(esc, 'i');
@@ -82,7 +91,7 @@ export const getAllStaff = async (page = 1, limit = 10, filterOrLocationId, call
     }
     const skip = (page - 1) * limit;
     const [data, total] = await Promise.all([
-      Staff.find(mongoFilter).populate('job', 'name').sort({ createdAt: -1 }).skip(skip).limit(limit),
+      Staff.find(mongoFilter).populate('job', 'name').sort({ status: 1, createdAt: -1 }).skip(skip).limit(limit),
       Staff.countDocuments(mongoFilter)
     ]);
     callback(null, { data, total, page, limit, totalPages: Math.ceil(total / limit) });
