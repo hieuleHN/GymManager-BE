@@ -4,6 +4,8 @@ import Job from '../models/schemas/jobSchema.js';
 import StaffAttendance from '../models/schemas/staffAttendanceSchema.js';
 import StaffShift from '../models/schemas/staffShiftSchema.js';
 import Location from '../models/schemas/locationSchema.js';
+import Booking from '../models/schemas/bookingSchema.js';
+import { LockerV2 } from '../models/lockerManagementModel.js';
 
 // Lấy ID phòng tập của máy quét từ tài khoản nhân viên đang đăng nhập (locationId trong token).
 // Admin / tài khoản không gắn phòng tập -> null (quản lý toàn bộ).
@@ -93,18 +95,35 @@ export const verifyQR = async (req, res) => {
       checkOutTime: null
     }).sort({ checkInTime: -1 });
 
-    const shift = await StaffShift.findOne({
+    const shiftsToday = await StaffShift.find({
       staffId: staff._id,
       date: { $gte: dayStart, $lte: dayEnd }
     });
-
+    const shiftTypes = shiftsToday.map(s => s.shift);
+    let shiftLabel = null;
+    if (shiftTypes.includes('morning-noon') && shiftTypes.includes('afternoon-evening')) shiftLabel = 'Cả ngày';
+    else if (shiftTypes.includes('morning-noon')) shiftLabel = 'Sáng';
+    else if (shiftTypes.includes('afternoon-evening')) shiftLabel = 'Chiều';
+    const primaryShift = shiftsToday[0] || null;
     let shiftInfo = null;
-    if (shift && SHIFT_TIMES[shift.shift]) {
-      shiftInfo = { type: shift.shift, start: SHIFT_TIMES[shift.shift].start, end: SHIFT_TIMES[shift.shift].end };
+    if (primaryShift && SHIFT_TIMES[primaryShift.shift]) {
+      shiftInfo = { type: primaryShift.shift, start: SHIFT_TIMES[primaryShift.shift].start, end: SHIFT_TIMES[primaryShift.shift].end };
     }
+    // Lịch tập với hội viên hôm nay
+    const todayBookings = await Booking.find({ trainerId: staff._id, date: { $gte: dayStart, $lte: dayEnd } }).populate('customerId', 'fullName').lean();
+    const hasTrainingToday = todayBookings.length > 0;
+    const trainingCount = todayBookings.length;
+    const trainingSummary = todayBookings.slice(0, 3).map(b => ({ customerName: b.customerId?.fullName || 'Hội viên', time: b.startTime || b.time || '', status: b.status }));
+    const staffDetail = { id: staff._id, fullName: staff.fullName, job: staff.job?.name, phone: staff.phone || '', avatar: staff.avatar || '', locationId: staff.locationId || null };
 
-    // Check-out flow
+    // Check-out flow - chặn checkout quá nhanh 10s
     if (existing) {
+      const elapsedMs = now.getTime() - new Date(existing.checkInTime).getTime();
+      const CHECKOUT_COOLDOWN_MS = 10000;
+      if (elapsedMs < CHECKOUT_COOLDOWN_MS) {
+        const remain = Math.ceil((CHECKOUT_COOLDOWN_MS - elapsedMs) / 1000);
+        return res.status(429).json({ error: `Vừa chấm công vào lúc ${new Date(existing.checkInTime).toLocaleTimeString('vi-VN')}. Vui lòng đợi ${remain}s nữa mới được chấm công ra.` });
+      }
       existing.checkOutTime = now;
       existing.status = 'checked-out';
       await existing.save();
@@ -135,8 +154,14 @@ export const verifyQR = async (req, res) => {
 
       return res.json({
         message: 'Check-out thành công!',
-        staff: { id: staff._id, fullName: staff.fullName, job: staff.job?.name, phone: staff.phone },
+        type: 'staff',
+        staff: staffDetail,
         shift: shiftInfo,
+        shiftLabel,
+        shiftsToday: shiftTypes,
+        hasTrainingToday,
+        trainingCount,
+        trainingSummary,
         status: 'checked-out',
         checkInTime: existing.checkInTime,
         checkOutTime: now,
@@ -158,9 +183,9 @@ export const verifyQR = async (req, res) => {
       if (minutesLate > 0) status = 'late';
     }
 
-    const attendance = await StaffAttendance.create({
+    await StaffAttendance.create({
       staffId: staff._id,
-      shiftId: shift?._id || null,
+      shiftId: primaryShift?._id || null,
       date: now,
       checkInTime: now,
       locationId: staff.locationId,
@@ -170,8 +195,14 @@ export const verifyQR = async (req, res) => {
 
     res.json({
       message: 'Check-in thành công!',
-      staff: { id: staff._id, fullName: staff.fullName, job: staff.job?.name, phone: staff.phone },
+      type: 'staff',
+      staff: staffDetail,
       shift: shiftInfo,
+      shiftLabel,
+      shiftsToday: shiftTypes,
+      hasTrainingToday,
+      trainingCount,
+      trainingSummary,
       status,
       checkInTime: now,
       minutesLate,
@@ -479,6 +510,153 @@ export const attendanceAbsences = async (req, res) => {
       .sort((a, b) => new Date(b.date) - new Date(a.date));
 
     res.json({ data: absentList, total: absentList.length });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+export const exportDailyDetail = async (req, res) => {
+  try {
+    const dateStr = req.query.date || new Date().toISOString().slice(0,10);
+    const [y,m,d] = dateStr.split('-').map(Number);
+    const start = new Date(y, m-1, d, 0,0,0);
+    const end = new Date(y, m-1, d, 23,59,59,999);
+    const loc = getStationLocationId(req) || req.query.locationId || null;
+    const attMatch = { date: { $gte: start, $lte: end } };
+    if (loc) attMatch.locationId = loc;
+
+    const records = await StaffAttendance.find(attMatch)
+      .populate({ path: 'staffId', select: 'fullName account phone email gender job locationId status avatar pricePerSession commissionPT', populate: { path: 'job', select: 'name permissions' } })
+      .populate('shiftId', 'shift')
+      .sort({ checkInTime: 1 })
+      .lean();
+    if (!records.length) return res.status(404).json({ message: "Không có nhân viên nào chấm công trong ngày này!" });
+
+    const grouped = new Map();
+    for (const r of records) {
+      const sid = String(r.staffId?._id || r.staffId);
+      if (!grouped.has(sid)) grouped.set(sid, { staff: r.staffId, records: [] });
+      grouped.get(sid).records.push(r);
+    }
+    const staffIds = [...grouped.keys()];
+    const shifts = await StaffShift.find({ staffId: { $in: staffIds }, date: { $gte: start, $lte: end } }).lean();
+    const shiftMap = new Map();
+    for (const s of shifts) {
+      const sid = String(s.staffId);
+      if (!shiftMap.has(sid)) shiftMap.set(sid, []);
+      shiftMap.get(sid).push(s.shift);
+    }
+    const allLockers = await LockerV2.find({ assignedType: 'STAFF' }).lean();
+    const lockerMap = new Map();
+    for (const l of allLockers) {
+      if (l.assignedName) lockerMap.set(l.assignedName, l.lockerNumber);
+      if (l.assignedPhone) lockerMap.set(l.assignedPhone, l.lockerNumber);
+    }
+    const bookings = await Booking.find({ trainerId: { $in: staffIds }, date: { $gte: start, $lte: end } }).populate('customerId', 'fullName').lean();
+    const bookingMap = new Map();
+    for (const b of bookings) {
+      const sid = String(b.trainerId);
+      if (!bookingMap.has(sid)) bookingMap.set(sid, []);
+      bookingMap.get(sid).push(b);
+    }
+
+    const excelJS = (await import('exceljs')).default;
+    const workbook = new excelJS.Workbook();
+    const ws = workbook.addWorksheet(`NhanVien_${dateStr}`);
+    ws.columns = [
+      { header: "STT", key: "stt", width: 6 },
+      { header: "Họ và tên", key: "fullName", width: 20 },
+      { header: "Tài khoản", key: "account", width: 16 },
+      { header: "SĐT", key: "phone", width: 14 },
+      { header: "Email", key: "email", width: 22 },
+      { header: "Giới tính", key: "gender", width: 10 },
+      { header: "Công việc", key: "job", width: 18 },
+      { header: "Trạng thái", key: "status", width: 12 },
+      { header: "Ca hôm nay", key: "shift", width: 14 },
+      { header: "Số lần chấm công", key: "count", width: 14 },
+      { header: "Check-in (các lần)", key: "checkIns", width: 28 },
+      { header: "Check-out (các lần)", key: "checkOuts", width: 28 },
+      { header: "Tổng giờ làm", key: "totalHours", width: 14 },
+      { header: "Đi muộn (phút)", key: "late", width: 12 },
+      { header: "Về sớm (phút)", key: "early", width: 12 },
+      { header: "Tăng ca (phút)", key: "overtime", width: 12 },
+      { header: "Tủ đồ", key: "locker", width: 14 },
+      { header: "Số lịch dạy", key: "trainingCount", width: 12 },
+      { header: "Chi tiết lịch dạy", key: "trainingDetail", width: 40 },
+      { header: "Phí/buổi (VNĐ)", key: "pricePerSession", width: 16 },
+      { header: "Hoa hồng (%)", key: "commissionRate", width: 12 },
+      { header: "Hoa hồng hôm nay (VNĐ)", key: "commissionToday", width: 18 },
+    ];
+    ws.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    ws.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF4F46E5' } };
+    ws.getRow(1).alignment = { horizontal: "center", vertical: "middle", wrapText: true };
+    ws.getRow(1).height = 22;
+
+    let idx = 1;
+    for (const [sid, g] of grouped) {
+      const st = g.staff || {};
+      const recs = g.records;
+      const shiftTypes = shiftMap.get(sid) || [];
+      let shiftLabel = 'Không có ca';
+      if (shiftTypes.includes('morning-noon') && shiftTypes.includes('afternoon-evening')) shiftLabel = 'Cả ngày';
+      else if (shiftTypes.includes('morning-noon')) shiftLabel = 'Sáng';
+      else if (shiftTypes.includes('afternoon-evening')) shiftLabel = 'Chiều';
+      const checkIns = recs.map(r => r.checkInTime ? new Date(r.checkInTime).toLocaleTimeString('vi-VN') : '-').join(', ');
+      const checkOuts = recs.map(r => r.checkOutTime ? new Date(r.checkOutTime).toLocaleTimeString('vi-VN') : 'Chưa ra').join(', ');
+      const totalMinutes = recs.reduce((sum, r) => sum + (r.totalMinutes || (r.checkInTime && r.checkOutTime ? Math.round((new Date(r.checkOutTime).getTime() - new Date(r.checkInTime).getTime())/60000) : 0)), 0);
+      const totalHours = totalMinutes ? `${Math.floor(totalMinutes/60)}h${totalMinutes%60}p` : '-';
+      const late = recs.reduce((sum, r) => sum + (r.minutesLate || 0), 0);
+      const early = recs.reduce((sum, r) => sum + (r.minutesEarly || 0), 0);
+      const overtime = recs.reduce((sum, r) => sum + (r.overtime || 0), 0);
+      const locker = lockerMap.get(st.fullName) || lockerMap.get(st.phone) || '-';
+      const trainings = bookingMap.get(sid) || [];
+      const trainingDetail = trainings.length ? trainings.map(t => `${t.customerId?.fullName || 'HV'} ${t.startTime||t.time||''} (${t.status})`).join('; ') : 'Không có lịch';
+      const isTrainer = (() => {
+        const j = st.job;
+        if (!j) return false;
+        const perms = j.permissions || [];
+        const nameNorm = (j.name || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+        return perms.includes('huan_luyen_vien') || nameNorm.includes('huan luyen vien') || nameNorm.includes('hlv') || nameNorm.includes('trainer') || nameNorm.includes('pt');
+      })();
+      const pricePerSession = isTrainer ? (st.pricePerSession ?? 500000) : null;
+      const commissionRate = isTrainer ? (st.commissionPT ?? 0) : null;
+      const commissionToday = isTrainer && trainings.length ? (commissionRate > 0 ? Math.round(pricePerSession * trainings.length * commissionRate / 100) : pricePerSession * trainings.length) : (isTrainer ? 0 : null);
+      ws.addRow({
+        stt: idx++,
+        fullName: st.fullName || '',
+        account: st.account || '',
+        phone: st.phone || '',
+        email: st.email || '',
+        gender: st.gender || '',
+        job: st.job?.name || '',
+        status: st.status === 'active' ? 'Hoạt động' : 'Nghỉ việc',
+        shift: shiftLabel,
+        count: recs.length,
+        checkIns,
+        checkOuts,
+        totalHours,
+        late: late || '',
+        early: early || '',
+        overtime: overtime || '',
+        locker,
+        trainingCount: trainings.length,
+        trainingDetail,
+        pricePerSession: isTrainer ? pricePerSession.toLocaleString('vi-VN') : '-',
+        commissionRate: isTrainer ? `${commissionRate}%` : '-',
+        commissionToday: isTrainer ? commissionToday.toLocaleString('vi-VN') : '-',
+      });
+    }
+    ws.eachRow((row, i) => {
+      if (i > 1) {
+        row.alignment = { vertical: 'middle', wrapText: true };
+        row.height = 22;
+        if (i % 2 === 0) row.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF8FAFC' } };
+      }
+    });
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", `attachment; filename=NhanVien_HoatDong_${dateStr}.xlsx`);
+    await workbook.xlsx.write(res);
+    res.end();
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

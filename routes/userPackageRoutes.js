@@ -1,66 +1,99 @@
 import express from "express";
-import UserPackage from "../models/schemas/userPackageSchema.js";
-import Package from "../models/schemas/packageSchema.js";
-import Customer from "../models/schemas/customerSchema.js";
+import {
+  authenticateToken,
+  authorizeRoles,
+  requireAdmin,
+  requireStaff,
+} from "../middleware/authMiddleware.js";
+import {
+  registerPackage,
+  listMyPackages,
+  getRegistrationDetail,
+  cancelRegistration,
+  listAllRegistrations,
+  confirmPayment,
+  setPaymentMethod,
+  createRenewOrUpgrade,
+  calculateUpgrade,
+  createVnPayUrl,
+  vnpayReturn,
+  vnpayIPN,
+  transactionHistory,
+  getMyPtSessions,
+  deductPtSession,
+  checkScheduleConflict,
+  generateContractPdf,
+  adminRegisterPackage,
+  approveRegistration,
+} from "../controllers/userPackageController.js";
+import {
+  adminRenewPackage,
+  listRenewalTickets,
+  listExpiring,
+  sendRenewalReminders,
+  sendPaymentReminder,
+} from "../controllers/userPackageAdminController.js";
 
 const router = express.Router();
 
-// Middleware xác thực
-let authenticateToken = (req, res, next) => next();
-try {
-  const authModule = await import("../middlewares/auth.js").catch(() => null)
-    || await import("../middleware/auth.js").catch(() => null);
-  if (authModule) {
-    authenticateToken = authModule.authenticateToken || authModule.verifyToken || authModule.default || authenticateToken;
-  }
-} catch (e) { }
+router.get("/payments/list", authenticateToken, listAllRegistrations);
+router.get("/all", authenticateToken, listAllRegistrations);
+router.get("/check-conflict", authenticateToken, checkScheduleConflict);
+router.post("/register", authenticateToken, registerPackage);
+router.post("/admin-register", authenticateToken, adminRegisterPackage);
+router.get("/my", authenticateToken, listMyPackages);
+router.get("/transactions", authenticateToken, transactionHistory);
+router.get("/pt-sessions", authenticateToken, getMyPtSessions);
+router.post("/pt-sessions/deduct", authenticateToken, deductPtSession);
+router.post("/calculate-upgrade", authenticateToken, calculateUpgrade);
+router.post("/renew-upgrade", authenticateToken, createRenewOrUpgrade);
 
-// API Admin đăng ký gói tập trực tiếp cho hội viên
-router.post("/admin-register", authenticateToken, async (req, res) => {
-  try {
-    const { customerId, package_id, locationId, duration_months, total_price } = req.body;
+// ===== GIA HẠN HỘ + NHẮC (admin) =====
+// Khách hết hạn -> admin tạo phiếu gia hạn -> duyệt là xong
+router.post("/admin-renew", authenticateToken, requireAdmin, adminRenewPackage);
+router.get("/renewal-tickets", authenticateToken, listRenewalTickets);
 
-    const custId = customerId || req.body.customer_id;
-    const pkgId = package_id || req.body.packageId;
+// Danh sách khách sắp hết hạn / đã hết hạn + gửi nhắc gia hạn hàng loạt
+// (nhắc gia hạn là tác vụ vận hành: cả staff lẫn admin đều được gửi, hội viên bị chặn)
+router.get("/expiring", authenticateToken, listExpiring);
+router.post(
+  "/renewal-reminders/send",
+  authenticateToken,
+  requireStaff,
+  sendRenewalReminders,
+);
 
-    if (!custId || !pkgId) {
-      return res.status(400).json({ error: "Thiếu mã khách hàng hoặc gói tập" });
-    }
+// Nhắc thanh toán đơn chờ (thủ công cho từng đơn) - chỉ admin
+router.post(
+  "/:id/payment-reminder",
+  authenticateToken,
+  requireAdmin,
+  sendPaymentReminder
+);
 
-    const months = Number(duration_months) || 1;
-    const startDate = new Date();
-    const endDate = new Date();
-    endDate.setMonth(endDate.getMonth() + months);
+// API cho VNPAY
+router.get("/:id/vnpay-url", authenticateToken, createVnPayUrl); 
+router.get("/vnpay-return", vnpayReturn);
+router.get("/vnpay-ipn", vnpayIPN);
+router.post("/vnpay-ipn", vnpayIPN);
 
-    // Gán cả 2 dạng đặt tên (customer_id / customerId) để khớp 100% với mọi Schema
-    const newUP = new UserPackage({
-      customer_id: custId,
-      customerId: custId,
-      package_id: pkgId,
-      packageId: pkgId,
-      locationId: locationId || req.user?.locationId || null,
-      duration_months: months,
-      durationMonths: months,
-      total_price: total_price || 0,
-      totalPrice: total_price || 0,
-      start_date: startDate,
-      startDate: startDate,
-      end_date: endDate,
-      endDate: endDate,
-      status: "đang hoạt động"
-    });
-
-    await newUP.save();
-
-    return res.status(200).json({
-      success: true,
-      message: "Đăng ký gói tập thành công",
-      data: newUP
-    });
-  } catch (err) {
-    console.error("admin-register error:", err);
-    return res.status(500).json({ error: err.message || "Lỗi tạo gói tập cho hội viên" });
-  }
-});
+router.get("/:id/contract-pdf", authenticateToken, generateContractPdf);
+router.get("/:id", authenticateToken, getRegistrationDetail);
+// Duyệt đăng ký & xác nhận thanh toán: CHỈ admin/staff.
+// Hội viên không được tự đổi trạng thái thanh toán (chỉ chọn phương thức).
+router.post(
+  "/:id/approve",
+  authenticateToken,
+  requireAdmin,
+  approveRegistration
+);
+router.post("/:id/cancel", authenticateToken, cancelRegistration);
+router.patch(
+  "/:id/payment",
+  authenticateToken,
+  requireAdmin,
+  confirmPayment
+);
+router.patch("/:id/payment-method", authenticateToken, setPaymentMethod);
 
 export default router;

@@ -39,13 +39,13 @@ export const createStaff = async (data, callback) => {
       email: data.email,
       phone: data.phone,
       gender: data.gender || 'Nam',
+      dateOfBirth: data.dateOfBirth || null,
       job: data.job,
-      startDate: data.startDate || new Date(),
+      startDate: new Date(),
       address: data.address || '',
-      baseSalary: data.baseSalary || 0,
-      bonus: data.bonus || 0,
       locationId: data.locationId || null,
-      status: 'active'
+      status: data.status || 'active',
+      avatar: data.avatar || ''
     });
     const saved = await staff.save();
     callback(null, { staffId: saved._id });
@@ -54,13 +54,45 @@ export const createStaff = async (data, callback) => {
   }
 };
 
-export const getAllStaff = async (page = 1, limit = 15, locationId, callback) => {
+export const getAllStaff = async (page = 1, limit = 10, filterOrLocationId, callback) => {
   try {
-    const filter = locationId ? { locationId } : {};
+    let filter = {};
+    if (typeof filterOrLocationId === 'string') {
+      if (filterOrLocationId) filter.locationId = filterOrLocationId;
+    } else if (filterOrLocationId && typeof filterOrLocationId === 'object') {
+      filter = { ...filterOrLocationId };
+      Object.keys(filter).forEach(k => {
+        if (filter[k] === '' || filter[k] === undefined || filter[k] === 'all') delete filter[k];
+      });
+    }
+    const mongoFilter = {};
+    if (filter.locationId) mongoFilter.locationId = filter.locationId;
+    if (filter.status) mongoFilter.status = filter.status;
+    if (filter.job) mongoFilter.job = filter.job;
+    if (filter.gender) mongoFilter.gender = filter.gender;
+    if (filter.excludeJobIds && Array.isArray(filter.excludeJobIds) && filter.excludeJobIds.length) {
+      // Loại bỏ các job bị cấm xem (admin/manager) – kết hợp với filter.job nếu có
+      if (mongoFilter.job) {
+        // đã có job cụ thể, nếu job đó nằm trong exclude thì đã return rỗng ở controller
+        mongoFilter.job = { $in: [mongoFilter.job], $nin: filter.excludeJobIds };
+      } else {
+        mongoFilter.job = { $nin: filter.excludeJobIds };
+      }
+    }
+    if (filter.search) {
+      const esc = filter.search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const regex = new RegExp(esc, 'i');
+      mongoFilter.$or = [
+        { fullName: regex },
+        { account: regex },
+        { email: regex },
+        { phone: regex }
+      ];
+    }
     const skip = (page - 1) * limit;
     const [data, total] = await Promise.all([
-      Staff.find(filter).populate('job', 'name salary').sort({ createdAt: -1 }).skip(skip).limit(limit),
-      Staff.countDocuments(filter)
+      Staff.find(mongoFilter).populate('job', 'name').sort({ status: 1, createdAt: -1 }).skip(skip).limit(limit),
+      Staff.countDocuments(mongoFilter)
     ]);
     callback(null, { data, total, page, limit, totalPages: Math.ceil(total / limit) });
   } catch (err) {
@@ -71,8 +103,9 @@ export const getAllStaff = async (page = 1, limit = 15, locationId, callback) =>
 export const getStaffById = async (id, callback) => {
   try {
     const staff = await Staff.findById(id)
-      .populate('job', 'name salary')
-      .populate('disciplineId', 'name');
+      .populate('job', 'name description')
+      .populate('disciplineId', 'name')
+      .populate('locationId', 'title address');
     if (!staff) return callback(null, null);
     callback(null, staff);
   } catch (err) {
@@ -89,11 +122,9 @@ export const updateStaffById = async (id, data, callback) => {
     if (data.email) staff.email = data.email;
     if (data.phone) staff.phone = data.phone;
     if (data.gender) staff.gender = data.gender;
+    if (data.dateOfBirth !== undefined) staff.dateOfBirth = data.dateOfBirth || null;
     if (data.job) staff.job = data.job;
-    if (data.startDate) staff.startDate = data.startDate;
     if (data.address !== undefined) staff.address = data.address;
-    if (data.baseSalary !== undefined) staff.baseSalary = data.baseSalary;
-    if (data.bonus !== undefined) staff.bonus = data.bonus;
     if (data.status) staff.status = data.status;
     if (data.avatar !== undefined) staff.avatar = data.avatar;
     if (data.coverImage !== undefined) staff.coverImage = data.coverImage;
@@ -104,6 +135,7 @@ export const updateStaffById = async (id, data, callback) => {
     if (data.certifications !== undefined) staff.certifications = data.certifications;
     if (data.disciplineId !== undefined) staff.disciplineId = data.disciplineId;
     if (data.pricePerSession !== undefined) staff.pricePerSession = data.pricePerSession;
+    if (data.commissionPT !== undefined) staff.commissionPT = data.commissionPT;
 
     const saved = await staff.save();
     callback(null, saved);
@@ -124,7 +156,7 @@ export const deleteStaffById = async (id, callback) => {
 
 export const findStaffByAccount = async (account, callback) => {
   try {
-    const staff = await Staff.findOne({ account }).populate('job', 'name salary isAdmin permissions');
+    const staff = await Staff.findOne({ account }).populate('job', 'name isAdmin permissions');
     callback(null, staff);
   } catch (err) {
     callback(err);

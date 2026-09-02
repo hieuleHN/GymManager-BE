@@ -3,6 +3,7 @@ import { authenticateToken } from '../middleware/authMiddleware.js';
 import {
   create,
   createBulk,
+  adminCreateBooking,
   list,
   detail,
   getByTrainer,
@@ -27,6 +28,7 @@ const router = express.Router();
 
 router.post('/', authenticateToken, create);
 router.post('/bulk', authenticateToken, createBulk);
+router.post('/admin-create', authenticateToken, adminCreateBooking);
 router.get('/', authenticateToken, list);
 router.get('/my', authenticateToken, getByCustomer);
 router.get('/my-trainer', authenticateToken, getMyTrainerBookings);

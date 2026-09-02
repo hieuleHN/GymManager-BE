@@ -133,8 +133,9 @@ export const registerPackage = (req, res) => {
 
 export const listMyPackages = async (req, res) => {
   try {
+    const targetId = (req.query.customerId && (req.user.isStaff || req.user.isAdmin)) ? req.query.customerId : req.user.id;
     const regs = await new Promise((resolve, reject) => {
-      getUserPackages(req.user.id, (err, result) => {
+      getUserPackages(targetId, (err, result) => {
         if (err) reject(err);
         else resolve(result);
       });
@@ -500,8 +501,9 @@ export const createRenewOrUpgrade = async (req, res) => {
 
 export const getMyPtSessions = async (req, res) => {
   try {
+    const targetCustomerId = (req.query.customerId && (req.user.isStaff || req.user.isAdmin)) ? req.query.customerId : req.user.id;
     const regs = await new Promise((resolve, reject) => {
-      getUserPackages(req.user.id, (err, result) => {
+      getUserPackages(targetCustomerId, (err, result) => {
         if (err) reject(err);
         else resolve(result);
       });
