@@ -6,6 +6,7 @@ import { createNotification } from '../models/notificationModel.js';
 import { updateRequestStatus } from '../models/serviceRequestModel.js';
 
 // Tủ đã hết hạn thuê -> chuyển trạng thái "chờ trả chìa khoá" (AWAIT_KEY_RETURN)
+// Đồng thời khóa FaceID người thuê cho đến khi trả/gia hạn tủ (check động ở verifyFaceCheckIn)
 export const expireLockerRentals = async () => {
   try {
     const now = new Date();
@@ -19,7 +20,38 @@ export const expireLockerRentals = async () => {
       end.setDate(end.getDate() + (locker.rentalDays || 1));
       if (now >= end) {
         locker.status = LOCKER_STATUS.AWAIT_KEY_RETURN;
+        // Backfill liên kết hội viên cho dữ liệu cũ chỉ lưu phone/name
+        try {
+          if (!locker.assignedCustomerId && (locker.assignedPhone || locker.assignedName)) {
+            const cust = await Customer.findOne({
+              $or: [
+                { phone: locker.assignedPhone || "__none__" },
+                { fullName: locker.assignedName || "__none__" },
+              ],
+            }).select("_id").lean();
+            if (cust) locker.assignedCustomerId = cust._id;
+          }
+        } catch (e) { /* bỏ qua */ }
         await locker.save();
+        // Báo cho hội viên: FaceID bị khóa do quá hạn tủ
+        try {
+          let recipientId = locker.assignedCustomerId || null;
+          if (!recipientId && locker.assignedPhone) {
+            const cust = await Customer.findOne({ phone: locker.assignedPhone }).select("_id").lean();
+            if (cust) recipientId = cust._id;
+          }
+          if (recipientId) {
+            await new Promise((resolve) => {
+              createNotification({
+                recipientId,
+                recipientRole: 'member',
+                title: 'Quá hạn thuê tủ - FaceID bị khóa',
+                message: `Tủ ${locker.lockerNumber} của bạn đã quá hạn thuê. FaceID điểm danh tạm bị KHÓA cho đến khi bạn trả chìa khóa/gia hạn tủ.`,
+                type: 'service'
+              }, () => resolve(null));
+            });
+          }
+        } catch (e) { /* bỏ qua */ }
       }
     }
   } catch (err) {
@@ -114,6 +146,7 @@ export const processPendingLockerRequests = async () => {
       locker.assignedType = 'MEMBER';
       locker.assignedName = request.customer_name || 'Hội viên';
       locker.assignedPhone = request.customer_phone || '';
+      locker.assignedCustomerId = request.customer_id || null;
       locker.assignedAt = new Date();
       locker.rentalDays = Math.min(20, Math.max(1, parseInt(request.data?.durationDays, 10) || 1));
       locker.rentedAt = locker.assignedAt;

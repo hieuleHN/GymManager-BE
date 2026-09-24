@@ -1,15 +1,15 @@
 import "dotenv/config";
 import mongoose from "mongoose";
 
-// Import Schemas
-let User, Booking, CheckIn;
+// Import Schemas (User/Role đã loại bỏ - chỉ dùng Customer/Staff chính)
+let Customer, Booking, CheckIn;
 try {
-    User = (await import("./models/schemas/userSchema.js")).default;
+    Customer = (await import("./models/schemas/customerSchema.js")).default;
     Booking = (await import("./models/schemas/bookingSchema.js")).default;
     CheckIn = (await import("./models/schemas/checkInSchema.js")).default;
 } catch (e) {
-    User = mongoose.models.User || mongoose.model("User", new mongoose.Schema({
-        fullName: String, email: String, phone: String, role: String, currentSport: String, createdAt: Date
+    Customer = mongoose.models.Customer || mongoose.model("Customer", new mongoose.Schema({
+        fullName: String, email: String, phone: String, status: String, createdAt: Date
     }));
     Booking = mongoose.models.Booking || mongoose.model("Booking", new mongoose.Schema({
         trainerName: String, status: String, createdAt: Date
@@ -18,6 +18,7 @@ try {
         checkInTime: Date, status: String
     }));
 }
+const User = Customer;
 
 async function seedDatabase() {
     try {

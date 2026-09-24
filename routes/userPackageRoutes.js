@@ -28,6 +28,7 @@ import {
 } from "../controllers/userPackageController.js";
 import {
   adminRenewPackage,
+  adminUpgradePackage,
   listRenewalTickets,
   listExpiring,
   sendRenewalReminders,
@@ -51,6 +52,8 @@ router.post("/renew-upgrade", authenticateToken, createRenewOrUpgrade);
 // ===== GIA HẠN HỘ + NHẮC (admin) =====
 // Khách hết hạn -> admin tạo phiếu gia hạn -> duyệt là xong
 router.post("/admin-renew", authenticateToken, requireAdmin, adminRenewPackage);
+// ===== NÂNG CẤP HỘ (admin/staff): chỉ lên gói giá >=, giữ hạn cũ, trừ buổi PT đã dùng
+router.post("/admin-upgrade", authenticateToken, requireStaff, adminUpgradePackage);
 router.get("/renewal-tickets", authenticateToken, listRenewalTickets);
 
 // Danh sách khách sắp hết hạn / đã hết hạn + gửi nhắc gia hạn hàng loạt

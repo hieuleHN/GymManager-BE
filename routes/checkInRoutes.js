@@ -6,7 +6,8 @@ import {
     getCheckInHistory,
     verifyFaceCheckIn,
     registerFaceID,
-    getFaceDescriptors
+    getFaceDescriptors,
+    getFaceLockStatus
 } from "../controllers/checkInController.js";
 import CheckIn from "../models/schemas/checkInSchema.js";
 
@@ -80,6 +81,7 @@ router.get("/export/excel", authenticateToken, async (req, res) => {
 });
 
 router.get("/face/descriptors", getFaceDescriptors);
+router.get("/face/lock-status", getFaceLockStatus);
 router.post("/face/verify", verifyFaceCheckIn);
 router.post("/face/register", authenticateToken, registerFaceID);
 

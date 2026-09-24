@@ -53,6 +53,13 @@ const lockerManagementSchema = new mongoose.Schema({
         type: String,
         default: ""
     },
+    // Liên kết hội viên thuê tủ để khóa FaceID khi quá hạn (AWAIT_KEY_RETURN).
+    // Tự động gán khi assign (match phone/name), tự xóa khi release/trả tủ.
+    assignedCustomerId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Customer",
+        default: null
+    },
     assignedAt: {
         type: Date,
         default: null

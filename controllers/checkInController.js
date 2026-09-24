@@ -2,6 +2,8 @@ import mongoose from "mongoose";
 import CheckIn from "../models/schemas/checkInSchema.js";
 import Customer from "../models/schemas/customerSchema.js";
 import UserPackage from "../models/schemas/userPackageSchema.js";
+import "../models/schemas/packageSchema.js"; // đăng ký model "Package" cho populate package_id
+import { findOverdueLockersForCustomer, buildFaceLockError } from "../services/lockerFaceLockService.js";
 
 // 1. Đăng ký FaceID cho hội viên
 export const registerFaceID = async (req, res) => {
@@ -32,15 +34,42 @@ export const registerFaceID = async (req, res) => {
 };
 
 // 2. Lấy danh sách vector khuôn mặt để nạp vào bộ matcher
+// GIỮ LẠI cả hội viên bị khóa FaceID do quá hạn thuê tủ trong `data` để camera vẫn
+// nhận diện được khuôn mặt -> sau đó `verifyFaceCheckIn` sẽ trả 403 báo khóa.
+// Nếu loại khỏi `data`, matcher sẽ báo "unknown" và không bao giờ hiện thông báo khóa.
 export const getFaceDescriptors = async (req, res) => {
     try {
         const customers = await Customer.find({
             faceDescriptor: { $exists: true, $not: { $size: 0 } }
         }).select("_id fullName phone faceDescriptor");
 
+        const { findOverdueLockersForCustomer: findOverdue } = await import("../services/lockerFaceLockService.js");
+        const locked = [];
+        const data = [];
+        for (const c of customers) {
+            const overdue = await findOverdue(c).catch(() => []);
+            const isLocked = !!(overdue && overdue.length);
+            const obj = c.toObject();
+            data.push({
+                ...obj,
+                faceLocked: isLocked,
+                lockedLockers: isLocked ? overdue.map((l) => ({
+                    lockerNumber: l.lockerNumber,
+                    expiryDate: l.expiryDate,
+                    overdueDays: l.overdueDays,
+                })) : [],
+            });
+            if (isLocked) {
+                locked.push({ _id: c._id, fullName: c.fullName, lockers: overdue.map((l) => l.lockerNumber) });
+            }
+        }
+
         return res.status(200).json({
             success: true,
-            data: customers
+            data,
+            // FE có thể dùng để hiển thị badge "FaceID bị khóa do quá hạn tủ"
+            lockedCount: locked.length,
+            locked,
         });
     } catch (err) {
         console.error("getFaceDescriptors Error:", err);
@@ -74,6 +103,24 @@ export const verifyFaceCheckIn = async (req, res) => {
         if (customer.status === 'locked') {
             return res.status(403).json({ error: `Tài khoản ${customer.fullName} đã bị khóa, vui lòng liên hệ lễ tân để kích hoạt lại!` });
         }
+
+        // Khóa FaceID khi quá hạn thuê tủ: chặn điểm danh FaceID cho đến khi trả/gia hạn tủ
+        try {
+            const overdueLockers = await findOverdueLockersForCustomer(customer);
+            if (overdueLockers && overdueLockers.length) {
+                return res.status(403).json({
+                    error: buildFaceLockError(customer.fullName, overdueLockers),
+                    code: "FACE_LOCKED_LOCKER_OVERDUE",
+                    customer: { id: customer._id, fullName: customer.fullName, phone: customer.phone },
+                    lockers: overdueLockers.map((l) => ({
+                        _id: l._id,
+                        lockerNumber: l.lockerNumber,
+                        expiryDate: l.expiryDate,
+                        overdueDays: l.overdueDays,
+                    })),
+                });
+            }
+        } catch (e) { /* không chặn điểm danh nếu lỗi tra cứu tủ */ }
 
         // Kiểm tra gói đóng băng: cho phép điểm danh nếu còn ít nhất 1 gói đang hoạt động
         // Chỉ chặn khi TẤT CẢ gói đều đóng băng, còn lại thì chỉ thông báo
@@ -281,6 +328,38 @@ export const verifyFaceCheckIn = async (req, res) => {
         return res.status(500).json({ error: err.message || "Lỗi xử lý điểm danh FaceID" });
     }
 };
+// 3b. Tra cứu trạng thái khóa FaceID do quá hạn thuê tủ
+export const getFaceLockStatus = async (req, res) => {
+    try {
+        const { customerId } = req.query;
+        if (!customerId) return res.status(400).json({ error: "Thiếu customerId" });
+        let customer = null;
+        if (mongoose.Types.ObjectId.isValid(customerId)) {
+            customer = await Customer.findById(customerId).select("_id fullName phone");
+        }
+        if (!customer) {
+            customer = await Customer.findOne({ $or: [{ phone: customerId }, { account: customerId }] }).select("_id fullName phone");
+        }
+        if (!customer) return res.status(404).json({ error: "Không tìm thấy hội viên" });
+        const overdueLockers = await findOverdueLockersForCustomer(customer);
+        const locked = overdueLockers.length > 0;
+        return res.status(200).json({
+            success: true,
+            locked,
+            customer: { id: customer._id, fullName: customer.fullName, phone: customer.phone },
+            lockers: overdueLockers.map((l) => ({
+                _id: l._id,
+                lockerNumber: l.lockerNumber,
+                expiryDate: l.expiryDate,
+                overdueDays: l.overdueDays,
+                status: l.status,
+            })),
+            message: locked ? buildFaceLockError(customer.fullName, overdueLockers) : "FaceID đang hoạt động bình thường",
+        });
+    } catch (err) {
+        return res.status(500).json({ error: err.message || "Lỗi tra cứu khóa FaceID" });
+    }
+};
 // 4. Verify QR Token
 export const verifyCheckInToken = async (req, res) => {
     try {
@@ -330,11 +409,66 @@ export const getCheckInHistory = async (req, res) => {
         }
 
         const list = await CheckIn.find(query)
-            .populate({ path: "customerId", select: "fullName phone account", strictPopulate: false })
+            .populate({ path: "customerId", select: "fullName phone account gender email avatar address idNumber registerDate status balance locationId", strictPopulate: false })
             .sort({ checkInTime: -1 })
-            .limit(Number(limit));
+            .limit(Number(limit))
+            .lean();
 
-        return res.status(200).json(list);
+        // Enrich cho FE admin/attendance/history: totalMinutes, isCheckedOut, packages, packageCount
+        const now = new Date();
+        const custIds = [...new Set(
+            list.map((it) => String(it.customerId?._id || it.customerId || "")).filter(Boolean)
+        )];
+        let upsByCust = new Map();
+        if (custIds.length) {
+            const ups = await UserPackage.find({ customer_id: { $in: custIds } })
+                .populate({ path: "package_id", select: "name features ptSessionsPerMonth isFullMonth unitPrice", strictPopulate: false })
+                .lean();
+            for (const up of ups) {
+                const cid = String(up.customer_id);
+                if (!upsByCust.has(cid)) upsByCust.set(cid, []);
+                upsByCust.get(cid).push(up);
+            }
+        }
+        const enriched = list.map((it) => {
+            const cid = String(it.customerId?._id || it.customerId || "");
+            const custUps = upsByCust.get(cid) || [];
+            const packages = custUps.map((up) => {
+                const pkg = up.package_id || {};
+                const end = up.end_date ? new Date(up.end_date) : null;
+                const remainingDays = end ? Math.ceil((end.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)) : 0;
+                const perMonth = up.isFullMonth ? 0 : (up.ptSessionsPerMonth ?? pkg.ptSessionsPerMonth ?? 0);
+                const curEntry = Array.isArray(up.monthlySessions)
+                    ? up.monthlySessions.find((e) => e.month === now.getMonth() + 1 && e.year === now.getFullYear())
+                    : null;
+                return {
+                    packageName: pkg.name || "Gói tập",
+                    startDate: up.start_date ? new Date(up.start_date).toLocaleDateString("vi-VN") : "—",
+                    endDate: end ? end.toLocaleDateString("vi-VN") : "—",
+                    status: up.status || "",
+                    payment_status: up.payment_status || "",
+                    remainingDays: remainingDays > 0 ? remainingDays : 0,
+                    features: pkg.features || [],
+                    ptSessionsPerMonth: perMonth,
+                    isFullMonth: !!up.isFullMonth,
+                    hasHLV: !!up.isFullMonth || perMonth > 0,
+                    remainingPtSessions: curEntry ? Math.max(0, (curEntry.total || 0) - (curEntry.used || 0)) : perMonth,
+                    totalPrice: up.total_price || 0,
+                };
+            });
+            const totalMinutes = it.checkInTime && it.checkOutTime
+                ? Math.max(1, Math.round((new Date(it.checkOutTime) - new Date(it.checkInTime)) / 60000))
+                : null;
+            return {
+                ...it,
+                totalMinutes,
+                isCheckedOut: !!it.checkOutTime,
+                packageCount: packages.length,
+                packages,
+            };
+        });
+
+        return res.status(200).json(enriched);
     } catch (err) {
         return res.status(500).json({ error: err.message || "Lỗi tải lịch sử" });
     }
