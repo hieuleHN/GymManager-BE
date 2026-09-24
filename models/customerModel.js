@@ -143,20 +143,28 @@ export const findCustomerByAccount = async (account, callback) => {
   }
 };
 
-export const searchCustomers = async (query, callback, locationId) => {
+export const searchCustomers = async (query, callback, locationId, hidePhone = false) => {
   try {
     const q = String(query || '').trim();
     if (!q) return callback(null, []);
-    const filter = {
-      $or: [
-        { account: { $regex: q, $options: 'i' } },
-        { fullName: { $regex: q, $options: 'i' } },
-        { phone: { $regex: q, $options: 'i' } }
-      ]
-    };
+    // hidePhone: ẩn SĐT (trang hội viên) - chỉ tìm theo tài khoản / họ tên, không trả về SĐT
+    const filter = hidePhone
+      ? {
+        $or: [
+          { account: { $regex: q, $options: 'i' } },
+          { fullName: { $regex: q, $options: 'i' } }
+        ]
+      }
+      : {
+        $or: [
+          { account: { $regex: q, $options: 'i' } },
+          { fullName: { $regex: q, $options: 'i' } },
+          { phone: { $regex: q, $options: 'i' } }
+        ]
+      };
     if (locationId) filter.locationId = locationId;
     const customers = await Customer.find(filter)
-      .select('_id account fullName avatar phone status locationId')
+      .select(hidePhone ? '_id account fullName avatar status locationId' : '_id account fullName avatar phone status locationId')
       .limit(8);
     callback(null, customers);
   } catch (err) {

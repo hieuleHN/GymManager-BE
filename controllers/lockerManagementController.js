@@ -1,5 +1,6 @@
 import { LockerV2, LOCKER_STATUS } from "../models/lockerManagementModel.js";
 import { stationLocationId } from "../services/clubService.js";
+import { resolveCustomerForLocker, getLockerExpiry, isLockerOverdue } from "../services/lockerFaceLockService.js";
 import Customer from "../models/schemas/customerSchema.js";
 import CheckIn from "../models/schemas/checkInSchema.js";
 
@@ -81,15 +82,29 @@ export const list = async (req, res) => {
         const total = lockers.length;
         const occupied = lockers.filter(l => l.status === LOCKER_STATUS.OCCUPIED).length;
         const maintenance = lockers.filter(l => l.status === LOCKER_STATUS.MAINTENANCE).length;
-        const available = total - occupied - maintenance;
+        const overdue = lockers.filter(l => isLockerOverdue(l)).length;
+        const available = lockers.filter(l => l.status === LOCKER_STATUS.AVAILABLE).length;
+        // Enrich: quá hạn thuê -> FaceID người thuê đang bị khóa
+        const data = lockers.map((l) => {
+            const obj = l.toObject({ virtuals: true });
+            const overdueFlag = isLockerOverdue(l);
+            return {
+                ...obj,
+                isOverdue: overdueFlag,
+                // FaceID bị khóa khi tủ quá hạn và còn gán người dùng
+                faceLocked: overdueFlag && !!(l.assignedCustomerId || l.assignedPhone || l.assignedName),
+                expiryDate: getLockerExpiry(l),
+            };
+        });
         return res.status(200).json({
             success: true,
             message: "Lấy danh sách tủ đồ thành công",
-            data: lockers,
+            data,
             stats: {
                 total,
                 occupied,
                 maintenance,
+                overdue,
                 available,
                 usageRate: `${getLockerUsageRate(total, occupied)}%`
             }
@@ -192,6 +207,7 @@ export const update = async (req, res) => {
                 locker.assignedType = null;
                 locker.assignedName = "";
                 locker.assignedPhone = "";
+                locker.assignedCustomerId = null;
                 locker.assignedAt = null;
                 locker.rentalDays = 0;
                 locker.rentedAt = null;
@@ -253,8 +269,19 @@ export const assign = async (req, res) => {
         locker.assignedName = String(name || "").trim();
         locker.assignedPhone = String(phone || "").trim();
         locker.assignedAt = new Date();
+        // Gán liên kết hội viên để khóa FaceID khi quá hạn (tự mở khi trả tủ)
+        try {
+            if (locker.assignedType === "MEMBER") {
+                locker.assignedCustomerId = await resolveCustomerForLocker(Customer, {
+                    name: locker.assignedName,
+                    phone: locker.assignedPhone,
+                });
+            } else {
+                locker.assignedCustomerId = null;
+            }
+        } catch (e) { /* không chặn gán tủ */ }
         if (isRental) {
-            locker.rentalDays = Math.min(20, Math.max(1, days));
+            locker.rentalDays = Math.min(60, Math.max(1, days));
             locker.rentedAt = locker.assignedAt;
         } else {
             locker.rentalDays = 0;
@@ -308,11 +335,13 @@ export const release = async (req, res) => {
         if (!ensureOwned(locker, stationLocationId(req))) {
             return res.status(403).json({ success: false, message: "Tủ này thuộc phòng tập khác!" });
         }
+        const wasOverdue = isLockerOverdue(locker);
         locker.status = LOCKER_STATUS.AVAILABLE;
         locker.previousStatus = null;
         locker.assignedType = null;
         locker.assignedName = "";
         locker.assignedPhone = "";
+        locker.assignedCustomerId = null;
         locker.assignedAt = null;
         locker.rentalDays = 0;
         locker.rentedAt = null;
@@ -320,7 +349,9 @@ export const release = async (req, res) => {
         await locker.save();
         return res.json({
             success: true,
-            message: `Tủ ${locker.lockerNumber} đã mở khóa và trả về trạng thái trống`,
+            message: wasOverdue
+                ? `Tủ ${locker.lockerNumber} đã được trả, FaceID hội viên được mở khóa trở lại`
+                : `Tủ ${locker.lockerNumber} đã mở khóa và trả về trạng thái trống`,
             data: locker
         });
     } catch (error) {
@@ -347,6 +378,7 @@ export const completeMaintenance = async (req, res) => {
             locker.assignedType = null;
             locker.assignedName = "";
             locker.assignedPhone = "";
+            locker.assignedCustomerId = null;
             locker.assignedAt = null;
             locker.rentalDays = 0;
             locker.rentedAt = null;
@@ -397,11 +429,12 @@ export const statusOverview = async (req, res) => {
         const q = {};
         const loc = stationLocationId(req);
         if (loc) q.locationId = loc;
-        const lockers = await LockerV2.find(q).select("status").lean();
+        const lockers = await LockerV2.find(q).select("status rentalDays rentedAt").lean();
         const total = lockers.length;
         const occupied = lockers.filter(l => l.status === LOCKER_STATUS.OCCUPIED).length;
         const maintenance = lockers.filter(l => l.status === LOCKER_STATUS.MAINTENANCE).length;
-        const available = total - occupied - maintenance;
+        const overdue = lockers.filter(l => isLockerOverdue(l)).length;
+        const available = lockers.filter(l => l.status === LOCKER_STATUS.AVAILABLE).length;
         return res.status(200).json({
             success: true,
             message: "Lấy thông tin trạng thái tủ đồ thành công",
@@ -409,11 +442,97 @@ export const statusOverview = async (req, res) => {
                 total,
                 occupied,
                 maintenance,
+                overdue,
                 available,
                 usageRate: `${getLockerUsageRate(total, occupied)}%`
             }
         });
     } catch (error) {
         return res.status(500).json({ success: false, message: "Lỗi hệ thống khi lấy thông tin trạng thái tủ đồ", error: error.message });
+    }
+};
+
+// GET /api/v2/lockers/overdue - Danh sách tủ quá hạn (FaceID đang bị khóa)
+export const listOverdue = async (req, res) => {
+    try {
+        const q = {};
+        const loc = stationLocationId(req);
+        if (loc) q.locationId = loc;
+        const lockers = await LockerV2.find({
+            ...q,
+            status: { $in: [LOCKER_STATUS.AWAIT_KEY_RETURN, LOCKER_STATUS.OCCUPIED] },
+        }).sort({ rentedAt: 1 }).lean();
+        const now = new Date();
+        const overdue = lockers
+            .filter((l) => isLockerOverdue(l, now))
+            .map((l) => ({
+                ...l,
+                isOverdue: true,
+                faceLocked: !!((l.assignedCustomerId || l.assignedPhone || l.assignedName)),
+                expiryDate: getLockerExpiry(l),
+                overdueDays: l.rentedAt && l.rentalDays && getLockerExpiry(l)
+                    ? Math.max(0, Math.floor((now.getTime() - getLockerExpiry(l).getTime()) / 86400000))
+                    : 0,
+            }));
+        return res.status(200).json({ success: true, data: overdue, total: overdue.length });
+    } catch (error) {
+        return res.status(500).json({ success: false, message: "Lỗi lấy danh sách tủ quá hạn", error: error.message });
+    }
+};
+
+// POST /api/v2/lockers/:id/extend - Gia hạn thuê tủ quá hạn (thu tiền xong gọi API này để mở lại FaceID)
+// Body: { extraDays: number } - số ngày gia hạn thêm
+export const extend = async (req, res) => {
+    try {
+        const locker = await LockerV2.findById(req.params.id);
+        if (!locker) return res.status(404).json({ success: false, message: "Không tìm thấy tủ!" });
+        if (!ensureOwned(locker, stationLocationId(req))) {
+            return res.status(403).json({ success: false, message: "Tủ này thuộc phòng tập khác!" });
+        }
+        if (![LOCKER_STATUS.OCCUPIED, LOCKER_STATUS.AWAIT_KEY_RETURN].includes(locker.status)) {
+            return res.status(400).json({ success: false, message: `Tủ ${locker.lockerNumber} không ở trạng thái đang thuê/quá hạn!` });
+        }
+        if (!locker.rentedAt || !locker.rentalDays) {
+            return res.status(400).json({ success: false, message: `Tủ ${locker.lockerNumber} là mượn trong ngày, không cần gia hạn!` });
+        }
+        const extra = Math.max(1, Math.min(60, parseInt(req.body.extraDays, 10) || 0));
+        if (!extra) return res.status(400).json({ success: false, message: "Số ngày gia hạn không hợp lệ (1-60)!" });
+        const wasOverdue = isLockerOverdue(locker);
+        locker.rentalDays = Math.min(90, (locker.rentalDays || 0) + extra);
+        // Nếu đang quá hạn mà gia hạn đủ để hạn mới vượt hiện tại -> về OCCUPIED = mở khóa FaceID
+        const newExpiry = getLockerExpiry(locker);
+        if (newExpiry && new Date() < newExpiry && locker.status === LOCKER_STATUS.AWAIT_KEY_RETURN) {
+            locker.status = LOCKER_STATUS.OCCUPIED;
+        }
+        await locker.save();
+        const stillOverdue = isLockerOverdue(locker);
+        try {
+            if (wasOverdue && !stillOverdue && locker.assignedCustomerId) {
+                const { createNotification } = await import("../models/notificationModel.js");
+                await new Promise((resolve) => {
+                    createNotification({
+                        recipientId: locker.assignedCustomerId,
+                        recipientRole: 'member',
+                        title: 'FaceID đã được mở khóa',
+                        message: `Tủ ${locker.lockerNumber} đã được gia hạn thêm ${extra} ngày. FaceID điểm danh của bạn đã hoạt động trở lại!`,
+                        type: 'service'
+                    }, () => resolve(null));
+                });
+            }
+        } catch (e) { /* bỏ qua */ }
+        return res.json({
+            success: true,
+            message: stillOverdue
+                ? `Đã gia hạn tủ ${locker.lockerNumber} thêm ${extra} ngày nhưng vẫn còn quá hạn`
+                : `Đã gia hạn tủ ${locker.lockerNumber} thêm ${extra} ngày, FaceID đã được mở khóa trở lại`,
+            data: {
+                ...locker.toObject({ virtuals: true }),
+                isOverdue: stillOverdue,
+                faceLocked: stillOverdue,
+                expiryDate: getLockerExpiry(locker),
+            },
+        });
+    } catch (error) {
+        return res.status(500).json({ success: false, message: "Lỗi khi gia hạn tủ", error: error.message });
     }
 };

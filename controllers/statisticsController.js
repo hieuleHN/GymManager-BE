@@ -736,13 +736,13 @@ export const getFinanceStatistics = async (req, res) => {
     // ============ DOANH THU CHI TIẾT ============
     const revenueDetails = [];
 
-    // 1. Đăng ký gói tập
+    // 1. Đăng ký gói tập (lấy cả năm để click từng tháng trên biểu đồ đều có dữ liệu)
     const paidPackages = await UserPackage.find({
       ...locFilter,
       payment_status: "đã thanh toán",
       $or: [
-        { payment_date: { $gte: start, $lte: new Date() } },
-        { $and: [{ $or: [{ payment_date: null }, { payment_date: { $exists: false } }] }, { createdAt: { $gte: start, $lte: new Date() } }] },
+        { payment_date: { $gte: yearStart, $lte: new Date() } },
+        { $and: [{ $or: [{ payment_date: null }, { payment_date: { $exists: false } }] }, { createdAt: { $gte: yearStart, $lte: new Date() } }] },
       ],
     }).populate("package_id", "name").populate("customer_id", "fullName account");
     paidPackages.forEach(up => {
@@ -760,7 +760,7 @@ export const getFinanceStatistics = async (req, res) => {
       ...locFilter,
       paymentStatus: "paid",
       trainerId: { $ne: null },
-      createdAt: { $gte: start, $lte: new Date() },
+      createdAt: { $gte: yearStart, $lte: new Date() },
     }).populate("trainerId", "name").populate("customerId", "fullName account");
     paidBookings.forEach(b => {
       revenueDetails.push({
@@ -776,7 +776,7 @@ export const getFinanceStatistics = async (req, res) => {
     allProducts.forEach(p => {
       (p.monthlySales || []).forEach(s => {
         const saleDate = new Date(s.year, s.month - 1, 1);
-        if (saleDate >= start && saleDate <= new Date()) {
+        if (saleDate >= yearStart && saleDate <= new Date()) {
           revenueDetails.push({
             date: saleDate,
             type: "Mua sản phẩm shop",
@@ -793,7 +793,7 @@ export const getFinanceStatistics = async (req, res) => {
       ...locFilter,
       type: "topup",
       status: "completed",
-      createdAt: { $gte: start, $lte: new Date() },
+      createdAt: { $gte: yearStart, $lte: new Date() },
     }).populate("customerId", "fullName account");
     topupTransactions.forEach(t => {
       revenueDetails.push({
@@ -808,20 +808,22 @@ export const getFinanceStatistics = async (req, res) => {
     // Sắp xếp theo ngày mới nhất
     revenueDetails.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
-    // ============ CHI TIẾT CHI PHÍ ============
+    // ============ CHI TIẾT CHI PHÍ (lấy cả năm để click từng tháng đều có dữ liệu) ============
     const rawExpenseDetails = await Expense.find({
       ...expenseFilter,
-      date: { $gte: start, $lte: new Date() },
+      date: { $gte: yearStart, $lte: new Date() },
     }).select('name category amount date note').sort({ date: -1 });
 
     // Chi tiết COGS theo từng sản phẩm theo tháng bán
     const cogsDetails = [];
     products.forEach(p => {
-      (p.monthlySales || []).forEach(s => {
-        const saleDate = new Date(s.year, s.month - 1, 1);
-        if (saleDate < start || saleDate > now) return;
-        const qty = s.quantity || 0;
-        if (qty > 0 && (p.costPrice || 0) > 0) {
+      const soldInPeriod = (p.monthlySales || [])
+        .filter(s => {
+          const saleDate = new Date(s.year, s.month - 1, 1);
+          return saleDate >= yearStart && saleDate <= now;
+        })
+        .reduce((mSum, s) => mSum + (s.quantity || 0), 0);
+      if (soldInPeriod > 0 && (p.costPrice || 0) > 0) {
           cogsDetails.push({
             date: saleDate, name: `Nhập hàng: ${p.name}`, category: 'Giá vốn hàng bán (COGS)',
             amount: Math.round((p.costPrice || 0) * qty), note: `${qty} × ${(p.costPrice || 0).toLocaleString('vi-VN')}đ`, type: 'cogs'
@@ -833,7 +835,7 @@ export const getFinanceStatistics = async (req, res) => {
     // Chi tiết khấu hao theo từng thiết bị
     const depreciationDetails = [];
     equipments.forEach(eq => {
-      const depr = calcDepreciation(eq, start, now);
+      const depr = calcDepreciation(eq, yearStart, now);
       if (depr > 0) {
           depreciationDetails.push({
             date: eq.createdAt, name: `Khấu hao: ${eq.name}`, category: 'Tiền thiết bị',
@@ -850,12 +852,12 @@ export const getFinanceStatistics = async (req, res) => {
       ...depreciationDetails,
     ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
-    // ============ CHI TIẾT GHI NHẬN THEO GÓI ============
+    // ============ CHI TIẾT GHI NHẬN THEO GÓI (lấy cả năm; monthsElapsed/accrualAmount vẫn tính theo kỳ cho modal thẻ) ============
     const activePackages = await UserPackage.find({
       ...locFilter,
       payment_status: "đã thanh toán",
       start_date: { $lte: now },
-      end_date: { $gte: start },
+      end_date: { $gte: yearStart },
     }).populate("package_id", "name").populate("customer_id", "fullName account");
 
     const accrualDetails = activePackages.map(up => {
@@ -886,7 +888,7 @@ export const getFinanceStatistics = async (req, res) => {
     allProducts.forEach(p => {
       (p.monthlySales || []).forEach(s => {
         const saleDate = new Date(s.year, s.month - 1, 1);
-        if (saleDate >= start && saleDate <= now) {
+        if (saleDate >= yearStart && saleDate <= now) {
           accrualDetails.push({
             packageName: `Sản phẩm: ${p.name}`,
             customerName: 'Khách hàng mua lẻ',

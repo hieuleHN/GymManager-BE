@@ -5,6 +5,11 @@ const walletTransactionSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Customer',
   },
+  locationId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Location',
+    default: null,
+  },
   staffId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Staff',

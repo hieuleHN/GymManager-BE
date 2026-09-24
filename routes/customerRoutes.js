@@ -27,6 +27,29 @@ const handleUpload = (req, res, next) => {
   });
 };
 
+// Giới hạn: mỗi gói chỉ được đóng băng / chuyển nhượng tối đa 2 lần trong 1 năm dương lịch
+// Đếm cả bản ghi gộp (freeze-all / bulk không có packageId) vì chúng cũng tính 1 lượt cho từng gói
+const countServiceInYear = async (customerId, serviceType, packageId) => {
+  const yearStart = new Date(new Date().getFullYear(), 0, 1);
+  const base = {
+    customer_id: customerId,
+    service_type: serviceType,
+    createdAt: { $gte: yearStart },
+    status: { $nin: ['rejected', 'cancelled'] }
+  };
+  if (!packageId) return ServiceRequest.countDocuments(base);
+  const pid = String(packageId);
+  return ServiceRequest.countDocuments({
+    ...base,
+    $or: [
+      { 'data.packageId': pid },
+      { 'data.packageId': { $exists: false } },
+      { 'data.packageId': null },
+      { 'data.packageId': '' }
+    ]
+  });
+};
+
 router.get('/alerts', authenticateToken, async (req, res) => {
   try {
     const locationId = req.query.locationId && req.query.locationId !== 'all' ? req.query.locationId : null;
@@ -310,12 +333,14 @@ router.get('/:id/detail360', authenticateToken, async (req, res) => {
   }
 });
 
-// Đóng băng 1 gói
+// Đóng băng 1 gói (tối đa 3 tháng/lần, tối đa 2 lần/năm/gói)
 router.post('/:id/packages/:pkgId/freeze', authenticateToken, async (req, res) => {
   try {
     const { id, pkgId } = req.params;
     const months = parseInt(req.body.months);
-    if (!months || months < 1 || months > 10) return res.status(400).json({ error: 'Thời gian đóng băng 1-10 tháng' });
+    if (!months || months < 1 || months > 3) return res.status(400).json({ error: 'Thời gian đóng băng 1-3 tháng (mỗi lần tối đa 3 tháng)' });
+    const used = await countServiceInYear(id, 'freeze', pkgId);
+    if (used >= 2) return res.status(400).json({ error: `Gói này đã dùng hết 2 lượt tạm ngưng trong năm ${new Date().getFullYear()}` });
     const pkg = await UserPackage.findOne({ _id: pkgId, customer_id: id });
     if (!pkg) return res.status(404).json({ error: 'Không tìm thấy gói' });
     if (pkg.status === 'đang tạm ngưng') return res.status(400).json({ error: 'Gói đang đóng băng rồi' });
@@ -353,24 +378,35 @@ router.post('/:id/packages/:pkgId/unfreeze', authenticateToken, async (req, res)
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Đóng băng toàn bộ gói đang hoạt động
+// Đóng băng toàn bộ gói đang hoạt động (mỗi lần tối đa 3 tháng, mỗi gói tối đa 2 lần/năm)
 router.post('/:id/freeze-all', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
     const months = parseInt(req.body.months);
-    if (!months || months < 1 || months > 10) return res.status(400).json({ error: 'Thời gian đóng băng 1-10 tháng' });
+    if (!months || months < 1 || months > 3) return res.status(400).json({ error: 'Thời gian đóng băng 1-3 tháng (mỗi lần tối đa 3 tháng)' });
     const now = new Date();
     const pkgs = await UserPackage.find({ customer_id: id, status: { $in: ['đang hoạt động','còn 10 ngày'] }, payment_status: 'đã thanh toán' });
     if (!pkgs.length) return res.status(400).json({ error: 'Không có gói đang hoạt động để đóng băng' });
+    // Lọc bỏ gói đã hết 2 lượt trong năm
+    const allowed = [];
     for (const pkg of pkgs) {
+      const used = await countServiceInYear(id, 'freeze', String(pkg._id));
+      if (used < 2) allowed.push(pkg);
+    }
+    if (!allowed.length) return res.status(400).json({ error: `Các gói đã dùng hết 2 lượt tạm ngưng trong năm ${new Date().getFullYear()}` });
+    for (const pkg of allowed) {
       const frozenUntil = new Date(now); frozenUntil.setMonth(frozenUntil.getMonth() + months);
       const newEnd = new Date(pkg.end_date); newEnd.setMonth(newEnd.getMonth() + months);
       pkg.frozenAt = now; pkg.frozenUntil = frozenUntil; pkg.status = 'đang tạm ngưng'; pkg.end_date = newEnd;
       await pkg.save();
     }
     const cust = await Customer.findById(id).select('fullName phone locationId');
-    await ServiceRequest.create({ customer_id: id, customer_name: cust?.fullName||'', customer_phone: cust?.phone||'', service_type: 'freeze', description: `Admin đóng băng toàn bộ ${pkgs.length} gói ${months} tháng`, data: { duration: months, count: pkgs.length }, location_id: cust?.locationId||null, status: 'accepted', processed_by: req.user.id, processed_at: new Date() });
-    res.json({ message: `Đã đóng băng ${pkgs.length} gói ${months} tháng` });
+    // Ghi 1 bản ghi / gói để giới hạn 2 lần/năm tính đúng theo từng gói
+    for (const pkg of allowed) {
+      await ServiceRequest.create({ customer_id: id, customer_name: cust?.fullName||'', customer_phone: cust?.phone||'', service_type: 'freeze', description: `Admin đóng băng toàn bộ ${allowed.length} gói ${months} tháng`, data: { packageId: String(pkg._id), duration: months, count: allowed.length }, location_id: cust?.locationId||null, status: 'accepted', processed_by: req.user.id, processed_at: new Date() });
+    }
+    const skipped = pkgs.length - allowed.length;
+    res.json({ message: `Đã đóng băng ${allowed.length} gói ${months} tháng${skipped ? ` (${skipped} gói đã hết 2 lượt/năm nên bỏ qua)` : ''}` });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -482,22 +518,30 @@ router.post('/bulk/freeze', authenticateToken, async (req, res) => {
   try {
     const { ids, months } = req.body;
     const m = parseInt(months);
-    if (!Array.isArray(ids) || !ids.length || !m || m<1 || m>10) return res.status(400).json({ error: 'Thiếu IDs hoặc months 1-10' });
-    let count=0;
+    if (!Array.isArray(ids) || !ids.length || !m || m<1 || m>3) return res.status(400).json({ error: 'Thiếu IDs hoặc months 1-3 (mỗi lần tối đa 3 tháng)' });
+    let count=0; let skippedPkgs=0;
     for (const id of ids) {
       const pkgs = await UserPackage.find({ customer_id: id, status: { $in: ['đang hoạt động','còn 10 ngày'] }, payment_status: 'đã thanh toán' });
+      const allowed = [];
       for (const pkg of pkgs) {
+        const used = await countServiceInYear(id, 'freeze', String(pkg._id));
+        if (used < 2) allowed.push(pkg);
+        else skippedPkgs++;
+      }
+      for (const pkg of allowed) {
         const frozenUntil=new Date(); frozenUntil.setMonth(frozenUntil.getMonth()+m);
         const newEnd=new Date(pkg.end_date); newEnd.setMonth(newEnd.getMonth()+m);
         pkg.frozenAt=new Date(); pkg.frozenUntil=frozenUntil; pkg.status='đang tạm ngưng'; pkg.end_date=newEnd; await pkg.save();
       }
-      if (pkgs.length) {
+      if (allowed.length) {
         const cust = await Customer.findById(id).select('fullName phone locationId');
-        await ServiceRequest.create({ customer_id: id, customer_name: cust?.fullName||'', customer_phone: cust?.phone||'', service_type: 'freeze', description: `Admin đóng băng (bulk) ${m} tháng`, data: { duration: m }, location_id: cust?.locationId||null, status: 'accepted', processed_by: req.user.id, processed_at: new Date() });
+        for (const pkg of allowed) {
+          await ServiceRequest.create({ customer_id: id, customer_name: cust?.fullName||'', customer_phone: cust?.phone||'', service_type: 'freeze', description: `Admin đóng băng (bulk) ${m} tháng`, data: { packageId: String(pkg._id), duration: m }, location_id: cust?.locationId||null, status: 'accepted', processed_by: req.user.id, processed_at: new Date() });
+        }
         count++;
       }
     }
-    res.json({ message: `Đã đóng băng ${count} khách ${m} tháng` });
+    res.json({ message: `Đã đóng băng ${count} khách ${m} tháng${skippedPkgs ? ` (${skippedPkgs} gói đã hết 2 lượt/năm nên bỏ qua)` : ''}` });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -544,12 +588,14 @@ router.post('/bulk/clear-face', authenticateToken, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Chuyển nhượng: Admin tạo hộ - xử lý thẳng, không cần phê duyệt (đi thẳng vào Tất cả)
+// Chuyển nhượng: Admin tạo hộ - xử lý thẳng, không cần phê duyệt (đi thẳng vào Tất cả, tối đa 2 lần/năm/gói)
 router.post('/:id/transfer-request', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
     const { packageId, recipient, reason } = req.body;
     if (!packageId || !recipient) return res.status(400).json({ error: 'Thiếu gói hoặc người nhận (SĐT/tài khoản)' });
+    const used = await countServiceInYear(id, 'transfer', packageId);
+    if (used >= 2) return res.status(400).json({ error: `Gói này đã dùng hết 2 lượt chuyển nhượng trong năm ${new Date().getFullYear()}` });
     const cust = await Customer.findById(id).select('fullName phone locationId');
     if (!cust) return res.status(404).json({ error: 'Không tìm thấy khách hàng' });
     const pkg = await UserPackage.findOne({ _id: packageId, customer_id: id });
@@ -598,7 +644,7 @@ router.post('/:id/locker-request', authenticateToken, async (req, res) => {
     if (!lockerId) return res.status(400).json({ error: 'Thiếu tủ' });
     const cust = await Customer.findById(id).select('fullName phone locationId');
     if (!cust) return res.status(404).json({ error: 'Không tìm thấy khách hàng' });
-    const days = Math.min(20, Math.max(1, parseInt(durationDays)||1));
+    const days = Math.min(60, Math.max(1, parseInt(durationDays)||1));
     let lockerAmount = 0;
     try {
       if (cust.locationId) {

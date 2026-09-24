@@ -71,10 +71,11 @@ export const register = (req, res) => {
 export const search = (req, res) => {
   const q = req.query.q || '';
   const locationId = req.query.locationId || null;
+  const hidePhone = String(req.query.hidePhone || '') === '1';
   searchCustomers(q, (err, customers) => {
     if (err) return res.status(500).json({ error: err.message });
     res.json(customers || []);
-  }, locationId);
+  }, locationId, hidePhone);
 };
 
 export const list = (req, res) => {

@@ -299,7 +299,12 @@ export const getEquipmentAlerts = async (req, res) => {
     const threeDaysAgo = new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000);
     const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
 
-    const allEquipments = await Equipment.find({});
+    const locationId = req.query.locationId || req.query.location_id || req.headers["x-location-id"];
+    const filter = {};
+    if (locationId && mongoose.Types.ObjectId.isValid(locationId)) {
+      filter.location_id = locationId;
+    }
+    const allEquipments = await Equipment.find(filter);
     const alerts = {
       maintenance_due: [],
       warranty_expiring: [],

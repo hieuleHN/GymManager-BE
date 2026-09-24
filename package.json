@@ -7,6 +7,9 @@
         "start": "node index.js",
         "dev": "nodemon index.js",
         "seed": "node seedData.js",
+        "seed:demo": "node seed-demo.js",
+        "seed:demo2": "node seed-demo2.js",
+        "seed:demo2:clean": "node seed-demo2.js --clean",
         "test": "echo \"Error: no test specified\" && exit 1"
     },
     "keywords": [],
@@ -16,6 +19,7 @@
     "dependencies": {
         "bcryptjs": "^3.0.3",
         "cors": "^2.8.6",
+        "docx": "^9.7.1",
         "dotenv": "^17.4.2",
         "exceljs": "^4.4.0",
         "express": "^5.2.1",

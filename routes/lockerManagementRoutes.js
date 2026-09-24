@@ -8,10 +8,12 @@ import {
     update,
     assign,
     release,
+    extend,
     completeMaintenance,
     remove,
     removeRow,
     statusOverview,
+    listOverdue,
     validateLockerCode
 } from "../controllers/lockerManagementController.js";
 
@@ -22,6 +24,9 @@ router.use(authenticateToken);
 
 // GET /api/v2/lockers/status - Lấy trạng thái tổng quan hệ thống tủ đồ
 router.get("/status", statusOverview);
+
+// GET /api/v2/lockers/overdue - Danh sách tủ quá hạn (FaceID đang bị khóa)
+router.get("/overdue", listOverdue);
 
 // POST /api/v2/lockers/validate - Kiểm tra tính hợp lệ của mã tủ
 router.post("/validate", (req, res) => {
@@ -56,6 +61,9 @@ router.post("/:id/assign", assign);
 
 // POST /api/v2/lockers/:id/release - Trả tủ
 router.post("/:id/release", release);
+
+// POST /api/v2/lockers/:id/extend - Gia hạn tủ quá hạn (mở lại FaceID)
+router.post("/:id/extend", extend);
 
 // POST /api/v2/lockers/:id/complete-maintenance - Hoàn tất bảo trì
 router.post("/:id/complete-maintenance", completeMaintenance);

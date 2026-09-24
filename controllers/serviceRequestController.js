@@ -8,6 +8,7 @@ import {
 } from '../models/serviceRequestModel.js';
 import Customer from '../models/schemas/customerSchema.js';
 import UserPackage from '../models/schemas/userPackageSchema.js';
+import ServiceRequest from '../models/schemas/serviceRequestSchema.js';
 import Package from '../models/schemas/packageSchema.js';
 import Booking from '../models/schemas/bookingSchema.js';
 import Location from '../models/schemas/locationSchema.js';
@@ -43,6 +44,39 @@ export const createServiceRequest = async (req, res) => {
     const customer = await Customer.findById(req.user.id).select('fullName phone locationId');
     if (!customer) {
       return res.status(404).json({ error: 'Không tìm thấy hội viên!' });
+    }
+
+    // Giới hạn: đóng băng mỗi lần 1-3 tháng, mỗi gói tối đa 2 lần/năm; chuyển nhượng tối đa 2 lần/năm/gói
+    if (service_type === 'freeze' || service_type === 'transfer') {
+      const packageId = data?.packageId ? String(data.packageId) : '';
+      if (service_type === 'freeze') {
+        const months = parseInt(data?.duration);
+        if (!months || months < 1 || months > 3) {
+          return res.status(400).json({ error: 'Thời gian tạm ngưng 1-3 tháng (mỗi lần tối đa 3 tháng)' });
+        }
+      }
+      if (packageId) {
+        const yearStart = new Date(new Date().getFullYear(), 0, 1);
+        const used = await ServiceRequest.countDocuments({
+          customer_id: req.user.id,
+          service_type,
+          createdAt: { $gte: yearStart },
+          status: { $nin: ['rejected', 'cancelled'] },
+          $or: [
+            { 'data.packageId': packageId },
+            { 'data.packageId': { $exists: false } },
+            { 'data.packageId': null },
+            { 'data.packageId': '' }
+          ]
+        });
+        if (used >= 2) {
+          return res.status(400).json({
+            error: service_type === 'freeze'
+              ? `Gói này đã dùng hết 2 lượt tạm ngưng trong năm ${new Date().getFullYear()}`
+              : `Gói này đã dùng hết 2 lượt chuyển nhượng trong năm ${new Date().getFullYear()}`
+          });
+        }
+      }
     }
 
     // Xác định phí dịch vụ theo cấu hình của cơ sở (nếu có)
@@ -505,6 +539,7 @@ const assignLockerToRequest = async (request) => {
   locker.assignedType = 'MEMBER';
   locker.assignedName = request.customer_name || 'Hội viên';
   locker.assignedPhone = request.customer_phone || '';
+  locker.assignedCustomerId = request.customer_id || null;
   locker.assignedAt = new Date();
   locker.rentalDays = Math.min(20, Math.max(1, parseInt(request.data?.durationDays, 10) || 1));
   locker.rentedAt = locker.assignedAt;
@@ -541,6 +576,40 @@ export const handleRequest = async (req, res) => {
     if (!request) return res.status(404).json({ error: 'Không tìm thấy yêu cầu!' });
     if (request.status !== 'pending') {
       return res.status(400).json({ error: 'Yêu cầu này đã được xử lý trước đó!' });
+    }
+
+    // Chặn duyệt vượt lượt: mỗi gói tối đa 2 lần freeze / 2 lần transfer trong năm
+    if (action === 'accepted' && ['freeze', 'transfer'].includes(request.service_type)) {
+      const pkgId = request.data?.packageId ? String(request.data.packageId) : '';
+      if (pkgId) {
+        const yearStart = new Date(new Date().getFullYear(), 0, 1);
+        const usedAccepted = await ServiceRequest.countDocuments({
+          _id: { $ne: request._id },
+          customer_id: request.customer_id,
+          service_type: request.service_type,
+          createdAt: { $gte: yearStart },
+          status: { $in: ['accepted', 'success'] },
+          $or: [
+            { 'data.packageId': pkgId },
+            { 'data.packageId': { $exists: false } },
+            { 'data.packageId': null },
+            { 'data.packageId': '' }
+          ]
+        });
+        if (usedAccepted >= 2) {
+          return res.status(400).json({
+            error: request.service_type === 'freeze'
+              ? `Gói này đã dùng hết 2 lượt tạm ngưng trong năm ${new Date().getFullYear()}, không thể duyệt thêm.`
+              : `Gói này đã dùng hết 2 lượt chuyển nhượng trong năm ${new Date().getFullYear()}, không thể duyệt thêm.`
+          });
+        }
+      }
+      if (request.service_type === 'freeze') {
+        const months = parseInt(request.data?.duration);
+        if (!months || months < 1 || months > 3) {
+          return res.status(400).json({ error: 'Yêu cầu tạm ngưng vượt quá 3 tháng/lần, không thể duyệt.' });
+        }
+      }
     }
 
     let refundAmount = 0;

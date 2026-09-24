@@ -627,6 +627,13 @@ export const calculateUpgrade = async (req, res) => {
     const newPkg = await Package.findById(newPackageId);
     if (!newPkg) return res.status(404).json({ error: 'Không tìm thấy gói tập mới!' });
 
+    // Chặn hạ cấp: gói mới phải có đơn giá >= gói hiện tại để không phải hoàn tiền
+    const currentUnit = Number(currentReg.package_id?.unitPrice) || (currentReg.total_price ? Math.round(currentReg.total_price / (currentReg.duration_months || 1)) : 0);
+    const newUnit = Number(newPkg.unitPrice || 0);
+    if (newUnit < currentUnit) {
+      return res.status(400).json({ error: `Gói mới (${newUnit.toLocaleString('vi-VN')}đ) phải có giá cao hơn hoặc bằng gói hiện tại (${currentUnit.toLocaleString('vi-VN')}đ). Không cho hạ cấp để tránh phải hoàn tiền.` });
+    }
+
     const now = new Date();
     const startDate = new Date(currentReg.start_date);
     const endDate = new Date(currentReg.end_date);
@@ -646,6 +653,19 @@ export const calculateUpgrade = async (req, res) => {
     const newPackageCost = Math.floor(newDailyRate * remainingDays);
 
     const diff = remainingValue - newPackageCost;
+    // Chặn trường hợp vẫn phải hoàn tiền dù đơn giá >= (do chiết khấu / giá snapshot cũ cao)
+    if (diff > 0) {
+      return res.status(400).json({ error: `Nâng cấp sang gói này sẽ phải hoàn ${diff.toLocaleString('vi-VN')}đ cho khách. Vui lòng chọn gói có giá trị cao hơn để không thất thoát ngân sách.` });
+    }
+
+    // Buổi PT: gói mới trừ đi số buổi đã dùng ở gói cũ
+    const oldUsedPt = (currentReg.monthlySessions || []).reduce((s, m) => s + (Number(m.used) || 0), 0);
+    const oldTotalPt = (currentReg.monthlySessions || []).reduce((s, m) => s + (Number(m.total) || 0), 0);
+    const remainingMonths = Math.max(1, Math.ceil(remainingDays / 30));
+    const newPerMonth = Number(newPkg.ptSessionsPerMonth) || 0;
+    const isUnlimited = !!(newPkg.isFullMonth) || !!(currentReg.isFullMonth && newPerMonth <= 0 && newPkg.isFullMonth);
+    const newTotalPt = newPkg.isFullMonth ? -1 : newPerMonth * remainingMonths;
+    const newRemainingPt = newPkg.isFullMonth ? -1 : Math.max(0, newTotalPt - oldUsedPt);
 
     res.json({
       remainingDays,
@@ -654,10 +674,20 @@ export const calculateUpgrade = async (req, res) => {
       remainingValue,
       newPackageCost,
       amountToPay: diff < 0 ? Math.abs(diff) : 0,
-      refundAmount: diff > 0 ? diff : 0,
-      refundPercentage: diff > 0 ? Math.round((diff / newPackageCost) * 100) : 0,
+      refundAmount: 0,
+      refundPercentage: 0,
       currentPackage: { name: currentReg.package_id?.name, unitPrice: currentReg.package_id?.unitPrice },
       newPackage: { name: newPkg.name, unitPrice: newPkg.unitPrice },
+      pt: {
+        oldUsed: oldUsedPt,
+        oldTotal: currentReg.isFullMonth ? -1 : oldTotalPt,
+        oldPerMonth: Number(currentReg.ptSessionsPerMonth) || 0,
+        newPerMonth,
+        newTotal: newTotalPt,
+        newRemaining: newRemainingPt,
+        remainingMonths,
+        isUnlimited: !!newPkg.isFullMonth,
+      },
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
