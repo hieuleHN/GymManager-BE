@@ -825,12 +825,11 @@ export const getFinanceStatistics = async (req, res) => {
         .reduce((mSum, s) => mSum + (s.quantity || 0), 0);
       if (soldInPeriod > 0 && (p.costPrice || 0) > 0) {
           cogsDetails.push({
-            date: saleDate, name: `Nhập hàng: ${p.name}`, category: 'Giá vốn hàng bán (COGS)',
-            amount: Math.round((p.costPrice || 0) * qty), note: `${qty} × ${(p.costPrice || 0).toLocaleString('vi-VN')}đ`, type: 'cogs'
+            date: now, name: `Nhập hàng: ${p.name}`, category: 'Giá vốn hàng bán (COGS)',
+            amount: Math.round((p.costPrice || 0) * soldInPeriod), note: `${soldInPeriod} × ${(p.costPrice || 0).toLocaleString('vi-VN')}đ`, type: 'cogs'
           });
         }
       });
-    });
 
     // Chi tiết khấu hao theo từng thiết bị
     const depreciationDetails = [];
