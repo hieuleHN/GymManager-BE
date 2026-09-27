@@ -817,17 +817,16 @@ export const getFinanceStatistics = async (req, res) => {
     // Chi tiết COGS theo từng sản phẩm theo tháng bán
     const cogsDetails = [];
     products.forEach(p => {
-      const soldInPeriod = (p.monthlySales || [])
-        .filter(s => {
-          const saleDate = new Date(s.year, s.month - 1, 1);
-          return saleDate >= yearStart && saleDate <= now;
-        })
-        .reduce((mSum, s) => mSum + (s.quantity || 0), 0);
-      if (soldInPeriod > 0 && (p.costPrice || 0) > 0) {
-          cogsDetails.push({
-            date: saleDate, name: `Nhập hàng: ${p.name}`, category: 'Giá vốn hàng bán (COGS)',
-            amount: Math.round((p.costPrice || 0) * qty), note: `${qty} × ${(p.costPrice || 0).toLocaleString('vi-VN')}đ`, type: 'cogs'
-          });
+      (p.monthlySales || []).forEach(s => {
+        const saleDate = new Date(s.year, s.month - 1, 1);
+        if (saleDate >= yearStart && saleDate <= now) {
+          const qty = s.quantity || 0;
+          if (qty > 0 && (p.costPrice || 0) > 0) {
+            cogsDetails.push({
+              date: saleDate, name: `Nhập hàng: ${p.name}`, category: 'Giá vốn hàng bán (COGS)',
+              amount: Math.round((p.costPrice || 0) * qty), note: `${qty} × ${(p.costPrice || 0).toLocaleString('vi-VN')}đ`, type: 'cogs'
+            });
+          }
         }
       });
     });

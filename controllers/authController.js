@@ -24,7 +24,7 @@ export const login = (req, res) => {
       }
       return bcrypt.compare(password, customer.password, (err, isMatch) => {
         if (err) return res.status(500).json({ error: err.message });
-        if (!isMatch) return res.status(400).json({ error: 'Tài khoản hoặc mật khẩu không chính xác!' });
+        if (!isMatch) return res.status(400).json({ error: 'Mật khẩu không chính xác!' });
 
         const token = jwt.sign(
           { id: customer._id, role: 'member', username: customer.account, isStaff: false },
@@ -50,11 +50,11 @@ export const login = (req, res) => {
 
     findStaffByAccount(account, (err, staff) => {
       if (err) return res.status(500).json({ error: err.message });
-      if (!staff) return res.status(400).json({ error: 'Tài khoản hoặc mật khẩu không chính xác!' });
+      if (!staff) return res.status(404).json({ error: 'Tài khoản không tồn tại!' });
 
       bcrypt.compare(password, staff.password, (err, isMatch) => {
         if (err) return res.status(500).json({ error: err.message });
-        if (!isMatch) return res.status(400).json({ error: 'Tài khoản hoặc mật khẩu không chính xác!' });
+        if (!isMatch) return res.status(400).json({ error: 'Mật khẩu không chính xác!' });
 
         const jobId = staff.job?._id;
         const isAdmin = staff.job?.isAdmin === true;
