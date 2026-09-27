@@ -23,13 +23,35 @@ export const createCustomer = async (data, callback) => {
   }
 };
 
-export const getAllCustomers = async (page = 1, limit = 15, locationId, callback) => {
+export const getAllCustomers = async (page = 1, limit = 15, locationIdOrFilter, callback) => {
   try {
-    const filter = locationId ? { locationId } : {};
+    // Tương thích ngược: tham số thứ 3 có thể là string locationId hoặc object filter { locationId, search, status }
+    // (giống cách Staff làm search server-side để kết quả hiện ngay trang 1)
+    let filter = {};
+    if (typeof locationIdOrFilter === 'string') {
+      if (locationIdOrFilter) filter.locationId = locationIdOrFilter;
+    } else if (locationIdOrFilter && typeof locationIdOrFilter === 'object') {
+      filter = { ...locationIdOrFilter };
+      Object.keys(filter).forEach(k => {
+        if (filter[k] === '' || filter[k] === undefined || filter[k] === 'all') delete filter[k];
+      });
+    }
+    const mongoFilter = {};
+    if (filter.locationId) mongoFilter.locationId = filter.locationId;
+    if (filter.status) mongoFilter.status = filter.status;
+    if (filter.search) {
+      const esc = String(filter.search).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const regex = new RegExp(esc, 'i');
+      mongoFilter.$or = [
+        { fullName: regex },
+        { account: regex },
+        { phone: regex }
+      ];
+    }
     const skip = (page - 1) * limit;
     const [data, total] = await Promise.all([
-      Customer.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit),
-      Customer.countDocuments(filter)
+      Customer.find(mongoFilter).sort({ createdAt: -1 }).skip(skip).limit(limit),
+      Customer.countDocuments(mongoFilter)
     ]);
     callback(null, { data, total, page, limit, totalPages: Math.ceil(total / limit) });
   } catch (err) {

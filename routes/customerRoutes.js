@@ -782,16 +782,25 @@ router.post('/:id/cancel-refund-request', authenticateToken, async (req, res) =>
 router.get('/', authenticateToken, async (req, res) => {
   const hasFaceId = req.query.hasFaceId;
   const hasActivePackage = req.query.hasActivePackage;
+  const expiring = req.query.expiring;
   // Nếu có filter đặc biệt -> xử lý riêng (kết hợp với list gốc để giữ phân trang)
-  if (hasFaceId !== undefined || hasActivePackage !== undefined) {
+  if (hasFaceId !== undefined || hasActivePackage !== undefined || expiring !== undefined) {
     try {
       const page = parseInt(req.query.page) || 1;
       const limit = parseInt(req.query.limit) || 15;
       const locationId = req.query.locationId && req.query.locationId !== 'all' ? req.query.locationId : null;
+      const search = (req.query.search || '').trim();
+      const status = req.query.status && req.query.status !== 'all' ? req.query.status : null;
       const baseFilter = locationId ? { locationId: new mongoose.Types.ObjectId(locationId) } : {};
+      if (status) baseFilter.status = status;
+      if (search) {
+        const esc = search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const regex = new RegExp(esc, 'i');
+        baseFilter.$or = [{ fullName: regex }, { account: regex }, { phone: regex }];
+      }
 
       // FaceID filter
-      if (hasFaceId === 'false') baseFilter.$or = [{ faceDescriptor: { $exists: false } }, { faceDescriptor: { $size: 0 } }];
+      if (hasFaceId === 'false') baseFilter.$and = [...(baseFilter.$and || []), { $or: [{ faceDescriptor: { $exists: false } }, { faceDescriptor: { $size: 0 } }] }];
       if (hasFaceId === 'true') baseFilter.faceDescriptor = { $exists: true, $not: { $size: 0 } };
 
       let customers = await Customer.find(baseFilter).sort({ createdAt: -1 }).lean();
@@ -807,6 +816,28 @@ router.get('/', authenticateToken, async (req, res) => {
           const hasActive = activeIds.has(String(c._id));
           return hasActivePackage === 'true' ? hasActive : !hasActive;
         });
+      }
+
+      // Expiring filter: khách có gói hết hạn trong 7 ngày tới -> đưa lên đầu trang khi click tab "Sắp hết hạn"
+      if (expiring === 'true' || expiring === '1') {
+        const now = new Date();
+        const in7Days = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+        const locPkgFilter = locationId ? { locationId: new mongoose.Types.ObjectId(locationId) } : {};
+        const expiringPkgs = await UserPackage.find({
+          ...locPkgFilter,
+          payment_status: 'đã thanh toán',
+          status: { $in: ['đang hoạt động', 'còn 10 ngày'] },
+          end_date: { $gte: now, $lte: in7Days }
+        }).select('customer_id end_date').lean();
+        const endMap = new Map();
+        expiringPkgs.forEach(p => {
+          const cid = String(p.customer_id);
+          const t = new Date(p.end_date).getTime();
+          if (!endMap.has(cid) || t < endMap.get(cid)) endMap.set(cid, t);
+        });
+        customers = customers
+          .filter(c => endMap.has(String(c._id)))
+          .sort((a, b) => (endMap.get(String(a._id)) || 0) - (endMap.get(String(b._id)) || 0));
       }
 
       const total = customers.length;

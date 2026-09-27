@@ -82,8 +82,9 @@ export const search = (req, res) => {
 export const list = (req, res) => {
   const page = parseInt(req.query.page) || 1;
   const limit = parseInt(req.query.limit) || 15;
-  const { locationId } = req.query;
-  getAllCustomers(page, limit, locationId || null, (err, result) => {
+  const { locationId, search, status } = req.query;
+  const filter = { locationId, search, status };
+  getAllCustomers(page, limit, filter, (err, result) => {
     if (err) return res.status(500).json({ error: 'Lỗi lấy danh sách: ' + err.message });
     res.json(result);
   });
