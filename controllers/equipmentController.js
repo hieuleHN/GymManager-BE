@@ -93,19 +93,19 @@ export const updateEquipment = async (req, res) => {
   }
 };
 
-export const deleteEquipment = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const deletedEquipment = await Equipment.findByIdAndDelete(id);
-    if (!deletedEquipment)
-      return res
-        .status(404)
-        .json({ message: "Không tìm thấy thiết bị để xóa!" });
-    res.status(200).json({ message: "Xóa thiết bị thành công!" });
-  } catch (error) {
-    res.status(500).json({ message: "Lỗi server!", error: error.message });
-  }
-};
+// export const deleteEquipment = async (req, res) => {
+//   try {
+//     const { id } = req.params;
+//     const deletedEquipment = await Equipment.findByIdAndDelete(id);
+//     if (!deletedEquipment)
+//       return res
+//         .status(404)
+//         .json({ message: "Không tìm thấy thiết bị để xóa!" });
+//     res.status(200).json({ message: "Xóa thiết bị thành công!" });
+//   } catch (error) {
+//     res.status(500).json({ message: "Lỗi server!", error: error.message });
+//   }
+// };
 
 export const reportEquipment = async (req, res) => {
   try {

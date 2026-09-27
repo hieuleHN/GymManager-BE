@@ -13,10 +13,27 @@ import mongoose from "mongoose";
 
 const toObjectId = (id) => {
   if (!id) return null;
-  try { return new mongoose.Types.ObjectId(id); } catch { return id; }
+  try {
+    return new mongoose.Types.ObjectId(id);
+  } catch {
+    return id;
+  }
 };
 
-const MONTHS = ["T1", "T2", "T3", "T4", "T5", "T6", "T7", "T8", "T9", "T10", "T11", "T12"];
+const MONTHS = [
+  "T1",
+  "T2",
+  "T3",
+  "T4",
+  "T5",
+  "T6",
+  "T7",
+  "T8",
+  "T9",
+  "T10",
+  "T11",
+  "T12",
+];
 
 // Trả về { start, prevStart } dựa trên period
 function getPeriodRange(period) {
@@ -31,7 +48,11 @@ function getPeriodRange(period) {
     weekStart.setHours(0, 0, 0, 0);
     // Clip week start to beginning of current month
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-    start.setTime(weekStart.getTime() > monthStart.getTime() ? weekStart.getTime() : monthStart.getTime());
+    start.setTime(
+      weekStart.getTime() > monthStart.getTime()
+        ? weekStart.getTime()
+        : monthStart.getTime(),
+    );
     prevStart.setDate(start.getDate() - 7);
     prevEnd.setDate(start.getDate() - 1);
     prevEnd.setHours(23, 59, 59, 999);
@@ -70,7 +91,7 @@ function pctChange(current, previous) {
 
 // ============ TIME BUCKETS: Tạo mốc thời gian cho biểu đồ theo period ============
 function getTimeBuckets(period, now) {
-  if (period === 'week') {
+  if (period === "week") {
     const day = now.getDay();
     const mondayOffset = day === 0 ? -6 : 1 - day;
     const monday = new Date(now);
@@ -78,8 +99,9 @@ function getTimeBuckets(period, now) {
     monday.setHours(0, 0, 0, 0);
     // Clip to beginning of current month
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-    const clipStart = monday.getTime() > monthStart.getTime() ? monday : monthStart;
-    const dayLabels = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'];
+    const clipStart =
+      monday.getTime() > monthStart.getTime() ? monday : monthStart;
+    const dayLabels = ["CN", "T2", "T3", "T4", "T5", "T6", "T7"];
     const buckets = [];
     const d = new Date(clipStart);
     while (d <= now) {
@@ -91,8 +113,9 @@ function getTimeBuckets(period, now) {
     }
     return buckets;
   }
-  if (period === 'month') {
-    const year = now.getFullYear(), month = now.getMonth();
+  if (period === "month") {
+    const year = now.getFullYear(),
+      month = now.getMonth();
     const daysInMonth = new Date(year, month + 1, 0).getDate();
     const buckets = [];
     for (let d = 1; d <= daysInMonth; d += 7) {
@@ -105,81 +128,137 @@ function getTimeBuckets(period, now) {
     }
     return buckets;
   }
-  if (period === 'quarter') {
+  if (period === "quarter") {
     const q = Math.floor(now.getMonth() / 3) * 3;
     const year = now.getFullYear();
-    return [0, 1, 2].map(i => ({
+    return [0, 1, 2].map((i) => ({
       label: MONTHS[q + i],
       start: new Date(year, q + i, 1),
-      end: i === 2 ? new Date(now) : new Date(year, q + i + 1, 0, 23, 59, 59, 999),
+      end:
+        i === 2 ? new Date(now) : new Date(year, q + i + 1, 0, 23, 59, 59, 999),
     }));
   }
   return MONTHS.map((label, i) => ({
     label,
     start: new Date(now.getFullYear(), i, 1),
-    end: i === now.getMonth() ? new Date(now) : new Date(now.getFullYear(), i + 1, 0, 23, 59, 59, 999),
+    end:
+      i === now.getMonth()
+        ? new Date(now)
+        : new Date(now.getFullYear(), i + 1, 0, 23, 59, 59, 999),
   }));
 }
 
 // Aggregate Mongo model theo time buckets
-async function timeSeriesAggregate(Model, amountField, dateField, buckets, matchExtra = {}, fallbackDateField = null) {
-  return Promise.all(buckets.map(async (bucket) => {
-    let filter;
-    if (fallbackDateField) {
-      filter = {
-        $or: [
-          { [dateField]: { $gte: bucket.start, $lte: bucket.end } },
-          { $and: [{ $or: [{ [dateField]: null }, { [dateField]: { $exists: false } }] }, { [fallbackDateField]: { $gte: bucket.start, $lte: bucket.end } }] },
-        ],
-        ...matchExtra,
-      };
-    } else {
-      filter = { [dateField]: { $gte: bucket.start, $lte: bucket.end }, ...matchExtra };
-    }
-    const rows = await Model.aggregate([
-      { $match: filter },
-      { $group: { _id: null, value: { $sum: `$${amountField}` } } },
-    ]);
-    return { label: bucket.label, value: rows[0]?.value || 0 };
-  }));
+async function timeSeriesAggregate(
+  Model,
+  amountField,
+  dateField,
+  buckets,
+  matchExtra = {},
+  fallbackDateField = null,
+) {
+  return Promise.all(
+    buckets.map(async (bucket) => {
+      let filter;
+      if (fallbackDateField) {
+        filter = {
+          $or: [
+            { [dateField]: { $gte: bucket.start, $lte: bucket.end } },
+            {
+              $and: [
+                {
+                  $or: [
+                    { [dateField]: null },
+                    { [dateField]: { $exists: false } },
+                  ],
+                },
+                {
+                  [fallbackDateField]: { $gte: bucket.start, $lte: bucket.end },
+                },
+              ],
+            },
+          ],
+          ...matchExtra,
+        };
+      } else {
+        filter = {
+          [dateField]: { $gte: bucket.start, $lte: bucket.end },
+          ...matchExtra,
+        };
+      }
+      const rows = await Model.aggregate([
+        { $match: filter },
+        { $group: { _id: null, value: { $sum: `$${amountField}` } } },
+      ]);
+      return { label: bucket.label, value: rows[0]?.value || 0 };
+    }),
+  );
 }
 
 // Nhóm doanh thu/thu chi theo tháng trong năm hiện tại
-async function monthlySeries(Model, amountField, dateField, matchExtra = {}, fallbackDateField = null) {
+async function monthlySeries(
+  Model,
+  amountField,
+  dateField,
+  matchExtra = {},
+  fallbackDateField = null,
+) {
   const now = new Date();
   const year = now.getFullYear();
   const startYear = new Date(year, 0, 1);
 
-  const results = await Promise.all(MONTHS.map(async (label, idx) => {
-    const mStart = new Date(year, idx, 1);
-    const isCurrentMonth = (idx === now.getMonth());
-    const mEnd = isCurrentMonth ? now : new Date(year, idx + 1, 0, 23, 59, 59, 999);
+  const results = await Promise.all(
+    MONTHS.map(async (label, idx) => {
+      const mStart = new Date(year, idx, 1);
+      const isCurrentMonth = idx === now.getMonth();
+      const mEnd = isCurrentMonth
+        ? now
+        : new Date(year, idx + 1, 0, 23, 59, 59, 999);
 
-    let filter;
-    if (fallbackDateField) {
-      filter = {
-        $or: [
-          { [dateField]: { $gte: mStart, $lte: mEnd } },
-          { $and: [{ $or: [{ [dateField]: null }, { [dateField]: { $exists: false } }] }, { [fallbackDateField]: { $gte: mStart, $lte: mEnd } }] },
-        ],
-        ...matchExtra,
-      };
-    } else {
-      filter = { [dateField]: { $gte: mStart, $lte: mEnd }, ...matchExtra };
-    }
+      let filter;
+      if (fallbackDateField) {
+        filter = {
+          $or: [
+            { [dateField]: { $gte: mStart, $lte: mEnd } },
+            {
+              $and: [
+                {
+                  $or: [
+                    { [dateField]: null },
+                    { [dateField]: { $exists: false } },
+                  ],
+                },
+                { [fallbackDateField]: { $gte: mStart, $lte: mEnd } },
+              ],
+            },
+          ],
+          ...matchExtra,
+        };
+      } else {
+        filter = { [dateField]: { $gte: mStart, $lte: mEnd }, ...matchExtra };
+      }
 
-    const rows = await Model.aggregate([
-      { $match: filter },
-      { $group: { _id: null, value: { $sum: `$${amountField}` } } },
-    ]);
-    return { month: label, value: rows[0]?.value || 0 };
-  }));
+      const rows = await Model.aggregate([
+        { $match: filter },
+        { $group: { _id: null, value: { $sum: `$${amountField}` } } },
+      ]);
+      return { month: label, value: rows[0]?.value || 0 };
+    }),
+  );
 
   return results;
 }
 
 // Tổng theo khoảng thời gian
-async function sumBetween(Model, amountField, dateField, start, end, matchExtra = {}, fallbackDateField = null) {
+async function sumBetween(
+  Model,
+  amountField,
+  dateField,
+  start,
+  end,
+  matchExtra = {},
+  fallbackDateField = null,
+) {
   let filter;
   if (fallbackDateField) {
     filter = {
@@ -187,7 +266,9 @@ async function sumBetween(Model, amountField, dateField, start, end, matchExtra 
         { [dateField]: { $gte: start, $lte: end } },
         {
           $and: [
-            { $or: [{ [dateField]: null }, { [dateField]: { $exists: false } }] },
+            {
+              $or: [{ [dateField]: null }, { [dateField]: { $exists: false } }],
+            },
             { [fallbackDateField]: { $gte: start, $lte: end } },
           ],
         },
@@ -217,40 +298,72 @@ export const getFinanceStatistics = async (req, res) => {
 
     // ============ 1. DOANH THU THỰC THU (kỳ này vs kỳ trước) ============
     const thisPaidSum = await sumBetween(
-      UserPackage, "total_price", "payment_date", start, new Date(),
-      { ...locFilter, payment_status: "đã thanh toán" }, "createdAt"
+      UserPackage,
+      "total_price",
+      "payment_date",
+      start,
+      new Date(),
+      { ...locFilter, payment_status: "đã thanh toán" },
+      "createdAt",
     );
     const prevPaidSum = await sumBetween(
-      UserPackage, "total_price", "payment_date", prevStart, prevEnd,
-      { ...locFilter, payment_status: "đã thanh toán" }, "createdAt"
+      UserPackage,
+      "total_price",
+      "payment_date",
+      prevStart,
+      prevEnd,
+      { ...locFilter, payment_status: "đã thanh toán" },
+      "createdAt",
     );
 
-    const thisWalletSum = locationId ? 0 : await sumBetween(
-      WalletTransaction, "amount", "createdAt", start, new Date(),
-      { type: "topup", status: "completed" }
-    );
-    const prevWalletSum = locationId ? 0 : await sumBetween(
-      WalletTransaction, "amount", "createdAt", prevStart, prevEnd,
-      { type: "topup", status: "completed" }
-    );
+    const thisWalletSum = locationId
+      ? 0
+      : await sumBetween(
+          WalletTransaction,
+          "amount",
+          "createdAt",
+          start,
+          new Date(),
+          { type: "topup", status: "completed" },
+        );
+    const prevWalletSum = locationId
+      ? 0
+      : await sumBetween(
+          WalletTransaction,
+          "amount",
+          "createdAt",
+          prevStart,
+          prevEnd,
+          { type: "topup", status: "completed" },
+        );
 
     // Tiền book lịch tập riêng HLV đã thanh toán
     const thisBookingSum = await sumBetween(
-      Booking, "price", "createdAt", start, new Date(),
-      { ...locFilter, paymentStatus: "paid", trainerId: { $ne: null } }
+      Booking,
+      "price",
+      "createdAt",
+      start,
+      new Date(),
+      { ...locFilter, paymentStatus: "paid", trainerId: { $ne: null } },
     );
     const prevBookingSum = await sumBetween(
-      Booking, "price", "createdAt", prevStart, prevEnd,
-      { ...locFilter, paymentStatus: "paid", trainerId: { $ne: null } }
+      Booking,
+      "price",
+      "createdAt",
+      prevStart,
+      prevEnd,
+      { ...locFilter, paymentStatus: "paid", trainerId: { $ne: null } },
     );
 
     // ============ 2. DOANH THU SẢN PHẨM (cũng là tiền mặt thực thu) ============
-    const allProducts = await Product.find({ ...(locationId ? { location_id: locationId } : {}) });
+    const allProducts = await Product.find({
+      ...(locationId ? { location_id: locationId } : {}),
+    });
 
     function calcProductRevenue(start, end) {
       let total = 0;
-      allProducts.forEach(p => {
-        (p.monthlySales || []).forEach(s => {
+      allProducts.forEach((p) => {
+        (p.monthlySales || []).forEach((s) => {
           const saleDate = new Date(s.year, s.month - 1, 1);
           if (saleDate >= start && saleDate <= end) {
             total += s.revenue || 0;
@@ -263,8 +376,10 @@ export const getFinanceStatistics = async (req, res) => {
     const productRevPrev = calcProductRevenue(prevStart, prevEnd);
 
     // DOANH THU THỰC THU = Gói tập + Ví + Book PT + Sản phẩm
-    const realCashInThis = thisPaidSum + thisWalletSum + thisBookingSum + productRevThis;
-    const realCashInPrev = prevPaidSum + prevWalletSum + prevBookingSum + productRevPrev;
+    const realCashInThis =
+      thisPaidSum + thisWalletSum + thisBookingSum + productRevThis;
+    const realCashInPrev =
+      prevPaidSum + prevWalletSum + prevBookingSum + productRevPrev;
 
     // ============ 3. DOANH THU GHI NHẬN (kỳ này vs kỳ trước) ============
 
@@ -275,19 +390,25 @@ export const getFinanceStatistics = async (req, res) => {
         ...locFilter,
         payment_status: "đã thanh toán",
         start_date: { $lte: end },
-        end_date: { $gte: start }
-      }).then(pkgs => {
-        pkgs.forEach(up => {
+        end_date: { $gte: start },
+      }).then((pkgs) => {
+        pkgs.forEach((up) => {
           const pkgStart = new Date(up.start_date);
           const pkgEnd = new Date(up.end_date);
-          const totalDays = Math.max(1, Math.round((pkgEnd - pkgStart) / 86400000) + 1);
+          const totalDays = Math.max(
+            1,
+            Math.round((pkgEnd - pkgStart) / 86400000) + 1,
+          );
           const dailyRev = (up.total_price || 0) / totalDays;
 
           // Số ngày giao nhau giữa gói và kỳ
           const overlapStart = pkgStart > start ? pkgStart : start;
           const overlapEnd = pkgEnd < end ? pkgEnd : end;
           if (overlapStart <= overlapEnd) {
-            const overlapDays = Math.max(1, Math.round((overlapEnd - overlapStart) / 86400000) + 1);
+            const overlapDays = Math.max(
+              1,
+              Math.round((overlapEnd - overlapStart) / 86400000) + 1,
+            );
             total += dailyRev * overlapDays;
           }
         });
@@ -303,10 +424,20 @@ export const getFinanceStatistics = async (req, res) => {
     // ============ 3. TỔNG CHI PHÍ (kỳ này vs kỳ trước) ============
     const expenseFilter = locationId ? { locationId } : {};
     const expenseThis = await sumBetween(
-      Expense, "amount", "date", start, new Date(), expenseFilter
+      Expense,
+      "amount",
+      "date",
+      start,
+      new Date(),
+      expenseFilter,
     );
     const expensePrev = await sumBetween(
-      Expense, "amount", "date", prevStart, prevEnd, expenseFilter
+      Expense,
+      "amount",
+      "date",
+      prevStart,
+      prevEnd,
+      expenseFilter,
     );
 
     // ============ 3b. COGS (Giá vốn hàng bán) & TIỀN NHẬP HÀNG ============
@@ -316,9 +447,9 @@ export const getFinanceStatistics = async (req, res) => {
     // COGS = costPrice × số lượng đã bán trong kỳ (dựa trên monthlySales)
     let cogsThis = 0;
     let cogsPrev = 0;
-    products.forEach(p => {
+    products.forEach((p) => {
       const soldThis = (p.monthlySales || [])
-        .filter(s => {
+        .filter((s) => {
           const saleDate = new Date(s.year, s.month - 1, 1);
           return saleDate >= start && saleDate <= new Date();
         })
@@ -326,7 +457,7 @@ export const getFinanceStatistics = async (req, res) => {
       cogsThis += (p.costPrice || 0) * soldThis;
 
       const soldPrev = (p.monthlySales || [])
-        .filter(s => {
+        .filter((s) => {
           const saleDate = new Date(s.year, s.month - 1, 1);
           return saleDate >= prevStart && saleDate <= prevEnd;
         })
@@ -348,25 +479,37 @@ export const getFinanceStatistics = async (req, res) => {
       const eqStart = new Date(eq.createdAt);
       if (eqStart > periodEnd) return 0;
       const clipStart = eqStart > periodStart ? eqStart : periodStart;
-      const monthsToEnd = (periodEnd.getFullYear() - eqStart.getFullYear()) * 12
-        + (periodEnd.getMonth() - eqStart.getMonth()) + 1;
-      const monthsToStart = (clipStart.getFullYear() - eqStart.getFullYear()) * 12
-        + (clipStart.getMonth() - eqStart.getMonth());
-      const activeMonths = Math.max(0, Math.min(monthsToEnd - monthsToStart, DEPRECIATION_MONTHS));
+      const monthsToEnd =
+        (periodEnd.getFullYear() - eqStart.getFullYear()) * 12 +
+        (periodEnd.getMonth() - eqStart.getMonth()) +
+        1;
+      const monthsToStart =
+        (clipStart.getFullYear() - eqStart.getFullYear()) * 12 +
+        (clipStart.getMonth() - eqStart.getMonth());
+      const activeMonths = Math.max(
+        0,
+        Math.min(monthsToEnd - monthsToStart, DEPRECIATION_MONTHS),
+      );
       return Math.min(monthlyDepr * activeMonths, total);
     }
 
     // Khấu hao kỳ này
-    const equipmentCostThis = equipments.reduce((sum, e) => sum + calcDepreciation(e, start, now), 0);
+    const equipmentCostThis = equipments.reduce(
+      (sum, e) => sum + calcDepreciation(e, start, now),
+      0,
+    );
 
     // Khấu hao kỳ trước
-    const equipmentCostPrev = equipments.reduce((sum, e) => sum + calcDepreciation(e, prevStart, prevEnd), 0);
+    const equipmentCostPrev = equipments.reduce(
+      (sum, e) => sum + calcDepreciation(e, prevStart, prevEnd),
+      0,
+    );
 
     // Tổng COGS năm (dùng cho expenseStructure pie chart)
     const yearStartForCogs = new Date(now.getFullYear(), 0, 1);
     const totalCogsYear = products.reduce((sum, p) => {
       const soldInYear = (p.monthlySales || [])
-        .filter(s => {
+        .filter((s) => {
           const saleDate = new Date(s.year, s.month - 1, 1);
           return saleDate >= yearStartForCogs && saleDate <= now;
         })
@@ -376,13 +519,18 @@ export const getFinanceStatistics = async (req, res) => {
 
     // Khấu hao năm (dùng cho expenseStructure pie chart)
     const yearStart = new Date(now.getFullYear(), 0, 1);
-    const totalEquipmentCost = equipments.reduce((sum, e) => sum + calcDepreciation(e, yearStart, now), 0);
+    const totalEquipmentCost = equipments.reduce(
+      (sum, e) => sum + calcDepreciation(e, yearStart, now),
+      0,
+    );
 
     // Khấu hao theo tháng trong năm
     const equipmentSeries = MONTHS.map((_, i) => {
       const mStart = new Date(now.getFullYear(), i, 1);
-      const isCurrentMonth = (i === now.getMonth());
-      const mEnd = isCurrentMonth ? now : new Date(now.getFullYear(), i + 1, 0, 23, 59, 59, 999);
+      const isCurrentMonth = i === now.getMonth();
+      const mEnd = isCurrentMonth
+        ? now
+        : new Date(now.getFullYear(), i + 1, 0, 23, 59, 59, 999);
       const value = equipments.reduce((sum, e) => {
         const total = e.total || 0;
         if (total <= 0) return sum;
@@ -390,11 +538,14 @@ export const getFinanceStatistics = async (req, res) => {
         const eqStart = new Date(e.createdAt);
         // Kiểm tra thiết bị có hoạt động trong tháng này không
         if (eqStart > mEnd) return sum;
-        const monthsFromStart = (mEnd.getFullYear() - eqStart.getFullYear()) * 12
-          + (mEnd.getMonth() - eqStart.getMonth()) + 1;
+        const monthsFromStart =
+          (mEnd.getFullYear() - eqStart.getFullYear()) * 12 +
+          (mEnd.getMonth() - eqStart.getMonth()) +
+          1;
         if (monthsFromStart <= 0) return sum;
         // Đã khấu hao hết chưa?
-        const totalDepreciatedSoFar = monthlyDepr * Math.min(monthsFromStart, DEPRECIATION_MONTHS);
+        const totalDepreciatedSoFar =
+          monthlyDepr * Math.min(monthsFromStart, DEPRECIATION_MONTHS);
         if (totalDepreciatedSoFar > total) return sum;
         return sum + monthlyDepr;
       }, 0);
@@ -402,33 +553,42 @@ export const getFinanceStatistics = async (req, res) => {
     });
 
     // Chi tiết khấu hao từng thiết bị (dùng cho Excel export)
-    const depreciationDetail = equipments.filter(e => (e.total || 0) > 0).map(e => {
-      const total = e.total || 0;
-      const monthlyDepr = total / DEPRECIATION_MONTHS;
-      const eqStart = new Date(e.createdAt);
-      const monthsActive = Math.min(
-        DEPRECIATION_MONTHS,
-        Math.max(0, (now.getFullYear() - eqStart.getFullYear()) * 12 + (now.getMonth() - eqStart.getMonth()) + 1)
-      );
-      const totalDepreciated = Math.min(monthlyDepr * monthsActive, total);
-      return {
-        name: e.name,
-        total,
-        monthlyDepreciation: Math.round(monthlyDepr),
-        monthsActive,
-        totalDepreciated: Math.round(totalDepreciated),
-        remainingValue: Math.round(total - totalDepreciated),
-      };
-    });
+    const depreciationDetail = equipments
+      .filter((e) => (e.total || 0) > 0)
+      .map((e) => {
+        const total = e.total || 0;
+        const monthlyDepr = total / DEPRECIATION_MONTHS;
+        const eqStart = new Date(e.createdAt);
+        const monthsActive = Math.min(
+          DEPRECIATION_MONTHS,
+          Math.max(
+            0,
+            (now.getFullYear() - eqStart.getFullYear()) * 12 +
+              (now.getMonth() - eqStart.getMonth()) +
+              1,
+          ),
+        );
+        const totalDepreciated = Math.min(monthlyDepr * monthsActive, total);
+        return {
+          name: e.name,
+          total,
+          monthlyDepreciation: Math.round(monthlyDepr),
+          monthsActive,
+          totalDepreciated: Math.round(totalDepreciated),
+          remainingValue: Math.round(total - totalDepreciated),
+        };
+      });
 
     // COGS theo tháng (costPrice × SL bán trong tháng) - dùng cho pie chart
     const cogsByMonthForPie = MONTHS.map((label, idx) => {
       const mStart = new Date(now.getFullYear(), idx, 1);
-      const isCurrentMonth = (idx === now.getMonth());
-      const mEnd = isCurrentMonth ? now : new Date(now.getFullYear(), idx + 1, 0, 23, 59, 59, 999);
+      const isCurrentMonth = idx === now.getMonth();
+      const mEnd = isCurrentMonth
+        ? now
+        : new Date(now.getFullYear(), idx + 1, 0, 23, 59, 59, 999);
       const value = products.reduce((sum, p) => {
         const soldInMonth = (p.monthlySales || [])
-          .filter(s => {
+          .filter((s) => {
             const saleDate = new Date(s.year, s.month - 1, 1);
             return saleDate >= mStart && saleDate <= mEnd;
           })
@@ -439,8 +599,12 @@ export const getFinanceStatistics = async (req, res) => {
     });
 
     // ============ 4. LỢI NHUẬN ============
-    const totalExpenseThis = Math.round(expenseThis + cogsThis + equipmentCostThis);
-    const totalExpensePrev = Math.round(expensePrev + cogsPrev + equipmentCostPrev);
+    const totalExpenseThis = Math.round(
+      expenseThis + cogsThis + equipmentCostThis,
+    );
+    const totalExpensePrev = Math.round(
+      expensePrev + cogsPrev + equipmentCostPrev,
+    );
     const profitThis = accrualThis - totalExpenseThis;
     const profitPrev = accrualPrev - totalExpensePrev;
 
@@ -450,35 +614,49 @@ export const getFinanceStatistics = async (req, res) => {
       { $match: { ...locFilter, payment_status: "đã thanh toán" } },
       { $group: { _id: null, total: { $sum: "$total_price" } } },
     ]);
-    const allTimeCashInVal = (allTimeCashIn[0]?.total || 0);
+    const allTimeCashInVal = allTimeCashIn[0]?.total || 0;
 
     const allTimeWalletIn = await WalletTransaction.aggregate([
-      { $match: { type: "topup", status: "completed", ...(locFilter.locationId ? { locationId: locFilter.locationId } : {}) } },
+      {
+        $match: {
+          type: "topup",
+          status: "completed",
+          ...(locFilter.locationId ? { locationId: locFilter.locationId } : {}),
+        },
+      },
       { $group: { _id: null, total: { $sum: "$amount" } } },
     ]);
-    const allTimeWalletInVal = (allTimeWalletIn[0]?.total || 0);
+    const allTimeWalletInVal = allTimeWalletIn[0]?.total || 0;
 
     const allTimeBookingIn = await Booking.aggregate([
-      { $match: { ...locFilter, paymentStatus: "paid", trainerId: { $ne: null } } },
+      {
+        $match: {
+          ...locFilter,
+          paymentStatus: "paid",
+          trainerId: { $ne: null },
+        },
+      },
       { $group: { _id: null, total: { $sum: "$price" } } },
     ]);
-    const allTimeBookingInVal = (allTimeBookingIn[0]?.total || 0);
+    const allTimeBookingInVal = allTimeBookingIn[0]?.total || 0;
 
-    const totalCashInAllTime = allTimeCashInVal + allTimeWalletInVal + allTimeBookingInVal;
+    const totalCashInAllTime =
+      allTimeCashInVal + allTimeWalletInVal + allTimeBookingInVal;
 
     // Tổng chi phí cố định từ đầu đến giờ (theo CLB nếu chọn)
     const totalExpenseAllTime = await Expense.aggregate([
       { $match: locFilter },
       { $group: { _id: null, total: { $sum: "$amount" } } },
     ]);
-    const totalExpenseAllTimeVal = (totalExpenseAllTime[0]?.total || 0);
+    const totalExpenseAllTimeVal = totalExpenseAllTime[0]?.total || 0;
 
     // Tổng tiền nhập hàng từ đầu đến giờ (theo CLB nếu chọn - products đã filter sẵn)
     const totalImportAllTime = products.reduce((sum, p) => {
       return sum + (p.costPrice || 0) * (p.importQuantity || p.quantity || 0);
     }, 0);
 
-    const netCashFlow = totalCashInAllTime - totalExpenseAllTimeVal - totalImportAllTime;
+    const netCashFlow =
+      totalCashInAllTime - totalExpenseAllTimeVal - totalImportAllTime;
 
     const summary = {
       realCashIn: realCashInThis,
@@ -487,7 +665,9 @@ export const getFinanceStatistics = async (req, res) => {
       totalProfit: profitThis,
       importCost: cogsThis,
       netCashFlow,
-      profitMargin: accrualThis ? Math.round((profitThis / accrualThis) * 100) : 0,
+      profitMargin: accrualThis
+        ? Math.round((profitThis / accrualThis) * 100)
+        : 0,
       change: {
         realCashIn: pctChange(realCashInThis, realCashInPrev),
         accrualRevenue: pctChange(accrualThis, accrualPrev),
@@ -501,8 +681,12 @@ export const getFinanceStatistics = async (req, res) => {
 
     // 1. Tiền thực thu (UserPackage + wallet + booking) theo time buckets
     const cashSeries = await timeSeriesAggregate(
-      UserPackage, "total_price", "payment_date",
-      timeBuckets, { ...locFilter, payment_status: "đã thanh toán" }, "createdAt"
+      UserPackage,
+      "total_price",
+      "payment_date",
+      timeBuckets,
+      { ...locFilter, payment_status: "đã thanh toán" },
+      "createdAt",
     );
 
     // Thêm tiền nạp ví theo time buckets (chỉ khi không lọc theo location)
@@ -510,7 +694,13 @@ export const getFinanceStatistics = async (req, res) => {
       for (let i = 0; i < timeBuckets.length; i++) {
         const bucket = timeBuckets[i];
         const walletRows = await WalletTransaction.aggregate([
-          { $match: { type: "topup", status: "completed", createdAt: { $gte: bucket.start, $lte: bucket.end } } },
+          {
+            $match: {
+              type: "topup",
+              status: "completed",
+              createdAt: { $gte: bucket.start, $lte: bucket.end },
+            },
+          },
           { $group: { _id: null, value: { $sum: "$amount" } } },
         ]);
         cashSeries[i].value += walletRows[0]?.value || 0;
@@ -521,7 +711,14 @@ export const getFinanceStatistics = async (req, res) => {
     for (let i = 0; i < timeBuckets.length; i++) {
       const bucket = timeBuckets[i];
       const bookingRows = await Booking.aggregate([
-        { $match: { ...locFilter, paymentStatus: "paid", trainerId: { $ne: null }, createdAt: { $gte: bucket.start, $lte: bucket.end } } },
+        {
+          $match: {
+            ...locFilter,
+            paymentStatus: "paid",
+            trainerId: { $ne: null },
+            createdAt: { $gte: bucket.start, $lte: bucket.end },
+          },
+        },
         { $group: { _id: null, value: { $sum: "$price" } } },
       ]);
       cashSeries[i].value += bookingRows[0]?.value || 0;
@@ -531,8 +728,8 @@ export const getFinanceStatistics = async (req, res) => {
     for (let i = 0; i < timeBuckets.length; i++) {
       const bucket = timeBuckets[i];
       let productRev = 0;
-      allProducts.forEach(p => {
-        (p.monthlySales || []).forEach(s => {
+      allProducts.forEach((p) => {
+        (p.monthlySales || []).forEach((s) => {
           const saleDate = new Date(s.year, s.month - 1, 1);
           if (saleDate >= bucket.start && saleDate <= bucket.end) {
             productRev += s.revenue || 0;
@@ -549,11 +746,11 @@ export const getFinanceStatistics = async (req, res) => {
       start_date: { $lte: now },
       end_date: { $gte: timeBuckets[0]?.start || start },
     });
-    const accrualMonthly = timeBuckets.map(bucket => {
+    const accrualMonthly = timeBuckets.map((bucket) => {
       let total = 0;
       // Sản phẩm bán trong bucket
-      allProducts.forEach(p => {
-        (p.monthlySales || []).forEach(s => {
+      allProducts.forEach((p) => {
+        (p.monthlySales || []).forEach((s) => {
           const saleDate = new Date(s.year, s.month - 1, 1);
           if (saleDate >= bucket.start && saleDate <= bucket.end) {
             total += s.revenue || 0;
@@ -561,16 +758,22 @@ export const getFinanceStatistics = async (req, res) => {
         });
       });
       // Gói tập phân bổ theo bucket (tính theo tỷ lệ ngày)
-      accrualActivePkgs.forEach(up => {
+      accrualActivePkgs.forEach((up) => {
         const pkgStart = new Date(up.start_date);
         const pkgEnd = new Date(up.end_date);
         const overlapStart = pkgStart > bucket.start ? pkgStart : bucket.start;
         const overlapEnd = pkgEnd < bucket.end ? pkgEnd : bucket.end;
         if (overlapStart <= overlapEnd) {
           const duration = up.duration_months || 1;
-          const totalDays = Math.max(1, Math.round((pkgEnd - pkgStart) / 86400000) + 1);
+          const totalDays = Math.max(
+            1,
+            Math.round((pkgEnd - pkgStart) / 86400000) + 1,
+          );
           const dailyRev = (up.total_price || 0) / totalDays;
-          const overlapDays = Math.max(1, Math.round((overlapEnd - overlapStart) / 86400000) + 1);
+          const overlapDays = Math.max(
+            1,
+            Math.round((overlapEnd - overlapStart) / 86400000) + 1,
+          );
           total += dailyRev * overlapDays;
         }
       });
@@ -579,17 +782,25 @@ export const getFinanceStatistics = async (req, res) => {
 
     // 3. Chi phí theo time buckets
     const expenseSeries = await timeSeriesAggregate(
-      Expense, "amount", "date", timeBuckets, expenseFilter
+      Expense,
+      "amount",
+      "date",
+      timeBuckets,
+      expenseFilter,
     );
 
     // 4. COGS (giá vốn hàng bán) theo time buckets
-    const importSeries = timeBuckets.map(bucket => {
+    const importSeries = timeBuckets.map((bucket) => {
       if (bucket.start > now) return { label: bucket.label, value: 0 };
       const value = products.reduce((sum, p) => {
         const sold = (p.monthlySales || [])
-          .filter(s => {
+          .filter((s) => {
             const saleDate = new Date(s.year, s.month - 1, 1);
-            return saleDate >= bucket.start && saleDate <= bucket.end && saleDate <= now;
+            return (
+              saleDate >= bucket.start &&
+              saleDate <= bucket.end &&
+              saleDate <= now
+            );
           })
           .reduce((mSum, s) => mSum + (s.quantity || 0), 0);
         return sum + (p.costPrice || 0) * sold;
@@ -598,7 +809,7 @@ export const getFinanceStatistics = async (req, res) => {
     });
 
     // 5. Khấu hao thiết bị theo time buckets (phân bổ tháng theo ngày)
-    const equipmentSeriesTime = timeBuckets.map(bucket => {
+    const equipmentSeriesTime = timeBuckets.map((bucket) => {
       const bucketEnd = bucket.end > now ? now : bucket.end;
       if (bucket.start > now) return { label: bucket.label, value: 0 };
       const value = equipments.reduce((sum, e) => {
@@ -609,18 +820,30 @@ export const getFinanceStatistics = async (req, res) => {
         if (eqStart > bucketEnd) return sum;
         const clipStart = eqStart > bucket.start ? eqStart : bucket.start;
         // Số tháng tính được cho cả bucket
-        const monthsToEnd = (bucketEnd.getFullYear() - eqStart.getFullYear()) * 12
-          + (bucketEnd.getMonth() - eqStart.getMonth()) + 1;
-        const monthsToStart = (clipStart.getFullYear() - eqStart.getFullYear()) * 12
-          + (clipStart.getMonth() - eqStart.getMonth());
+        const monthsToEnd =
+          (bucketEnd.getFullYear() - eqStart.getFullYear()) * 12 +
+          (bucketEnd.getMonth() - eqStart.getMonth()) +
+          1;
+        const monthsToStart =
+          (clipStart.getFullYear() - eqStart.getFullYear()) * 12 +
+          (clipStart.getMonth() - eqStart.getMonth());
         const activeMonths = Math.max(0, monthsToEnd - monthsToStart);
         if (activeMonths <= 0) return sum;
         // Phân bổ theo tỷ lệ ngày trong bucket / ngày trong tháng
-        const bucketDays = Math.floor((bucketEnd - clipStart) / (1000 * 60 * 60 * 24)) + 1;
-        const daysInMonth = new Date(clipStart.getFullYear(), clipStart.getMonth() + 1, 0).getDate();
+        const bucketDays =
+          Math.floor((bucketEnd - clipStart) / (1000 * 60 * 60 * 24)) + 1;
+        const daysInMonth = new Date(
+          clipStart.getFullYear(),
+          clipStart.getMonth() + 1,
+          0,
+        ).getDate();
         const fullMonths = activeMonths - 1;
         if (fullMonths >= 1) {
-          return sum + fullMonths * monthlyDepr + (bucketDays / daysInMonth) * monthlyDepr;
+          return (
+            sum +
+            fullMonths * monthlyDepr +
+            (bucketDays / daysInMonth) * monthlyDepr
+          );
         }
         return sum + (bucketDays / daysInMonth) * monthlyDepr;
       }, 0);
@@ -630,7 +853,10 @@ export const getFinanceStatistics = async (req, res) => {
     // 6. Build chart data từ time buckets
     const cashFlowData = timeBuckets.map((bucket, i) => {
       const rev = accrualMonthly[i]?.value || 0;
-      const exp = (expenseSeries[i]?.value || 0) + (importSeries[i]?.value || 0) + (equipmentSeriesTime[i]?.value || 0);
+      const exp =
+        (expenseSeries[i]?.value || 0) +
+        (importSeries[i]?.value || 0) +
+        (equipmentSeriesTime[i]?.value || 0);
       return {
         month: bucket.label,
         cash: cashSeries[i]?.value || 0,
@@ -642,8 +868,16 @@ export const getFinanceStatistics = async (req, res) => {
 
     const profitData = timeBuckets.map((bucket, i) => {
       const rev = accrualMonthly[i]?.value || 0;
-      const exp = (expenseSeries[i]?.value || 0) + (importSeries[i]?.value || 0) + (equipmentSeriesTime[i]?.value || 0);
-      return { month: bucket.label, revenue: rev, expense: exp, profit: rev - exp };
+      const exp =
+        (expenseSeries[i]?.value || 0) +
+        (importSeries[i]?.value || 0) +
+        (equipmentSeriesTime[i]?.value || 0);
+      return {
+        month: bucket.label,
+        revenue: rev,
+        expense: exp,
+        profit: rev - exp,
+      };
     });
 
     // ============ SYNC SUMMARY ============
@@ -652,10 +886,15 @@ export const getFinanceStatistics = async (req, res) => {
     summary.accrualRevenue = Math.round(accrualThis);
     summary.totalExpense = Math.round(totalExpenseThis);
     summary.totalProfit = Math.round(accrualThis - totalExpenseThis);
-    summary.profitMargin = accrualThis ? Math.round(((accrualThis - totalExpenseThis) / accrualThis) * 100) : 0;
+    summary.profitMargin = accrualThis
+      ? Math.round(((accrualThis - totalExpenseThis) / accrualThis) * 100)
+      : 0;
 
     // Cơ cấu chi phí - dùng giá trị tính trực tiếp để nhất quán với summary
-    const chartDepreciationSum = equipments.reduce((sum, e) => sum + calcDepreciation(e, start, now), 0);
+    const chartDepreciationSum = equipments.reduce(
+      (sum, e) => sum + calcDepreciation(e, start, now),
+      0,
+    );
     const expenseByCategory = await Expense.aggregate([
       { $match: { ...expenseFilter, date: { $gte: start, $lte: now } } },
       { $group: { _id: "$category", value: { $sum: "$amount" } } },
@@ -671,10 +910,16 @@ export const getFinanceStatistics = async (req, res) => {
       value: e.value,
     }));
     if (cogsThis > 0) {
-      expenseStructure.push({ name: "Giá vốn hàng bán (COGS)", value: Math.round(cogsThis) });
+      expenseStructure.push({
+        name: "Giá vốn hàng bán (COGS)",
+        value: Math.round(cogsThis),
+      });
     }
     if (chartDepreciationSum > 0) {
-      expenseStructure.push({ name: "Tiền thiết bị", value: Math.round(chartDepreciationSum) });
+      expenseStructure.push({
+        name: "Tiền thiết bị",
+        value: Math.round(chartDepreciationSum),
+      });
     }
 
     // ============ DOANH SỐ THEO GÓI & TỈ LỆ THAM GIA ============
@@ -705,10 +950,13 @@ export const getFinanceStatistics = async (req, res) => {
     const participation = await Promise.all(
       Object.keys(salesByPackage).map(async (key) => {
         const ups = allPackages.filter(
-          (u) => (u.package_id?._id?.toString() || u.package_id?.toString()) === key
+          (u) =>
+            (u.package_id?._id?.toString() || u.package_id?.toString()) === key,
         );
         const ids = ups.map((u) => u._id);
-        const checkins = await CheckIn.countDocuments({ userPackageId: { $in: ids } });
+        const checkins = await CheckIn.countDocuments({
+          userPackageId: { $in: ids },
+        });
         const avgSessions = ups.length ? checkins / ups.length : 0;
         return {
           package: salesByPackage[key].name,
@@ -716,7 +964,7 @@ export const getFinanceStatistics = async (req, res) => {
           revenue: salesByPackage[key].revenue,
           participation: Number(avgSessions.toFixed(1)),
         };
-      })
+      }),
     );
 
     // ============ TOP SẢN PHẨM ============
@@ -742,15 +990,28 @@ export const getFinanceStatistics = async (req, res) => {
       payment_status: "đã thanh toán",
       $or: [
         { payment_date: { $gte: yearStart, $lte: new Date() } },
-        { $and: [{ $or: [{ payment_date: null }, { payment_date: { $exists: false } }] }, { createdAt: { $gte: yearStart, $lte: new Date() } }] },
+        {
+          $and: [
+            {
+              $or: [
+                { payment_date: null },
+                { payment_date: { $exists: false } },
+              ],
+            },
+            { createdAt: { $gte: yearStart, $lte: new Date() } },
+          ],
+        },
       ],
-    }).populate("package_id", "name").populate("customer_id", "fullName account");
-    paidPackages.forEach(up => {
+    })
+      .populate("package_id", "name")
+      .populate("customer_id", "fullName account");
+    paidPackages.forEach((up) => {
       revenueDetails.push({
         date: up.payment_date || up.createdAt,
         type: "Đăng ký gói tập",
         name: up.package_id?.name || "Gói tập",
-        customerName: up.customer_id?.fullName || up.customer_id?.account || "Khách hàng",
+        customerName:
+          up.customer_id?.fullName || up.customer_id?.account || "Khách hàng",
         amount: up.total_price || 0,
       });
     });
@@ -761,20 +1022,23 @@ export const getFinanceStatistics = async (req, res) => {
       paymentStatus: "paid",
       trainerId: { $ne: null },
       createdAt: { $gte: yearStart, $lte: new Date() },
-    }).populate("trainerId", "name").populate("customerId", "fullName account");
-    paidBookings.forEach(b => {
+    })
+      .populate("trainerId", "name")
+      .populate("customerId", "fullName account");
+    paidBookings.forEach((b) => {
       revenueDetails.push({
         date: b.createdAt,
         type: "Book lịch tập riêng HLV",
-        name: `PT: ${b.trainerId?.name || 'HLV'}`,
-        customerName: b.customerId?.fullName || b.customerId?.account || "Khách hàng",
+        name: `PT: ${b.trainerId?.name || "HLV"}`,
+        customerName:
+          b.customerId?.fullName || b.customerId?.account || "Khách hàng",
         amount: b.price || 0,
       });
     });
 
     // 3. Mua sản phẩm shop
-    allProducts.forEach(p => {
-      (p.monthlySales || []).forEach(s => {
+    allProducts.forEach((p) => {
+      (p.monthlySales || []).forEach((s) => {
         const saleDate = new Date(s.year, s.month - 1, 1);
         if (saleDate >= yearStart && saleDate <= new Date()) {
           revenueDetails.push({
@@ -795,58 +1059,76 @@ export const getFinanceStatistics = async (req, res) => {
       status: "completed",
       createdAt: { $gte: yearStart, $lte: new Date() },
     }).populate("customerId", "fullName account");
-    topupTransactions.forEach(t => {
+    topupTransactions.forEach((t) => {
       revenueDetails.push({
         date: t.createdAt,
         type: "Nạp tiền vào ví",
-        name: `Nạp ${Number(t.amount || 0).toLocaleString('vi-VN')}đ`,
-        customerName: t.customerId?.fullName || t.customerId?.account || "Khách hàng",
+        name: `Nạp ${Number(t.amount || 0).toLocaleString("vi-VN")}đ`,
+        customerName:
+          t.customerId?.fullName || t.customerId?.account || "Khách hàng",
         amount: t.amount || 0,
       });
     });
 
     // Sắp xếp theo ngày mới nhất
-    revenueDetails.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    revenueDetails.sort(
+      (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
+    );
 
     // ============ CHI TIẾT CHI PHÍ (lấy cả năm để click từng tháng đều có dữ liệu) ============
     const rawExpenseDetails = await Expense.find({
       ...expenseFilter,
       date: { $gte: yearStart, $lte: new Date() },
-    }).select('name category amount date note').sort({ date: -1 });
+    })
+      .select("name category amount date note")
+      .sort({ date: -1 });
 
     // Chi tiết COGS theo từng sản phẩm theo tháng bán
     const cogsDetails = [];
-    products.forEach(p => {
+    products.forEach((p) => {
       const soldInPeriod = (p.monthlySales || [])
-        .filter(s => {
+        .filter((s) => {
           const saleDate = new Date(s.year, s.month - 1, 1);
           return saleDate >= yearStart && saleDate <= now;
         })
         .reduce((mSum, s) => mSum + (s.quantity || 0), 0);
+
       if (soldInPeriod > 0 && (p.costPrice || 0) > 0) {
-          cogsDetails.push({
-            date: saleDate, name: `Nhập hàng: ${p.name}`, category: 'Giá vốn hàng bán (COGS)',
-            amount: Math.round((p.costPrice || 0) * qty), note: `${qty} × ${(p.costPrice || 0).toLocaleString('vi-VN')}đ`, type: 'cogs'
-          });
-        }
-      });
+        cogsDetails.push({
+          date: new Date(),
+          name: `Nhập hàng: ${p.name}`,
+          category: "Giá vốn hàng bán (COGS)",
+          amount: Math.round((p.costPrice || 0) * soldInPeriod),
+          note: `${soldInPeriod} × ${(p.costPrice || 0).toLocaleString("vi-VN")}đ`,
+          type: "cogs",
+        });
+      }
     });
 
     // Chi tiết khấu hao theo từng thiết bị
     const depreciationDetails = [];
-    equipments.forEach(eq => {
+    equipments.forEach((eq) => {
       const depr = calcDepreciation(eq, yearStart, now);
       if (depr > 0) {
-          depreciationDetails.push({
-            date: eq.createdAt, name: `Khấu hao: ${eq.name}`, category: 'Tiền thiết bị',
-            amount: Math.round(depr), note: `Nguyên giá ${(eq.total || 0).toLocaleString('vi-VN')}đ / 60 tháng`, type: 'depreciation'
-          });
+        depreciationDetails.push({
+          date: eq.createdAt,
+          name: `Khấu hao: ${eq.name}`,
+          category: "Tiền thiết bị",
+          amount: Math.round(depr),
+          note: `Nguyên giá ${(eq.total || 0).toLocaleString("vi-VN")}đ / 60 tháng`,
+          type: "depreciation",
+        });
       }
     });
 
     const expenseDetails = [
-      ...rawExpenseDetails.map(e => ({
-        date: e.date, name: e.name, category: categoryLabel[e.category] || e.category || 'Khác', amount: e.amount, note: e.note || '', type: 'expense'
+      ...rawExpenseDetails.map((e) => ({
+        date: e.date,
+        name: e.name,
+        category: categoryLabel[e.category] || e.category || "Khác",
+        amount: e.amount,
+        note: e.note || "",
+        type: "expense",
       })),
       ...cogsDetails,
       ...depreciationDetails,
@@ -858,9 +1140,11 @@ export const getFinanceStatistics = async (req, res) => {
       payment_status: "đã thanh toán",
       start_date: { $lte: now },
       end_date: { $gte: yearStart },
-    }).populate("package_id", "name").populate("customer_id", "fullName account");
+    })
+      .populate("package_id", "name")
+      .populate("customer_id", "fullName account");
 
-    const accrualDetails = activePackages.map(up => {
+    const accrualDetails = activePackages.map((up) => {
       const duration = up.duration_months || 1;
       const monthlyRev = (up.total_price || 0) / duration;
       const pkgStart = new Date(up.start_date);
@@ -869,11 +1153,17 @@ export const getFinanceStatistics = async (req, res) => {
       const overlapEnd = pkgEnd < now ? pkgEnd : now;
       const monthsElapsed = Math.min(
         duration,
-        Math.max(1, (overlapEnd.getFullYear() - overlapStart.getFullYear()) * 12 + (overlapEnd.getMonth() - overlapStart.getMonth()) + 1)
+        Math.max(
+          1,
+          (overlapEnd.getFullYear() - overlapStart.getFullYear()) * 12 +
+            (overlapEnd.getMonth() - overlapStart.getMonth()) +
+            1,
+        ),
       );
       return {
-        packageName: up.package_id?.name || 'Gói không xác định',
-        customerName: up.customer_id?.fullName || up.customer_id?.account || 'Khách hàng',
+        packageName: up.package_id?.name || "Gói không xác định",
+        customerName:
+          up.customer_id?.fullName || up.customer_id?.account || "Khách hàng",
         totalPrice: up.total_price || 0,
         duration,
         monthlyRevenue: Math.round(monthlyRev),
@@ -885,13 +1175,13 @@ export const getFinanceStatistics = async (req, res) => {
     });
 
     // Thêm doanh thu sản phẩm vào accrualDetails
-    allProducts.forEach(p => {
-      (p.monthlySales || []).forEach(s => {
+    allProducts.forEach((p) => {
+      (p.monthlySales || []).forEach((s) => {
         const saleDate = new Date(s.year, s.month - 1, 1);
         if (saleDate >= yearStart && saleDate <= now) {
           accrualDetails.push({
             packageName: `Sản phẩm: ${p.name}`,
-            customerName: 'Khách hàng mua lẻ',
+            customerName: "Khách hàng mua lẻ",
             totalPrice: s.revenue || 0,
             duration: 1,
             monthlyRevenue: s.revenue || 0,
@@ -916,12 +1206,17 @@ export const getFinanceStatistics = async (req, res) => {
       revenueDetails,
       expenseDetails,
       accrualDetails,
-      timeBuckets: timeBuckets.map(b => ({ label: b.label, start: b.start, end: b.end })),
-      packageDetails: allPackages.map(up => ({
-        packageName: up.package_id?.name || 'Gói không xác định',
-        customerName: up.customer_id?.fullName || up.customer_id?.account || 'Khách hàng',
-        gender: up.customer_id?.gender || '',
-        phone: up.customer_id?.phone || '',
+      timeBuckets: timeBuckets.map((b) => ({
+        label: b.label,
+        start: b.start,
+        end: b.end,
+      })),
+      packageDetails: allPackages.map((up) => ({
+        packageName: up.package_id?.name || "Gói không xác định",
+        customerName:
+          up.customer_id?.fullName || up.customer_id?.account || "Khách hàng",
+        gender: up.customer_id?.gender || "",
+        phone: up.customer_id?.phone || "",
         totalPrice: up.total_price || 0,
         startDate: up.start_date,
         endDate: up.end_date,
@@ -930,17 +1225,20 @@ export const getFinanceStatistics = async (req, res) => {
       })),
 
       // ============ 1. PHÂN TÍCH HỘI VIÊN ============
-      ...await (async () => {
+      ...(await (async () => {
         const allPkgs = await UserPackage.find({
           ...(locationId ? { locationId } : {}),
-          payment_status: 'đã thanh toán',
-        }).populate('package_id', 'name title price');
-        const allCustomers = await Customer.find(locationId ? { locationId } : {});
+          payment_status: "đã thanh toán",
+        }).populate("package_id", "name title price");
+        const allCustomers = await Customer.find(
+          locationId ? { locationId } : {},
+        );
 
         // Hội viên active (có gói còn hiệu lực)
         const activeCustomerIds = new Set();
-        allPkgs.forEach(up => {
-          if (new Date(up.end_date) >= now) activeCustomerIds.add(up.customer_id?.toString());
+        allPkgs.forEach((up) => {
+          if (new Date(up.end_date) >= now)
+            activeCustomerIds.add(up.customer_id?.toString());
         });
         const activeMembers = activeCustomerIds.size;
 
@@ -948,39 +1246,47 @@ export const getFinanceStatistics = async (req, res) => {
         const totalMembers = allCustomers.length;
 
         // Gói hết hạn trong kỳ này
-        const expiredThisPeriod = allPkgs.filter(up => {
+        const expiredThisPeriod = allPkgs.filter((up) => {
           const end = new Date(up.end_date);
           return end >= start && end <= now;
         });
         const expiredCount = expiredThisPeriod.length;
 
         // Trong số gói hết hạn, bao nhiêu gói có gói mới bắt đầu sau đó (giữ chân)
-        const renewedCount = expiredThisPeriod.filter(up => {
+        const renewedCount = expiredThisPeriod.filter((up) => {
           const customerId = up.customer_id?.toString();
-          return allPkgs.some(other =>
-            other.customer_id?.toString() === customerId &&
-            other._id.toString() !== up._id.toString() &&
-            new Date(other.start_date) > new Date(up.end_date) &&
-            other.payment_status === 'đã thanh toán'
+          return allPkgs.some(
+            (other) =>
+              other.customer_id?.toString() === customerId &&
+              other._id.toString() !== up._id.toString() &&
+              new Date(other.start_date) > new Date(up.end_date) &&
+              other.payment_status === "đã thanh toán",
           );
         }).length;
 
-        const retentionRate = expiredCount > 0 ? Math.round((renewedCount / expiredCount) * 100) : 100;
+        const retentionRate =
+          expiredCount > 0
+            ? Math.round((renewedCount / expiredCount) * 100)
+            : 100;
         const churnRate = 100 - retentionRate;
 
         // ARPU = DT thực thu / Số hội viên active
-        const arpu = activeMembers > 0 ? Math.round(realCashInThis / activeMembers) : 0;
+        const arpu =
+          activeMembers > 0 ? Math.round(realCashInThis / activeMembers) : 0;
 
         // TB thời gian giữ chân (tháng)
         const lifetimes = allPkgs
-          .filter(up => up.duration_months)
-          .map(up => up.duration_months);
-        const avgLifetime = lifetimes.length > 0
-          ? +(lifetimes.reduce((a, b) => a + b, 0) / lifetimes.length).toFixed(1)
-          : 0;
+          .filter((up) => up.duration_months)
+          .map((up) => up.duration_months);
+        const avgLifetime =
+          lifetimes.length > 0
+            ? +(
+                lifetimes.reduce((a, b) => a + b, 0) / lifetimes.length
+              ).toFixed(1)
+            : 0;
 
         // Hội viên mới trong kỳ
-        const newMembers = allCustomers.filter(c => {
+        const newMembers = allCustomers.filter((c) => {
           const reg = new Date(c.registerDate || c.createdAt);
           return reg >= start && reg <= now;
         }).length;
@@ -993,21 +1299,23 @@ export const getFinanceStatistics = async (req, res) => {
 
         // === Danh sách chi tiết cho drill-down ===
         const customerMap = {};
-        allCustomers.forEach(c => { customerMap[c._id.toString()] = c; });
+        allCustomers.forEach((c) => {
+          customerMap[c._id.toString()] = c;
+        });
 
         // 1. Hội viên active
         const activeList = [];
         const activeSeen = new Set();
-        allPkgs.forEach(up => {
+        allPkgs.forEach((up) => {
           if (new Date(up.end_date) >= now) {
             const cid = up.customer_id?.toString();
             if (cid && !activeSeen.has(cid)) {
               activeSeen.add(cid);
               const cust = customerMap[cid];
               activeList.push({
-                name: cust?.fullName || 'N/A',
-                phone: cust?.phone || '',
-                package: up.package_id?.name || up.package_id?.title || 'N/A',
+                name: cust?.fullName || "N/A",
+                phone: cust?.phone || "",
+                package: up.package_id?.name || up.package_id?.title || "N/A",
                 startDate: up.start_date,
                 endDate: up.end_date,
                 totalPrice: up.total_price,
@@ -1017,55 +1325,63 @@ export const getFinanceStatistics = async (req, res) => {
         });
 
         // 2. Hội viên rời bỏ (gói hết hạn không gia hạn)
-        const churnedList = expiredThisPeriod.filter(up => {
-          const cid = up.customer_id?.toString();
-          return !allPkgs.some(other =>
-            other.customer_id?.toString() === cid &&
-            other._id.toString() !== up._id.toString() &&
-            new Date(other.start_date) > new Date(up.end_date) &&
-            other.payment_status === 'đã thanh toán'
-          );
-        }).map(up => {
-          const cust = customerMap[up.customer_id?.toString()];
-          return {
-            name: cust?.fullName || 'N/A',
-            phone: cust?.phone || '',
-            package: up.package_id?.name || up.package_id?.title || 'N/A',
-            endDate: up.end_date,
-            totalPrice: up.total_price,
-          };
-        });
+        const churnedList = expiredThisPeriod
+          .filter((up) => {
+            const cid = up.customer_id?.toString();
+            return !allPkgs.some(
+              (other) =>
+                other.customer_id?.toString() === cid &&
+                other._id.toString() !== up._id.toString() &&
+                new Date(other.start_date) > new Date(up.end_date) &&
+                other.payment_status === "đã thanh toán",
+            );
+          })
+          .map((up) => {
+            const cust = customerMap[up.customer_id?.toString()];
+            return {
+              name: cust?.fullName || "N/A",
+              phone: cust?.phone || "",
+              package: up.package_id?.name || up.package_id?.title || "N/A",
+              endDate: up.end_date,
+              totalPrice: up.total_price,
+            };
+          });
 
         // 3. Hội viên giữ chân (gói hết hạn nhưng có gia hạn)
-        const retainedList = expiredThisPeriod.filter(up => {
-          const cid = up.customer_id?.toString();
-          return allPkgs.some(other =>
-            other.customer_id?.toString() === cid &&
-            other._id.toString() !== up._id.toString() &&
-            new Date(other.start_date) > new Date(up.end_date) &&
-            other.payment_status === 'đã thanh toán'
-          );
-        }).map(up => {
-          const cust = customerMap[up.customer_id?.toString()];
-          return {
-            name: cust?.fullName || 'N/A',
-            phone: cust?.phone || '',
-            package: up.package_id?.name || up.package_id?.title || 'N/A',
-            endDate: up.end_date,
-            totalPrice: up.total_price,
-          };
-        });
+        const retainedList = expiredThisPeriod
+          .filter((up) => {
+            const cid = up.customer_id?.toString();
+            return allPkgs.some(
+              (other) =>
+                other.customer_id?.toString() === cid &&
+                other._id.toString() !== up._id.toString() &&
+                new Date(other.start_date) > new Date(up.end_date) &&
+                other.payment_status === "đã thanh toán",
+            );
+          })
+          .map((up) => {
+            const cust = customerMap[up.customer_id?.toString()];
+            return {
+              name: cust?.fullName || "N/A",
+              phone: cust?.phone || "",
+              package: up.package_id?.name || up.package_id?.title || "N/A",
+              endDate: up.end_date,
+              totalPrice: up.total_price,
+            };
+          });
 
         // 4. Hội viên mới
-        const newList = allCustomers.filter(c => {
-          const reg = new Date(c.registerDate || c.createdAt);
-          return reg >= start && reg <= now;
-        }).map(c => ({
-          name: c.fullName || 'N/A',
-          phone: c.phone || '',
-          registerDate: c.registerDate || c.createdAt,
-          gender: c.gender || '',
-        }));
+        const newList = allCustomers
+          .filter((c) => {
+            const reg = new Date(c.registerDate || c.createdAt);
+            return reg >= start && reg <= now;
+          })
+          .map((c) => ({
+            name: c.fullName || "N/A",
+            phone: c.phone || "",
+            registerDate: c.registerDate || c.createdAt,
+            gender: c.gender || "",
+          }));
 
         return {
           memberAnalytics: {
@@ -1085,21 +1401,28 @@ export const getFinanceStatistics = async (req, res) => {
             newList,
           },
         };
-      })(),
+      })()),
 
       // ============ 2. HIỆU SUẤT HLV ============
-      ...await (async () => {
+      ...(await (async () => {
         const bookings = await Booking.find({
           ...(locationId ? { locationId } : {}),
-          status: { $in: ['confirmed'] },
+          status: { $in: ["confirmed"] },
           trainerId: { $ne: null },
-        }).populate('trainerId', 'fullName rating totalReviews pricePerSession locationId commissionPT')
-          .populate('customerId', 'fullName');
+        })
+          .populate(
+            "trainerId",
+            "fullName rating totalReviews pricePerSession locationId commissionPT",
+          )
+          .populate("customerId", "fullName");
 
         const trainerMap = {};
-        bookings.forEach(b => {
-          const tid = b.trainerId?._id?.toString() || b.trainerId?.toString() || 'unknown';
-          if (!tid || tid === 'unknown') return;
+        bookings.forEach((b) => {
+          const tid =
+            b.trainerId?._id?.toString() ||
+            b.trainerId?.toString() ||
+            "unknown";
+          if (!tid || tid === "unknown") return;
           const trainerName = b.trainerId?.fullName || `HLV #${tid.slice(-4)}`;
           const price = b.price || 500000;
           if (!trainerMap[tid]) {
@@ -1116,11 +1439,13 @@ export const getFinanceStatistics = async (req, res) => {
           }
           trainerMap[tid].revenue += price;
           trainerMap[tid].sessions += 1;
-          trainerMap[tid].customers.add(b.customerId?._id?.toString() || b.customerId?.toString());
+          trainerMap[tid].customers.add(
+            b.customerId?._id?.toString() || b.customerId?.toString(),
+          );
         });
 
         const trainerPerformance = Object.values(trainerMap)
-          .map(t => ({
+          .map((t) => ({
             name: t.name,
             revenue: t.revenue,
             sessions: t.sessions,
@@ -1132,99 +1457,144 @@ export const getFinanceStatistics = async (req, res) => {
           .sort((a, b) => b.revenue - a.revenue);
 
         return { trainerPerformance };
-      })(),
+      })()),
 
       // ============ 3. SO SÁNH CLB ============
-      ...await (async () => {
+      ...(await (async () => {
         const locations = await Location.find({});
         if (locations.length <= 1) return { clubComparison: [] };
 
-        const clubComparison = await Promise.all(locations.map(async (loc) => {
-          const lid = loc._id.toString();
-          const locFilter = { locationId: loc._id };
+        const clubComparison = await Promise.all(
+          locations.map(async (loc) => {
+            const lid = loc._id.toString();
+            const locFilter = { locationId: loc._id };
 
-          // DT thực thu theo CLB
-          const clubPaidSum = await UserPackage.aggregate([
-            { $match: { ...locFilter, payment_status: 'đã thanh toán', payment_date: { $gte: start, $lte: now } } },
-            { $group: { _id: null, total: { $sum: '$total_price' } } },
-          ]);
-          const clubBookingSum = await Booking.aggregate([
-            { $match: { ...locFilter, status: 'confirmed', trainerId: { $ne: null }, createdAt: { $gte: start, $lte: now } } },
-            { $group: { _id: null, total: { $sum: { $ifNull: ['$price', 500000] } } } },
-          ]);
-          const clubProducts = await Product.find({ location_id: loc._id });
-          const clubProductSum = clubProducts.reduce((sum, p) => {
-            const sold = (p.monthlySales || []).filter(s => {
-              const d = new Date(s.year, s.month - 1, 1);
-              return d >= start && d <= now;
-            }).reduce((m, s) => m + (s.revenue || 0), 0);
-            return sum + sold;
-          }, 0);
-          const revenue = (clubPaidSum[0]?.total || 0) + (clubBookingSum[0]?.total || 0) + clubProductSum;
+            // DT thực thu theo CLB
+            const clubPaidSum = await UserPackage.aggregate([
+              {
+                $match: {
+                  ...locFilter,
+                  payment_status: "đã thanh toán",
+                  payment_date: { $gte: start, $lte: now },
+                },
+              },
+              { $group: { _id: null, total: { $sum: "$total_price" } } },
+            ]);
+            const clubBookingSum = await Booking.aggregate([
+              {
+                $match: {
+                  ...locFilter,
+                  status: "confirmed",
+                  trainerId: { $ne: null },
+                  createdAt: { $gte: start, $lte: now },
+                },
+              },
+              {
+                $group: {
+                  _id: null,
+                  total: { $sum: { $ifNull: ["$price", 500000] } },
+                },
+              },
+            ]);
+            const clubProducts = await Product.find({ location_id: loc._id });
+            const clubProductSum = clubProducts.reduce((sum, p) => {
+              const sold = (p.monthlySales || [])
+                .filter((s) => {
+                  const d = new Date(s.year, s.month - 1, 1);
+                  return d >= start && d <= now;
+                })
+                .reduce((m, s) => m + (s.revenue || 0), 0);
+              return sum + sold;
+            }, 0);
+            const revenue =
+              (clubPaidSum[0]?.total || 0) +
+              (clubBookingSum[0]?.total || 0) +
+              clubProductSum;
 
-          // Chi phí cố định theo CLB
-          const clubExpense = await Expense.aggregate([
-            { $match: { ...locFilter, date: { $gte: start, $lte: now } } },
-            { $group: { _id: null, total: { $sum: '$amount' } } },
-          ]);
-          const fixedCost = clubExpense[0]?.total || 0;
+            // Chi phí cố định theo CLB
+            const clubExpense = await Expense.aggregate([
+              { $match: { ...locFilter, date: { $gte: start, $lte: now } } },
+              { $group: { _id: null, total: { $sum: "$amount" } } },
+            ]);
+            const fixedCost = clubExpense[0]?.total || 0;
 
-          // COGS theo CLB = costPrice × SL bán
-          const clubCogs = clubProducts.reduce((sum, p) => {
-            const soldInPeriod = (p.monthlySales || []).filter(s => {
-              const d = new Date(s.year, s.month - 1, 1);
-              return d >= start && d <= now;
-            }).reduce((m, s) => m + (s.quantity || 0), 0);
-            return sum + (p.costPrice || 0) * soldInPeriod;
-          }, 0);
+            // COGS theo CLB = costPrice × SL bán
+            const clubCogs = clubProducts.reduce((sum, p) => {
+              const soldInPeriod = (p.monthlySales || [])
+                .filter((s) => {
+                  const d = new Date(s.year, s.month - 1, 1);
+                  return d >= start && d <= now;
+                })
+                .reduce((m, s) => m + (s.quantity || 0), 0);
+              return sum + (p.costPrice || 0) * soldInPeriod;
+            }, 0);
 
-          // Khấu hao theo CLB
-          const clubEquipments = await Equipment.find({ location_id: loc._id });
-          const clubDepreciation = clubEquipments.reduce((sum, eq) => {
-            const total = eq.total || 0;
-            if (total <= 0) return sum;
-            const monthlyDepr = total / 60;
-            const eqStart = new Date(eq.createdAt);
-            if (eqStart > now) return sum;
-            const monthsFromStart = Math.min(60, Math.max(1, (now.getFullYear() - eqStart.getFullYear()) * 12 + (now.getMonth() - eqStart.getMonth()) + 1));
-            const totalDep = Math.min(monthlyDepr * monthsFromStart, total);
-            // Phân bổ theo kỳ
-            const overlapStart = eqStart > start ? eqStart : start;
-            const overlapEnd = now;
-            const monthsInPeriod = Math.max(1, (overlapEnd.getFullYear() - overlapStart.getFullYear()) * 12 + (overlapEnd.getMonth() - overlapStart.getMonth()) + 1);
-            return sum + Math.round(monthlyDepr * Math.min(monthsInPeriod, 1));
-          }, 0);
+            // Khấu hao theo CLB
+            const clubEquipments = await Equipment.find({
+              location_id: loc._id,
+            });
+            const clubDepreciation = clubEquipments.reduce((sum, eq) => {
+              const total = eq.total || 0;
+              if (total <= 0) return sum;
+              const monthlyDepr = total / 60;
+              const eqStart = new Date(eq.createdAt);
+              if (eqStart > now) return sum;
+              const monthsFromStart = Math.min(
+                60,
+                Math.max(
+                  1,
+                  (now.getFullYear() - eqStart.getFullYear()) * 12 +
+                    (now.getMonth() - eqStart.getMonth()) +
+                    1,
+                ),
+              );
+              const totalDep = Math.min(monthlyDepr * monthsFromStart, total);
+              // Phân bổ theo kỳ
+              const overlapStart = eqStart > start ? eqStart : start;
+              const overlapEnd = now;
+              const monthsInPeriod = Math.max(
+                1,
+                (overlapEnd.getFullYear() - overlapStart.getFullYear()) * 12 +
+                  (overlapEnd.getMonth() - overlapStart.getMonth()) +
+                  1,
+              );
+              return (
+                sum + Math.round(monthlyDepr * Math.min(monthsInPeriod, 1))
+              );
+            }, 0);
 
-          const expense = fixedCost + Math.round(clubCogs) + clubDepreciation;
-          const profit = revenue - expense;
-          const margin = revenue > 0 ? Math.round((profit / revenue) * 100) : 0;
+            const expense = fixedCost + Math.round(clubCogs) + clubDepreciation;
+            const profit = revenue - expense;
+            const margin =
+              revenue > 0 ? Math.round((profit / revenue) * 100) : 0;
 
-          // Số hội viên active
-          const memberCount = await UserPackage.countDocuments({
-            ...locFilter,
-            payment_status: 'đã thanh toán',
-            end_date: { $gte: now },
-          });
+            // Số hội viên active
+            const memberCount = await UserPackage.countDocuments({
+              ...locFilter,
+              payment_status: "đã thanh toán",
+              end_date: { $gte: now },
+            });
 
-          // Số HLV active
-          const trainerCount = await Staff.countDocuments({
-            locationId: loc._id,
-            status: 'active',
-          });
+            // Số HLV active
+            const trainerCount = await Staff.countDocuments({
+              locationId: loc._id,
+              status: "active",
+            });
 
-          return {
-            name: loc.title || loc.address || 'CLB',
-            revenue,
-            expense,
-            profit,
-            margin,
-            memberCount,
-            trainerCount,
-          };
-        }));
+            return {
+              name: loc.title || loc.address || "CLB",
+              revenue,
+              expense,
+              profit,
+              margin,
+              memberCount,
+              trainerCount,
+            };
+          }),
+        );
 
         return { clubComparison };
-      })(),
+      })()),
     });
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -1256,16 +1626,16 @@ export const getOperationsStatistics = async (req, res) => {
 
     equipments.forEach((eq) => {
       const totalQty = eq.quantity || 1;
-      const eqReports = (eq.reports || []).filter(r => {
+      const eqReports = (eq.reports || []).filter((r) => {
         if (!r.reportedAt) return true;
         return new Date(r.reportedAt) >= start;
       });
-      const eqPendingReports = eqReports.filter(r => r.status === "pending");
+      const eqPendingReports = eqReports.filter((r) => r.status === "pending");
 
       if (eqPendingReports.length > 0) {
         // Tổng số máy bị ảnh hưởng từ tất cả báo cáo pending
         let pendingAffected = 0;
-        eqPendingReports.forEach(r => {
+        eqPendingReports.forEach((r) => {
           pendingAffected += r.affectedQuantity || 1;
         });
         const affected = Math.min(pendingAffected, totalQty);
@@ -1274,13 +1644,18 @@ export const getOperationsStatistics = async (req, res) => {
         const latestReport = eqPendingReports[eqPendingReports.length - 1];
         const reportStatusType = latestReport.statusType || "hoạt động";
         let affectedStatus = "maintenance";
-        if (reportStatusType === "hỏng hóc" || reportStatusType === "thiếu linh kiện") affectedStatus = "broken";
+        if (
+          reportStatusType === "hỏng hóc" ||
+          reportStatusType === "thiếu linh kiện"
+        )
+          affectedStatus = "broken";
         else if (reportStatusType === "bảo trì") affectedStatus = "maintenance";
 
         statusMap[affectedStatus] = (statusMap[affectedStatus] || 0) + affected;
         // Phần còn lại vẫn hoạt động
         if (totalQty > affected) {
-          statusMap["active"] = (statusMap["active"] || 0) + (totalQty - affected);
+          statusMap["active"] =
+            (statusMap["active"] || 0) + (totalQty - affected);
         }
       } else {
         statusMap["active"] = (statusMap["active"] || 0) + totalQty;
@@ -1336,17 +1711,26 @@ export const getOperationsStatistics = async (req, res) => {
     const totalQuantity = equipments.reduce((s, e) => s + (e.quantity || 0), 0);
     const totalValue = equipments.reduce((s, e) => s + (e.total || 0), 0);
 
-    const equipmentDetails = equipments.map(eq => {
-      const periodReports = (eq.reports || []).filter(r => !r.reportedAt || new Date(r.reportedAt) >= start);
-      const pendingRpts = periodReports.filter(r => r.status === 'pending');
-      const resolvedRpts = periodReports.filter(r => r.status === 'resolved');
-      const affectedQty = pendingRpts.reduce((sum, r) => sum + (r.affectedQuantity || 1), 0);
-      const latestReport = periodReports.slice().sort((a, b) => new Date(b.reportedAt || 0) - new Date(a.reportedAt || 0))[0];
+    const equipmentDetails = equipments.map((eq) => {
+      const periodReports = (eq.reports || []).filter(
+        (r) => !r.reportedAt || new Date(r.reportedAt) >= start,
+      );
+      const pendingRpts = periodReports.filter((r) => r.status === "pending");
+      const resolvedRpts = periodReports.filter((r) => r.status === "resolved");
+      const affectedQty = pendingRpts.reduce(
+        (sum, r) => sum + (r.affectedQuantity || 1),
+        0,
+      );
+      const latestReport = periodReports
+        .slice()
+        .sort(
+          (a, b) => new Date(b.reportedAt || 0) - new Date(a.reportedAt || 0),
+        )[0];
       return {
         name: eq.name,
         quantity: eq.quantity || 1,
         total: eq.total || 0,
-        status: eq.status || 'active',
+        status: eq.status || "active",
         pendingReports: pendingRpts.length,
         resolvedReports: resolvedRpts.length,
         affectedQuantity: Math.min(affectedQty, eq.quantity || 1),
@@ -1359,10 +1743,19 @@ export const getOperationsStatistics = async (req, res) => {
 
     const now = new Date();
     const needMaintenance = equipments
-      .filter((e) => e.status === "maintenance" || (e.reports || []).some((r) => r.status === "pending"))
+      .filter(
+        (e) =>
+          e.status === "maintenance" ||
+          (e.reports || []).some((r) => r.status === "pending"),
+      )
       .map((e) => {
-        const pendingRpts = (e.reports || []).filter((r) => r.status === "pending");
-        const affectedQty = pendingRpts.reduce((sum, r) => sum + (r.affectedQuantity || 1), 0);
+        const pendingRpts = (e.reports || []).filter(
+          (r) => r.status === "pending",
+        );
+        const affectedQty = pendingRpts.reduce(
+          (sum, r) => sum + (r.affectedQuantity || 1),
+          0,
+        );
         return {
           name: e.name,
           quantity: e.quantity || 1,
@@ -1370,13 +1763,16 @@ export const getOperationsStatistics = async (req, res) => {
           status: e.status,
           reports: pendingRpts.length,
           warrantyLeft:
-          e.warranty_period && e.createdAt
-            ? Math.max(
-                0,
-                e.warranty_period -
-                  Math.floor((now - new Date(e.createdAt)) / (1000 * 60 * 60 * 24 * 30))
-              )
-            : null,
+            e.warranty_period && e.createdAt
+              ? Math.max(
+                  0,
+                  e.warranty_period -
+                    Math.floor(
+                      (now - new Date(e.createdAt)) /
+                        (1000 * 60 * 60 * 24 * 30),
+                    ),
+                )
+              : null,
         };
       })
       .sort((a, b) => b.reports - a.reports)

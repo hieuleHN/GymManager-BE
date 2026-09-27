@@ -13,7 +13,7 @@ router.get(
 router.get("/:id", EquipmentController.getEquipmentById);
 router.post("/", EquipmentController.createEquipment);
 router.put("/:id", EquipmentController.updateEquipment);
-router.delete("/:id", EquipmentController.deleteEquipment);
+// router.delete("/:id", EquipmentController.deleteEquipment);
 router.post("/:id/report", EquipmentController.reportEquipment);
 router.put("/:id/report/:reportId/resolve", EquipmentController.resolveReport);
 
