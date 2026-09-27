@@ -589,6 +589,73 @@ router.post('/bulk/clear-face', authenticateToken, async (req, res) => {
 });
 
 // Chuyển nhượng: Admin tạo hộ - xử lý thẳng, không cần phê duyệt (đi thẳng vào Tất cả, tối đa 2 lần/năm/gói)
+// Quy tắc: mỗi người chỉ sở hữu 1 gói/bộ môn -> chặn chuyển cho người đã có gói cùng bộ môn
+const normDiscKey = (s) => String(s || '').trim().toLowerCase();
+// Tập khóa bộ môn của 1 package (theo TÊN - vì mỗi cơ sở có _id bộ môn riêng - kèm _id để chắc)
+const pkgDiscKeys = (pkg) => {
+  const keys = new Set();
+  const d = pkg?.disciplineId;
+  if (d) {
+    if (typeof d === 'object') { if (d.name) keys.add('n:' + normDiscKey(d.name)); keys.add('i:' + String(d._id || d)); }
+    else keys.add('i:' + String(d));
+  }
+  (pkg?.disciplines || []).forEach((x) => {
+    if (x && typeof x === 'object') { if (x.name) keys.add('n:' + normDiscKey(x.name)); keys.add('i:' + String(x._id || x)); }
+    else if (x) keys.add('i:' + String(x));
+  });
+  return keys;
+};
+const PKG_DISC_POPULATE = { path: 'package_id', select: 'name disciplineId disciplines combo', populate: [{ path: 'disciplineId', select: 'name' }, { path: 'disciplines', select: 'name' }] };
+// Gói đang dùng của người nhận (còn hạn, chưa hủy - đóng băng tính là đang giữ)
+const getRecipientActiveRegs = async (recipientId) => {
+  const now = new Date();
+  const regs = await UserPackage.find({
+    customer_id: recipientId,
+    status: { $in: ['đang hoạt động', 'còn 10 ngày', 'đang tạm ngưng'] },
+  }).populate(PKG_DISC_POPULATE).lean();
+  return regs.filter((r) => r.status === 'đang tạm ngưng' || (r.end_date && new Date(r.end_date) >= now));
+};
+// Tìm gói trùng bộ môn của người nhận so với gói sắp chuyển (trả về reg trùng hoặc null)
+// So theo TÊN bộ môn (mỗi cơ sở có _id riêng); không resolve được tên thì so theo _id
+const findDiscConflict = (senderPkg, recipientRegs) => {
+  const sKeys = pkgDiscKeys(senderPkg);
+  const sNames = [...sKeys].filter((k) => k.startsWith('n:'));
+  const sIds = [...sKeys].filter((k) => k.startsWith('i:'));
+  if (!sKeys.size) return null;
+  for (const r of recipientRegs) {
+    const rKeys = pkgDiscKeys(r.package_id);
+    const rNames = [...rKeys].filter((k) => k.startsWith('n:'));
+    const rIds = [...rKeys].filter((k) => k.startsWith('i:'));
+    if (sNames.length && rNames.length) {
+      if (sNames.some((n) => rNames.includes(n))) return r;
+    } else if (sIds.length && rIds.length) {
+      if (sIds.some((i) => rIds.includes(i))) return r;
+    }
+  }
+  return null;
+};
+// Kiểm tra trước khi chuyển: người nhận đã có gói cùng bộ môn chưa?
+// GET /:id/transfer-validate?packageId=&recipientId= -> { ok, error?, conflict? }
+router.get('/:id/transfer-validate', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { packageId, recipientId } = req.query;
+    if (!packageId || !recipientId) return res.status(400).json({ ok: false, error: 'Thiếu gói hoặc người nhận!' });
+    if (String(recipientId) === String(id)) return res.json({ ok: false, error: 'Không thể chuyển cho chính mình!' });
+    const reg = await UserPackage.findOne({ _id: packageId, customer_id: id }).populate(PKG_DISC_POPULATE).lean();
+    if (!reg) return res.status(404).json({ ok: false, error: 'Không tìm thấy gói của khách!' });
+    const recRegs = await getRecipientActiveRegs(recipientId);
+    const conflict = findDiscConflict(reg.package_id, recRegs);
+    if (conflict) {
+      return res.json({
+        ok: false,
+        error: `Người này đã có gói "${conflict.package_id?.name || 'gói tập'}" cùng bộ môn - mỗi người chỉ sở hữu 1 gói/bộ môn! Muốn sở hữu thêm phải là gói bộ môn khác hoặc gói đa bộ môn.`,
+        conflict: { packageName: conflict.package_id?.name || '', end_date: conflict.end_date },
+      });
+    }
+    return res.json({ ok: true });
+  } catch (err) { res.status(500).json({ ok: false, error: err.message }); }
+});
 router.post('/:id/transfer-request', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
@@ -598,21 +665,41 @@ router.post('/:id/transfer-request', authenticateToken, async (req, res) => {
     if (used >= 2) return res.status(400).json({ error: `Gói này đã dùng hết 2 lượt chuyển nhượng trong năm ${new Date().getFullYear()}` });
     const cust = await Customer.findById(id).select('fullName phone locationId');
     if (!cust) return res.status(404).json({ error: 'Không tìm thấy khách hàng' });
-    const pkg = await UserPackage.findOne({ _id: packageId, customer_id: id });
+    const pkg = await UserPackage.findOne({ _id: packageId, customer_id: id }).populate(PKG_DISC_POPULATE);
     if (!pkg) return res.status(404).json({ error: 'Không tìm thấy gói của khách' });
     // Tìm người nhận để validate
     const recipientCust = await Customer.findOne({ $or: [{ phone: recipient }, { account: recipient }] }).select('_id fullName phone locationId');
     if (!recipientCust) return res.status(404).json({ error: 'Không tìm thấy người nhận với SĐT/tài khoản này' });
     if (String(recipientCust._id) === String(id)) return res.status(400).json({ error: 'Không thể chuyển cho chính mình' });
+    // Mỗi người chỉ 1 gói/bộ môn: chặn nếu người nhận đã có gói cùng bộ môn còn hiệu lực
+    const recActiveRegs = await getRecipientActiveRegs(recipientCust._id);
+    const discConflict = findDiscConflict(pkg.package_id, recActiveRegs);
+    if (discConflict) {
+      return res.status(400).json({ error: `Người nhận đã có gói "${discConflict.package_id?.name || 'gói tập'}" cùng bộ môn - mỗi người chỉ sở hữu 1 gói/bộ môn!` });
+    }
     // Kiểm tra cùng câu lạc bộ
     const senderLocationId = (pkg.locationId || cust.locationId)?.toString?.();
     const recipientLocationId = recipientCust.locationId?.toString?.();
     if (senderLocationId && recipientLocationId && senderLocationId !== recipientLocationId) {
       return res.status(400).json({ error: 'Không thể chuyển nhượng khác câu lạc bộ' });
     }
+    // Phí chuyển nhượng theo cấu hình dịch vụ của cơ sở (trang /admin/services).
+    // Admin thu tại quầy nên ghi đã thanh toán ngay.
+    let transferAmount = 0;
+    try {
+      const feeLocId = cust.locationId || pkg.locationId;
+      if (feeLocId) {
+        const loc = await Location.findById(feeLocId).select('serviceFees');
+        const feeCfg = (loc?.serviceFees || []).find((f) => f.service_type === 'transfer');
+        if (feeCfg && feeCfg.hasFee && Number(feeCfg.fee) > 0) {
+          transferAmount = Math.floor(Number(feeCfg.fee));
+        }
+      }
+    } catch {}
     // Thực hiện chuyển nhượng ngay (giống applyServiceEffect)
+    const pkgIdForFilter = pkg.package_id?._id || pkg.package_id;
     const result = await UserPackage.updateMany(
-      { customer_id: id, package_id: pkg.package_id, status: { $in: ['đang hoạt động', 'còn 10 ngày'] } },
+      { customer_id: id, package_id: pkgIdForFilter, status: { $in: ['đang hoạt động', 'còn 10 ngày'] } },
       { $set: { customer_id: recipientCust._id } }
     );
     if (result.matchedCount === 0) {
@@ -622,16 +709,17 @@ router.post('/:id/transfer-request', authenticateToken, async (req, res) => {
     // Tạo bản ghi dịch vụ đã duyệt thẳng (hiển thị ở Tất cả) - phân biệt bằng trạng thái Thành công
     const sr = await ServiceRequest.create({
       customer_id: id, customer_name: cust.fullName||'', customer_phone: cust.phone||'',
-      service_type: 'transfer', description: reason ? `Chuyển nhượng: ${reason}` : `Admin tạo chuyển nhượng gói ${pkg.package_id} cho ${recipient}`,
+      service_type: 'transfer', description: reason ? `Chuyển nhượng: ${reason}` : `Admin tạo chuyển nhượng gói ${pkg.package_id?.name || pkgIdForFilter} cho ${recipientCust.fullName || recipient}`,
       data: { packageId, recipient, recipientId: recipientCust._id, reason },
-      location_id: cust.locationId||null, status: 'success', processed_by: req.user.id, processed_at: new Date(), admin_note: 'Nhân viên tạo từ danh sách khách hàng - Thành công'
+      location_id: cust.locationId||null, status: 'success', processed_by: req.user.id, processed_at: new Date(), admin_note: 'Nhân viên tạo từ danh sách khách hàng - Thành công',
+      amount: transferAmount, payment_status: transferAmount > 0 ? 'paid' : 'unpaid', paid_at: transferAmount > 0 ? new Date() : null,
     });
     // Thông báo cho người nhận
     try {
       const { createNotification } = await import('../models/notificationModel.js');
       createNotification({ recipientId: recipientCust._id, recipientRole: 'member', title: 'Gói tập được chuyển nhượng', message: `Hội viên "${cust.fullName}" đã chuyển nhượng gói tập cho bạn.`, type: 'service' }, () => {});
     } catch {}
-    res.json({ message: 'Đã chuyển nhượng thành công (Thành công - do nhân viên tạo)', data: sr });
+    res.json({ message: `Đã chuyển nhượng thành công cho ${recipientCust.fullName || recipient}${transferAmount > 0 ? ` (phí ${transferAmount.toLocaleString('vi-VN')}đ đã thu tại quầy)` : ' (miễn phí)'}`, data: sr, fee: transferAmount, recipient: { _id: recipientCust._id, fullName: recipientCust.fullName, phone: recipientCust.phone } });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

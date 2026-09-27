@@ -143,29 +143,42 @@ export const findCustomerByAccount = async (account, callback) => {
   }
 };
 
-export const searchCustomers = async (query, callback, locationId, hidePhone = false) => {
+export const searchCustomers = async (query, callback, locationId, hidePhone = false, includeNoLocation = false) => {
   try {
     const q = String(query || '').trim();
     if (!q) return callback(null, []);
     // hidePhone: ẩn SĐT (trang hội viên) - chỉ tìm theo tài khoản / họ tên, không trả về SĐT
-    const filter = hidePhone
-      ? {
-        $or: [
-          { account: { $regex: q, $options: 'i' } },
-          { fullName: { $regex: q, $options: 'i' } }
-        ]
+    const textOr = hidePhone
+      ? [
+        { account: { $regex: q, $options: 'i' } },
+        { fullName: { $regex: q, $options: 'i' } }
+      ]
+      : [
+        { account: { $regex: q, $options: 'i' } },
+        { fullName: { $regex: q, $options: 'i' } },
+        { phone: { $regex: q, $options: 'i' } }
+      ];
+    const filter = { $or: textOr };
+    if (locationId) {
+      if (includeNoLocation) {
+        // Kèm cả hội viên chưa set cơ sở (người mới/chưa có gói) - ưu tiên cùng CLB lên trước
+        filter.$and = [{ $or: [{ locationId }, { locationId: null }, { locationId: { $exists: false } }] }];
+      } else {
+        filter.locationId = locationId;
       }
-      : {
-        $or: [
-          { account: { $regex: q, $options: 'i' } },
-          { fullName: { $regex: q, $options: 'i' } },
-          { phone: { $regex: q, $options: 'i' } }
-        ]
-      };
-    if (locationId) filter.locationId = locationId;
+    }
     const customers = await Customer.find(filter)
       .select(hidePhone ? '_id account fullName avatar status locationId' : '_id account fullName avatar phone status locationId')
-      .limit(8);
+      .limit(includeNoLocation ? 20 : 8)
+      .lean();
+    if (includeNoLocation && locationId) {
+      const lid = String(locationId);
+      customers.sort((a, b) => {
+        const aSame = String(a.locationId || '') === lid ? 0 : 1;
+        const bSame = String(b.locationId || '') === lid ? 0 : 1;
+        return aSame - bSame;
+      });
+    }
     callback(null, customers);
   } catch (err) {
     callback(err);

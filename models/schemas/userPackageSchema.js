@@ -74,6 +74,16 @@ const userPackageSchema = new mongoose.Schema({
     type: String,
     default: "",
   },
+  // Lịch sử các lần gia hạn (gia hạn cộng dồn vào chính hợp đồng này)
+  renewal_history: [{
+    months: { type: Number, default: 0 },
+    total_price: { type: Number, default: 0 },
+    unit_price: { type: Number, default: null },
+    discount_percent: { type: Number, default: 0 },
+    renewed_at: { type: Date, default: Date.now },
+    renewed_by: { type: mongoose.Schema.Types.ObjectId, ref: "Staff", default: null },
+    new_end_date: { type: Date, default: null },
+  }],
   // Giá chốt tại thời điểm mua (hợp đồng cũ giữ giá cũ khi gói đổi giá)
   unit_price_applied: {
     type: Number,

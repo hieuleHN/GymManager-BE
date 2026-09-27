@@ -24,7 +24,9 @@ const createMemberNotification = async ({ customerId, title, message, type, user
 };
 
 // ============================================================
-// GIA HẠN HỘ: khách hết hạn -> admin tạo phiếu gia hạn -> duyệt là xong
+// GIA HẠN HỘ: admin gia hạn tại quầy là xong ngay - CỘNG DỒN vào hợp đồng gốc
+// (không tạo gói mới): nối thêm thời hạn vào end_date, cộng duration/total,
+// cập nhật trạng thái về đang hoạt động, phân bổ thêm buổi PT.
 // POST /api/user-packages/admin-renew
 // body: { customerId, package_id?, registrationId?, duration_months, locationId?, note? }
 // ============================================================
@@ -40,12 +42,17 @@ export const adminRenewPackage = async (req, res) => {
     const customer = await Customer.findById(customerId);
     if (!customer) return res.status(404).json({ error: "Không tìm thấy khách hàng!" });
 
-    // Xác định hợp đồng gốc: ưu tiên registrationId, không thì lấy hợp đồng mới nhất của khách
+    // Bắt buộc xác định hợp đồng gốc để cộng dồn (không tạo gói mới)
     let original = null;
     if (registrationId) {
       original = await UserPackage.findOne({ _id: registrationId, customer_id: customerId });
       if (!original)
         return res.status(404).json({ error: "Không tìm thấy hợp đồng gốc của khách!" });
+    } else {
+      return res.status(400).json({ error: "Thiếu mã hợp đồng cần gia hạn!" });
+    }
+    if (original.status === "đã hủy") {
+      return res.status(400).json({ error: "Gói đã hủy, không thể gia hạn! Vui lòng đăng ký gói mới." });
     }
 
     const pkgId = package_id || original?.package_id;
@@ -68,65 +75,84 @@ export const adminRenewPackage = async (req, res) => {
       return res.status(400).json({ error: e.message });
     }
 
-    // Ngày bắt đầu dự kiến: nếu hợp đồng gốc còn hạn thì nối tiếp sau ngày hết hạn
+    // Ngày nối tiếp: còn hạn thì nối sau end_date cũ, hết hạn thì tính từ hôm nay
+    // (không mất ngày của khách, không tạo gói mới)
     const now = new Date();
-    let proposedStart = now;
-    if (original?.end_date && new Date(original.end_date) > now) {
-      proposedStart = new Date(original.end_date);
+    const base = original?.end_date && new Date(original.end_date) > now
+      ? new Date(original.end_date)
+      : now;
+    const newEnd = addMonths(base, pricing.months);
+
+    // Phân bổ thêm buổi PT cho các tháng mới, giữ nguyên số buổi đã dùng cũ.
+    // Trùng tháng đã có (gia hạn giữa tháng) thì cộng dồn total.
+    const addedSessions = allocatePtSessions(base, pricing.months, pkg);
+    const mergedSessions = [...(original.monthlySessions || [])];
+    for (const s of addedSessions) {
+      const ex = mergedSessions.find((m) => m.month === s.month && m.year === s.year);
+      if (ex) ex.total = Number(ex.total || 0) + Number(s.total || 0);
+      else mergedSessions.push(s);
     }
 
-    const ticket = await UserPackage.create({
-      customer_id: customerId,
-      package_id: pkg._id,
-      locationId: locationId || original?.locationId || pkg.locationId || null,
-      duration_months: pricing.months,
-      ptSessionsPerMonth: pkg.isFullMonth ? 0 : (pkg.ptSessionsPerMonth || 0),
-      isFullMonth: !!pkg.isFullMonth,
-      monthlySessions: [],
-      total_price: pricing.total_price,
-      unit_price_applied: pricing.unit_price,
-      price_snapshot: {
-        unit_price: pricing.unit_price,
+    const staffId = req.user?.id || req.user?._id || null;
+
+    original.end_date = newEnd;
+    original.duration_months = (Number(original.duration_months) || 0) + pricing.months;
+    original.total_price = (Number(original.total_price) || 0) + pricing.total_price;
+    original.unit_price_applied = pricing.unit_price;
+    original.monthlySessions = mergedSessions;
+    original.ptSessionsPerMonth = pkg.isFullMonth ? 0 : (pkg.ptSessionsPerMonth || 0);
+    original.isFullMonth = !!pkg.isFullMonth;
+    if (locationId) original.locationId = locationId;
+    // Về lại đang hoạt động sau gia hạn (gói đang đóng băng thì giữ nguyên đóng băng, hạn đã cộng thêm)
+    if (original.status === "hết hạn" || original.status === "chờ xác nhận") {
+      original.status = "đang hoạt động";
+    }
+    original.payment_status = "đã thanh toán";
+    original.payment_date = now;
+    original.confirmed_by = staffId;
+    original.confirmed_at = now;
+    if (note) original.renewal_note = note;
+    original.renewal_history = [
+      ...(original.renewal_history || []),
+      {
         months: pricing.months,
-        discount_percent: pricing.discount_percent,
+        total_price: pricing.total_price,
+        unit_price: pricing.unit_price,
+        discount_percent: pricing.discount_percent || 0,
+        renewed_at: now,
+        renewed_by: staffId,
+        new_end_date: newEnd,
       },
-      signature: "",
-      start_date: proposedStart,
-      end_date: addMonths(proposedStart, pricing.months),
-      proposed_start_date: proposedStart,
-      status: "chờ xác nhận",
-      payment_status: "chờ thanh toán",
-      is_renewal_ticket: true,
-      original_registration_id: original?._id || null,
-      renewal_note: note || "",
-    });
+    ];
+    await original.save();
 
     await logAudit(req, {
-      action: "ADMIN_RENEW_CREATE",
+      action: "ADMIN_RENEW_UPDATE",
       entityType: "UserPackage",
-      entityId: ticket._id,
+      entityId: original._id,
       entityName: `${customer.fullName} - ${pkg.name}`,
       after: {
         customerId,
         packageName: pkg.name,
-        months: pricing.months,
-        total_price: pricing.total_price,
-        proposedStart,
+        addedMonths: pricing.months,
+        total_price_added: pricing.total_price,
+        new_end_date: newEnd,
+        duration_months: original.duration_months,
       },
-      description: `Tạo phiếu gia hạn hộ "${pkg.name}" ${pricing.months} tháng cho ${customer.fullName}`,
+      description: `Gia hạn gói "${pkg.name}" thêm ${pricing.months} tháng cho ${customer.fullName} (cộng dồn vào hợp đồng cũ, hạn mới ${newEnd.toLocaleDateString("vi-VN")})`,
     });
 
     await createMemberNotification({
       customerId,
-      title: "Phiếu gia hạn gói tập đã được tạo",
-      message: `Nhân viên đã tạo phiếu gia hạn gói "${pkg.name}" (${pricing.months} tháng). Phiếu đang chờ duyệt.`,
+      title: "Gói tập đã được gia hạn",
+      message: `Gói "${pkg.name}" của bạn đã được gia hạn thêm ${pricing.months} tháng, hiệu lực đến ${newEnd.toLocaleDateString("vi-VN")}.`,
       type: "package_renewed",
-      userPackageId: ticket._id,
+      userPackageId: original._id,
     });
 
-    res.status(201).json({
-      message: "Đã tạo phiếu gia hạn! Vui lòng duyệt để hoàn tất.",
-      data: ticket,
+    res.status(200).json({
+      message: `Đã gia hạn thêm ${pricing.months} tháng (hạn mới ${newEnd.toLocaleDateString("vi-VN")})!`,
+      data: original,
       pricing,
     });
   } catch (err) {
